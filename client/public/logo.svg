@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <style>
+    .facet-primary { fill: #0f172a; }
+    .facet-secondary { fill: #0f172a; fill-opacity: 0.55; }
+    .facet-plane { fill: #0f172a; fill-opacity: 0.40; }
+    .facet-depth-l { fill: #0f172a; fill-opacity: 0.25; }
+    .facet-depth-r { fill: #0f172a; fill-opacity: 0.15; }
+
+    @media (prefers-color-scheme: dark) {
+      .facet-primary { fill: #f8fafc; }
+      .facet-secondary { fill: #f8fafc; fill-opacity: 0.55; }
+      .facet-plane { fill: #f8fafc; fill-opacity: 0.40; }
+      .facet-depth-l { fill: #f8fafc; fill-opacity: 0.25; }
+      .facet-depth-r { fill: #f8fafc; fill-opacity: 0.15; }
+    }
+  </style>
+  <!-- Left Ascending Facet (Space / Origin) -->
+  <path class="facet-primary" d="M16 3.5L5 27h5.8l2.8-6.2L16 14.5V3.5z" />
+  <!-- Right Ascending Facet (Time / Dimension Depth) -->
+  <path class="facet-secondary" d="M16 3.5v11l2.4 6.3 2.8 6.2H27L16 3.5z" />
+  <!-- Isometric Crossbar (Temporal Plane) -->
+  <polygon class="facet-plane" points="10.5,18.5 16,15.3 21.5,18.5 16,21.7" />
+  <polygon class="facet-depth-l" points="10.5,18.5 16,21.7 16,23.3 10.5,20.1" />
+  <polygon class="facet-depth-r" points="16,21.7 21.5,18.5 21.5,20.1 16,23.3" />
+</svg>

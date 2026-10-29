@@ -1,0 +1,73 @@
+export interface AayamLogoProps {
+  className?: string;
+  size?: number | string;
+  showText?: boolean;
+  hindi?: boolean;
+  animate?: boolean;
+}
+
+/** ViewBox of public/aayam.svg. The band is the letter bodies; the y tail hangs below it. */
+const MARK_W = 5635;
+const MARK_H = 1795;
+const BAND_Y = 20;
+const BAND_H = 1125;
+
+/** "Aayam" outlined from Samarkan. The paths are the logo, so the word does not depend on the font being installed. */
+export function AayamIcon({
+  size = 22,
+  className = "",
+  animate = false,
+}: {
+  size?: number | string;
+  className?: string;
+  animate?: boolean;
+}) {
+  const band = typeof size === "number" ? size : parseInt(size as string, 10) || 22;
+  const scale = band / BAND_H;
+  const width = Math.round(MARK_W * scale);
+  const height = Math.round(MARK_H * scale);
+
+  return (
+    <span className={`relative inline-block shrink-0 ${className}`} style={{ width, height: band }}>
+      <svg
+        width={width}
+        height={height}
+        viewBox={`0 0 ${MARK_W} ${MARK_H}`}
+        fill="currentColor"
+        xmlns="http://www.w3.org/2000/svg"
+        className={`absolute left-0 text-foreground ${animate ? "animate-pulse" : ""}`}
+        style={{ top: Math.round(-BAND_Y * scale) }}
+        role="img"
+        aria-label="Aayam"
+      >
+        <g transform="translate(41 1105) scale(1 -1)">
+          <path transform="translate(0 0)" d="M977 965H311V805Q315 805 319.0 801.0Q323 797 326 797Q318 797 317 798Q317 803 466 830Q521 840 575 840Q800 840 864 714Q907 630 907 375V-10Q886 -2 748 55Q748 87 735 96Q682 65 648 49Q540 -2 397 -2Q200 -2 93 122Q41 182 41 256Q41 339 123 421Q282 580 518 580Q661 580 748 514V606Q704 662 662.5 681.0Q621 700 549 698Q388 695 254 639Q194 614 137 594V668Q150 679 175 701Q179 706 180 707V965H-25V1085H977ZM748 332Q748 376 643 411Q556 440 498 440Q287 440 160 288Q109 227 109 188Q130 115 274 115Q460 115 614 208Q748 289 748 332Z" />
+          <path transform="translate(973 0)" d="M977 965H311V805Q315 805 319.0 801.0Q323 797 326 797Q318 797 317 798Q317 803 466 830Q521 840 575 840Q800 840 864 714Q907 630 907 375V-10Q886 -2 748 55Q748 87 735 96Q682 65 648 49Q540 -2 397 -2Q200 -2 93 122Q41 182 41 256Q41 339 123 421Q282 580 518 580Q661 580 748 514V606Q704 662 662.5 681.0Q621 700 549 698Q388 695 254 639Q194 614 137 594V668Q150 679 175 701Q179 706 180 707V965H-25V1085H977ZM748 332Q748 376 643 411Q556 440 498 440Q287 440 160 288Q109 227 109 188Q130 115 274 115Q460 115 614 208Q748 289 748 332Z" />
+          <path transform="translate(1946 0)" d="M1149 1085 1147 965H303L305 375Q305 245 350 186Q401 121 528 115Q609 111 690 168Q762 218 809 295Q860 379 860 459L858 836L1067 764V-260Q1067 -447 895 -565Q736 -674 522 -674Q160 -674 7 -477Q-55 -397 -55 -340Q-54 -215 85 -130Q208 -55 340 -55L467 -225Q295 -237 159 -298Q70 -338 70 -401Q81 -492 207 -562Q282 -604 401 -604Q674 -604 813 -427Q879 -343 879 -231V176Q814 70 532 70Q295 70 173 232Q113 311 113 412V965H-29V1085Z" />
+          <path transform="translate(3081 0)" d="M977 965H311V805Q315 805 319.0 801.0Q323 797 326 797Q318 797 317 798Q317 803 466 830Q521 840 575 840Q800 840 864 714Q907 630 907 375V-10Q886 -2 748 55Q748 87 735 96Q682 65 648 49Q540 -2 397 -2Q200 -2 93 122Q41 182 41 256Q41 339 123 421Q282 580 518 580Q661 580 748 514V606Q704 662 662.5 681.0Q621 700 549 698Q388 695 254 639Q194 614 137 594V668Q150 679 175 701Q179 706 180 707V965H-25V1085H977ZM748 332Q748 376 643 411Q556 440 498 440Q287 440 160 288Q109 227 109 188Q130 115 274 115Q460 115 614 208Q748 289 748 332Z" />
+          <path transform="translate(4054 0)" d="M1524 965H1194L1196 825Q1332 775 1392 694Q1454 610 1454 467Q1454 261 1289 113Q1258 85 1194 40Q1115 -16 1094 -16Q1073 -16 901 160Q1007 166 1122 228Q1231 286 1307 370Q1389 460 1389 561Q1389 661 1278 700Q1224 719 1171 717Q847 704 774 340L569 424Q569 508 634 612Q658 650 659 655Q659 702 524 702Q351 702 255 550Q213 483 213 416Q213 276 342 151L532 -33Q358 27 209 141Q10 293 10 467Q10 687 232 795Q329 842 432 842Q564 842 696 763Q746 733 754 731Q830 764 921 802Q969 822 1018 829L1020 965H-20V1085H1524Z" />
+        </g>
+      </svg>
+    </span>
+  );
+}
+
+export function AayamLogo({
+  className = "",
+  size = 22,
+  showText = false,
+  animate = false,
+}: AayamLogoProps) {
+  if (!showText) {
+    return <AayamIcon size={size} className={className} animate={animate} />;
+  }
+
+  return (
+    <span className={`inline-flex items-center gap-2 ${className}`}>
+      <AayamIcon size={size} animate={animate} />
+      <span className="text-sm font-medium tracking-tight text-muted-foreground">timetable</span>
+    </span>
+  );
+}
+
+export default AayamLogo;

@@ -1,0 +1,15 @@
+node_modules
+dist
+client/dist
+server/data
+*.sqlite
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+*.tsbuildinfo
+.env
+.env.*
+.DS_Store
+.vercel
+.env*
+!.env.example
