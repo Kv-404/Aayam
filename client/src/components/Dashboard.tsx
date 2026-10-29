@@ -1,4 +1,4 @@
-import type { BootstrapResponse, PublicLecture } from "@shared/types";
+import type { BootstrapResponse, PublicLecture, SheetLink } from "@shared/types";
 import { cohortChoices, cohortLabel, cohortPrograms, cohortYears, cohortsInYear, lectureInCohort, type CohortChoice } from "@shared/cohort";
 import { changeMatchesFaculty, lectureMatchesFaculty, listFacultyNames } from "@shared/faculty";
 import { CalendarPlus, Check, ChevronDown, ChevronLeft, Download, FileSpreadsheet, LogOut, RefreshCw, Settings } from "lucide-react";
@@ -26,6 +26,21 @@ import { applyFilters, collapseFullOffDays, defaultFilters, slotPhase, unique, t
 import { AayamLogo } from "@/components/AayamLogo";
 
 const dayOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+function sheetUrlFor(
+  sheets: SheetLink[],
+  active: { course?: string; batch?: string } | undefined,
+  fallback: string,
+) {
+  const course = active?.course?.trim().toLowerCase() ?? "";
+  const batch = active?.batch?.trim().toLowerCase() ?? "";
+  if (!batch) return fallback;
+  const match = sheets.find((sheet) =>
+    sheet.batch.trim().toLowerCase() === batch &&
+    (!course || sheet.course.trim().toLowerCase() === course),
+  );
+  return match?.spreadsheetUrl ?? fallback;
+}
 
 export function Dashboard({
   data,
@@ -205,7 +220,7 @@ export function Dashboard({
   const changes = cohortChanges;
   const failing = Boolean(data.sync.lastError);
   const activeSheet = role === "student" ? choice : facultyChoice;
-  const sheetUrl = data.sheets.find((sheet) => sheet.course === activeSheet?.course && sheet.batch === activeSheet?.batch)?.spreadsheetUrl ?? data.spreadsheetUrl;
+  const sheetUrl = sheetUrlFor(data.sheets, activeSheet, data.spreadsheetUrl);
 
   function choose(division: string) {
     const next = choices.find((item) => item.division === division || item.division.toLowerCase() === division.toLowerCase());

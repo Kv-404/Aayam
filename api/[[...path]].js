@@ -2722,16 +2722,30 @@ async function fetchSheetSources(sources) {
 
 // server/src/app.ts
 var import_meta2 = {};
-function sheetLinks(lectures) {
+function programLinkKey(course, batch) {
+  return `${course.trim().toLowerCase()}\0${batch.trim().toLowerCase()}`;
+}
+function sheetLinks(lectures, sources) {
   const seen = /* @__PURE__ */ new Map();
-  for (const lecture of lectures) {
-    if (!lecture.spreadsheetId || seen.has(lecture.spreadsheetId)) continue;
-    seen.set(lecture.spreadsheetId, {
-      spreadsheetId: lecture.spreadsheetId,
-      spreadsheetUrl: spreadsheetUrl(lecture.spreadsheetId),
-      course: lecture.course,
-      batch: lecture.batch
+  const put = (course, batch, id) => {
+    const cleanCourse = course.trim();
+    const cleanBatch = batch.trim();
+    const cleanId = id.trim();
+    if (!cleanCourse || !cleanBatch || !cleanId) return;
+    const key = programLinkKey(cleanCourse, cleanBatch);
+    if (seen.has(key)) return;
+    seen.set(key, {
+      spreadsheetId: cleanId,
+      spreadsheetUrl: spreadsheetUrl(cleanId),
+      course: cleanCourse,
+      batch: cleanBatch
     });
+  };
+  for (const lecture of lectures) {
+    if (lecture.spreadsheetId) put(lecture.course, lecture.batch, lecture.spreadsheetId);
+  }
+  for (const source of sources) {
+    if (source.batch) put(source.course, source.batch, source.id);
   }
   return [...seen.values()];
 }
@@ -2799,7 +2813,7 @@ function buildBootstrap(db2, config2, now = /* @__PURE__ */ new Date(), filter) 
     spreadsheetId: config2.spreadsheetId,
     spreadsheetTitle: state.spreadsheetTitle || config2.spreadsheetTitle,
     spreadsheetUrl: spreadsheetUrl(config2.spreadsheetId),
-    sheets: sheetLinks(allLectures),
+    sheets: sheetLinks(restored.lectures, config2.spreadsheets),
     timezone: config2.timezone,
     today: zone.iso,
     now: now.toISOString(),

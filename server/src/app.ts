@@ -7,7 +7,7 @@ import { calendarFile } from "../../shared/calendar.ts";
 import { batchYear, cohortChoices, cohortLabel, DEFAULT_COHORT_CHOICES, lectureInCohort } from "../../shared/cohort.ts";
 import { changeMatchesFaculty, DEFAULT_FACULTY_NAMES, lectureMatchesFaculty, listFacultyNames } from "../../shared/faculty.ts";
 import type { BootstrapResponse, SheetLink } from "../../shared/types.ts";
-import { sheetForScope, spreadsheetUrl, type AppConfig } from "./config.ts";
+import { sheetForScope, spreadsheetUrl, type AppConfig, type SheetSource } from "./config.ts";
 import { readSyncState, type AppDatabase } from "./db.ts";
 import { authenticateFacultyWithNeon, clearSessionCookie, getClientIp, getSessionFromRequest, loginRateLimiter, pinRateLimiter, setSessionCookie, signSession, verifyBatchPinWithNeon, verifyGoogleCredential } from "./auth.ts";
 import { listChanges } from "./services/changeHistoryService.ts";
@@ -19,16 +19,36 @@ import { runSync, type SyncContext } from "./services/syncScheduler.ts";
 import { fetchSpreadsheet } from "./services/googleSheetsService.ts";
 import { zonedParts } from "./time.ts";
 
-function sheetLinks(lectures: Array<{ spreadsheetId?: string; course: string; batch: string }>): SheetLink[] {
+function programLinkKey(course: string, batch: string) {
+  return `${course.trim().toLowerCase()}\0${batch.trim().toLowerCase()}`;
+}
+
+/** One edit link per course and batch. Lecture ids win; configured workbooks fill the rest. */
+function sheetLinks(
+  lectures: Array<{ spreadsheetId?: string; course: string; batch: string }>,
+  sources: SheetSource[],
+): SheetLink[] {
   const seen = new Map<string, SheetLink>();
-  for (const lecture of lectures) {
-    if (!lecture.spreadsheetId || seen.has(lecture.spreadsheetId)) continue;
-    seen.set(lecture.spreadsheetId, {
-      spreadsheetId: lecture.spreadsheetId,
-      spreadsheetUrl: spreadsheetUrl(lecture.spreadsheetId),
-      course: lecture.course,
-      batch: lecture.batch,
+  const put = (course: string, batch: string, id: string) => {
+    const cleanCourse = course.trim();
+    const cleanBatch = batch.trim();
+    const cleanId = id.trim();
+    if (!cleanCourse || !cleanBatch || !cleanId) return;
+    const key = programLinkKey(cleanCourse, cleanBatch);
+    if (seen.has(key)) return;
+    seen.set(key, {
+      spreadsheetId: cleanId,
+      spreadsheetUrl: spreadsheetUrl(cleanId),
+      course: cleanCourse,
+      batch: cleanBatch,
     });
+  };
+
+  for (const lecture of lectures) {
+    if (lecture.spreadsheetId) put(lecture.course, lecture.batch, lecture.spreadsheetId);
+  }
+  for (const source of sources) {
+    if (source.batch) put(source.course, source.batch, source.id);
   }
   return [...seen.values()];
 }
@@ -112,7 +132,7 @@ function buildBootstrap(
     spreadsheetId: config.spreadsheetId,
     spreadsheetTitle: state.spreadsheetTitle || config.spreadsheetTitle,
     spreadsheetUrl: spreadsheetUrl(config.spreadsheetId),
-    sheets: sheetLinks(allLectures),
+    sheets: sheetLinks(restored.lectures, config.spreadsheets),
     timezone: config.timezone,
     today: zone.iso,
     now: now.toISOString(),
