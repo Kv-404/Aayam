@@ -869,11 +869,22 @@ function parseCookies(cookieHeader) {
   }
   return cookies;
 }
+function bearerToken(req) {
+  const header = req.headers.authorization;
+  if (typeof header !== "string") return "";
+  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
+  return match?.[1]?.trim() ?? "";
+}
 function getSessionFromRequest(req) {
   const cookies = parseCookies(req.headers.cookie);
-  const token = cookies[COOKIE_NAME];
-  if (!token) return null;
-  return verifySession(token);
+  const cookieToken = cookies[COOKIE_NAME];
+  if (cookieToken) {
+    const session = verifySession(cookieToken);
+    if (session) return session;
+  }
+  const headerToken = bearerToken(req);
+  if (!headerToken) return null;
+  return verifySession(headerToken);
 }
 async function verifyGoogleCredential(credential) {
   const url = `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`;
@@ -1055,8 +1066,9 @@ async function verifyBatchPinWithNeon(pin) {
   return null;
 }
 function setSessionCookie(res, token) {
-  const maxAge = 7 * 24 * 60 * 60 * 1e3;
-  const cookieString = `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; Max-Age=${maxAge / 1e3}; HttpOnly; SameSite=Lax${isProduction() ? "; Secure" : ""}`;
+  const maxAgeSeconds = 7 * 24 * 60 * 60;
+  const expires = new Date(Date.now() + maxAgeSeconds * 1e3).toUTCString();
+  const cookieString = `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; Max-Age=${maxAgeSeconds}; Expires=${expires}; HttpOnly; SameSite=Lax${isProduction() ? "; Secure" : ""}`;
   res.setHeader("Set-Cookie", cookieString);
 }
 function clearSessionCookie(res) {
@@ -3081,7 +3093,8 @@ function createApp(db2, config2, load, options) {
         ok: true,
         email: faculty.email,
         faculty: faculty.faculty_name,
-        canSeeAllFaculty: faculty.can_see_all_faculty
+        canSeeAllFaculty: faculty.can_see_all_faculty,
+        token
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Authentication failed.";

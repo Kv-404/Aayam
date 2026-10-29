@@ -5,6 +5,7 @@ import type { Request } from "express";
 import { createApp } from "../src/app.ts";
 import {
   getClientIp,
+  getSessionFromRequest,
   PinRateLimiter,
   pinRateLimiter,
   signSession,
@@ -36,6 +37,23 @@ describe("faculty session token", () => {
     const [data] = token.split(".");
     assert.equal(verifySession(`${data}.abc`), null);
     assert.equal(verifySession("not-a-token"), null);
+  });
+
+  it("accepts the session from a bearer header when the cookie is missing", () => {
+    const token = signSession({ email: "teacher@itm.edu", faculty: "Teacher", canSeeAllFaculty: true });
+    const session = getSessionFromRequest({ headers: { authorization: `Bearer ${token}` } } as Request);
+    assert.equal(session?.email, "teacher@itm.edu");
+    assert.equal(session?.faculty, "Teacher");
+    assert.equal(session?.canSeeAllFaculty, true);
+    assert.equal(getSessionFromRequest({ headers: { authorization: "Bearer nope" } } as Request), null);
+  });
+
+  it("still reads the session cookie", () => {
+    const token = signSession({ email: "teacher@itm.edu", faculty: "Teacher", canSeeAllFaculty: false });
+    const session = getSessionFromRequest({
+      headers: { cookie: `timetable_faculty_session=${encodeURIComponent(token)}` },
+    } as Request);
+    assert.equal(session?.email, "teacher@itm.edu");
   });
 });
 

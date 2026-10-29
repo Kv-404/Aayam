@@ -1,21 +1,33 @@
+import { clearFacultySession, readFacultySession, saveFacultySession } from "@/lib/prefs";
+
 export interface AuthState {
   authenticated: boolean;
   email?: string;
   faculty?: string;
   canSeeAllFaculty?: boolean;
+  /** The session check never reached the server. Keep the saved faculty sign-in. */
+  offline?: boolean;
 }
 
 const base = import.meta.env.VITE_API_URL?.replace(/\/$/, "") ?? "";
+
+function authHeaders(): HeadersInit {
+  const token = readFacultySession();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 export async function fetchCurrentAuth(): Promise<AuthState> {
   try {
     const res = await fetch(`${base}/api/auth/me`, {
       credentials: "include",
+      headers: authHeaders(),
     });
-    if (!res.ok) return { authenticated: false };
-    return (await res.json()) as AuthState;
+    if (!res.ok) return { authenticated: false, offline: true };
+    const data = (await res.json()) as AuthState;
+    if (!data.authenticated) clearFacultySession();
+    return data;
   } catch {
-    return { authenticated: false };
+    return { authenticated: false, offline: true };
   }
 }
 
@@ -35,6 +47,7 @@ export async function loginWithGoogleCredential(credential: string): Promise<{
   if (!res.ok || !data.ok) {
     throw new Error(data.error || "Google authentication failed.");
   }
+  if (typeof data.token === "string") saveFacultySession(data.token);
   return data;
 }
 
@@ -63,10 +76,13 @@ export async function fetchGoogleClientId(): Promise<string> {
 }
 
 export async function logoutFaculty(): Promise<void> {
+  const headers = authHeaders();
+  clearFacultySession();
   try {
     await fetch(`${base}/api/auth/logout`, {
       method: "POST",
       credentials: "include",
+      headers,
     });
   } catch {
     // Ignore error on logout

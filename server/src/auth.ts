@@ -89,11 +89,23 @@ export function parseCookies(cookieHeader?: string): Record<string, string> {
   return cookies;
 }
 
+function bearerToken(req: Request) {
+  const header = req.headers.authorization;
+  if (typeof header !== "string") return "";
+  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
+  return match?.[1]?.trim() ?? "";
+}
+
 export function getSessionFromRequest(req: Request): FacultySessionPayload | null {
   const cookies = parseCookies(req.headers.cookie);
-  const token = cookies[COOKIE_NAME];
-  if (!token) return null;
-  return verifySession(token);
+  const cookieToken = cookies[COOKIE_NAME];
+  if (cookieToken) {
+    const session = verifySession(cookieToken);
+    if (session) return session;
+  }
+  const headerToken = bearerToken(req);
+  if (!headerToken) return null;
+  return verifySession(headerToken);
 }
 
 export async function verifyGoogleCredential(credential: string): Promise<{ email: string; name: string }> {
@@ -319,8 +331,9 @@ export async function verifyBatchPinWithNeon(pin: string): Promise<{
 }
 
 export function setSessionCookie(res: Response, token: string) {
-  const maxAge = 7 * 24 * 60 * 60 * 1000;
-  const cookieString = `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; Max-Age=${maxAge / 1000}; HttpOnly; SameSite=Lax${
+  const maxAgeSeconds = 7 * 24 * 60 * 60;
+  const expires = new Date(Date.now() + maxAgeSeconds * 1000).toUTCString();
+  const cookieString = `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; Max-Age=${maxAgeSeconds}; Expires=${expires}; HttpOnly; SameSite=Lax${
     isProduction() ? "; Secure" : ""
   }`;
   res.setHeader("Set-Cookie", cookieString);

@@ -30,6 +30,7 @@ The header cohort menu for students lists cohorts restricted to their authentica
 | `timetable-can-see-all-faculty` | `"1"` or `"0"` for faculty permissions |
 | `timetable-cohort` | division string, year included (`Sam Altman 2025`) |
 | `timetable-faculty` | display name from `listFacultyNames` |
+| `timetable-faculty-session` | Signed faculty session token. Kept so a home-screen shortcut stays signed in when the cookie is dropped. Cleared on faculty sign-out |
 | `timetable-theme` | theme id. Old value `calendar` migrates to `light` |
 | `timetable-colors` | `"0"` off, anything else on |
 | `timetable-bold` | `"1"` on. Default off |

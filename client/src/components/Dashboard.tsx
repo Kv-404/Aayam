@@ -128,7 +128,7 @@ export function Dashboard({
   useEffect(() => {
     let cancelled = false;
     fetchCurrentAuth().then((auth) => {
-      if (cancelled) return;
+      if (cancelled || auth.offline) return;
       if (auth.authenticated && auth.faculty) {
         setAuthEmail(auth.email);
         const hasAll = Boolean(auth.canSeeAllFaculty);

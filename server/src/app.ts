@@ -428,6 +428,7 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
         email: faculty.email,
         faculty: faculty.faculty_name,
         canSeeAllFaculty: faculty.can_see_all_faculty,
+        token,
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Authentication failed.";

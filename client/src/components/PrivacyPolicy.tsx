@@ -50,7 +50,7 @@ export function PrivacyPolicy({ onBack }: { onBack?: () => void }) {
             <ul className="list-disc pl-5 space-y-1.5 text-muted-foreground">
               <li>Authenticate your identity as a verified faculty member or coordinator.</li>
               <li>Display your authorized faculty schedule while keeping public selection secure.</li>
-              <li>Maintain your authenticated session via encrypted, HTTP-only session cookies.</li>
+              <li>Maintain your authenticated session with an HTTP-only cookie, and a copy of that session kept on this device so a home-screen shortcut stays signed in.</li>
             </ul>
             <p className="text-muted-foreground">
               We <strong className="text-foreground">do not sell, rent, or transfer</strong> your Google user data to third parties. We do not use Google user data for advertising, profiling, or marketing purposes.
@@ -60,7 +60,7 @@ export function PrivacyPolicy({ onBack }: { onBack?: () => void }) {
           <section className="space-y-3">
             <h2 className="text-lg font-semibold text-foreground">3. Data Storage &amp; Security</h2>
             <p className="text-muted-foreground">
-              Faculty email mappings and permissions are maintained securely in an encrypted cloud PostgreSQL database (Neon). Authentication sessions use HMAC-SHA256 signed <code>httpOnly</code> cookies with <code>SameSite=Lax</code> security flags to protect against cross-site request forgery.
+              Faculty email mappings and permissions are maintained securely in an encrypted cloud PostgreSQL database (Neon). Authentication sessions use an HMAC-SHA256 signed <code>httpOnly</code> cookie with <code>SameSite=Lax</code>, and the same signed token stored on this device so a phone shortcut can stay signed in. Sign-out removes both.
             </p>
           </section>
 

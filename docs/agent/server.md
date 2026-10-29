@@ -14,8 +14,8 @@ Express API in `server/src`. Local entry `server/src/index.ts`. Vercel entry `se
 | `GET /api/changes` | Recent change rows |
 | `GET /api/health` | 200 after a successful sync, else 503 |
 | `POST /api/auth/pin-verify` | Verify 6-digit student batch access PIN against Neon PostgreSQL `batch_access_codes` |
-| `POST /api/auth/google` | Verify Google ID token, restrict to allowed domains (`@itm.edu`, `@isu.ac.in`), match `faculty_directory` in Neon PostgreSQL, issue HttpOnly session cookie |
-| `GET /api/auth/me` | Current authenticated faculty session status |
+| `POST /api/auth/google` | Verify Google ID token, restrict to allowed domains (`@itm.edu`, `@isu.ac.in`), match `faculty_directory` in Neon PostgreSQL, issue HttpOnly session cookie and return the same token for the client to keep |
+| `GET /api/auth/me` | Current authenticated faculty session. Accepts the cookie or `Authorization: Bearer` |
 | `POST /api/auth/logout` | Clear faculty session cookie |
 | `GET /api/auth/config` | Returns Google OAuth client ID |
 

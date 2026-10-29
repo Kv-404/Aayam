@@ -22,6 +22,7 @@ const colorsKey = "timetable-colors";
 const boldKey = "timetable-bold";
 const meetKey = "timetable-meet";
 const canSeeAllKey = "timetable-can-see-all-faculty";
+const facultySessionKey = "timetable-faculty-session";
 const unlockedBatchesKey = "timetable-unlocked-batches";
 const studentBatchKey = "timetable-student-batch";
 
@@ -199,6 +200,22 @@ export function saveFaculty(name: string) {
   if (name) {
     storageSet(facultyKey, name);
     storageSet(roleKey, "faculty");
+  }
+}
+
+export function readFacultySession() {
+  return storageGet(facultySessionKey) ?? "";
+}
+
+export function saveFacultySession(token: string) {
+  if (token) storageSet(facultySessionKey, token);
+}
+
+export function clearFacultySession() {
+  try {
+    localStorage.removeItem(facultySessionKey);
+  } catch {
+    // The cookie clear still signs the browser out.
   }
 }
 
