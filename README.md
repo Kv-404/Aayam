@@ -142,4 +142,16 @@ The project is optimized for deployment on Vercel:
 1. **Client Build**: Vercel compiles the Vite client into `dist/`.
 2. **Serverless API**: The API endpoint `api/[[...path]].js` is bundled via `npm run build:api`. This bundle is committed to the repository because Vercel requires function manifests prior to the build phase.
 3. **Database & Storage**: On Vercel, SQLite runs in `/tmp/timetable.sqlite`. State survives cold starts and restarts through Neon PostgreSQL (`timetable_archive` table) or Vercel Blob.
-4. Production deploys trigger automatically from commits to the `main` branch. Live site: [https://timetable.kv404.dev](https://timetable.kv404.dev).
+4. Production deploys trigger automatically from commits to the `main` branch. Day-to-day work lands on `dev`. Live site: [https://timetable.kv404.dev](https://timetable.kv404.dev).
+
+---
+
+## License
+
+Aayam is free software under the [GNU Affero General Public License v3.0 only](LICENSE). You may copy it. Keep the copyright notice, `Copyright (C) 2026 Kv-404`. If you share a copy, or run a modified copy as a website, you must publish that source under the same license.
+
+Source: [github.com/Kv-404/Aayam](https://github.com/Kv-404/Aayam)
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues privately, as described in [SECURITY.md](SECURITY.md).

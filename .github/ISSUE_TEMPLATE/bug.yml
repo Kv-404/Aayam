@@ -1,0 +1,19 @@
+name: Bug
+description: Something in the timetable is wrong
+title: ""
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps
+      description: Role, batch or faculty, and the clicks that get there. Do not include a PIN or a session token.
+    validations:
+      required: true

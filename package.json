@@ -1,6 +1,7 @@
 {
   "name": "itm-timetable",
   "private": true,
+  "license": "AGPL-3.0-only",
   "workspaces": [
     "server",
     "client"

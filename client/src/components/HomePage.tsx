@@ -11,6 +11,8 @@ import { cohortToSlug } from "@/lib/slug";
 
 type Step = "role" | "pin" | "cohort" | "theme";
 
+const sourceUrl = "https://github.com/Kv-404/Aayam";
+
 const sees = [
   { title: "Today", note: "The day's classes in order, with the room and who is teaching." },
   { title: "This week", note: "Those same classes as a grid, so you can see the whole week at once." },
@@ -170,6 +172,9 @@ export function HomePage({
                 <button type="button" onClick={() => onOpenFacultyLogin?.()} className="w-full rounded-lg border border-border px-4 py-2.5 text-sm hover:bg-muted sm:w-auto">
                   Faculty sign in
                 </button>
+                <a href={sourceUrl} target="_blank" rel="noreferrer" className="inline-flex w-full items-center justify-center rounded-lg px-4 py-2.5 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline sm:w-auto">
+                  View the code
+                </a>
               </div>
             </div>
             <SheetPreview />
@@ -214,6 +219,9 @@ export function HomePage({
           <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-5 py-4 text-xs text-muted-foreground sm:px-8">
             <p>College timetable for students and faculty.</p>
             <div className="flex items-center gap-3">
+              <a href={sourceUrl} target="_blank" rel="noreferrer" className="underline-offset-4 hover:text-foreground hover:underline">
+                GitHub
+              </a>
               <a href="/privacy" onClick={(event) => openPage(event, "/privacy")} className="underline-offset-4 hover:text-foreground hover:underline">
                 Privacy
               </a>
@@ -378,6 +386,10 @@ export function HomePage({
       </div>
 
       <footer className={`flex items-center justify-center gap-3 border-t border-border/40 text-center text-xs text-muted-foreground ${step === "theme" ? "mt-6 pt-4" : "mt-8 pt-4"}`}>
+        <a href={sourceUrl} target="_blank" rel="noreferrer" className="underline-offset-4 hover:text-foreground hover:underline">
+          GitHub
+        </a>
+        <span aria-hidden="true">•</span>
         <a href="/privacy" onClick={(event) => openPage(event, "/privacy")} className="underline-offset-4 hover:text-foreground hover:underline">
           Privacy Policy
         </a>
