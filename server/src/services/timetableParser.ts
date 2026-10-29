@@ -34,25 +34,44 @@ interface Matrix {
   own: (row: number, col: number) => string;
   masterOf: (row: number, col: number) => { row: number; col: number; text: string } | null;
   isYellow: (row: number, col: number) => boolean;
+  isRed: (row: number, col: number) => boolean;
+}
+
+function fillRgb(fill: ExcelJS.Fill | undefined): { r: number; g: number; b: number } | null {
+  if (!fill || typeof fill !== "object") return null;
+  const argb =
+    (fill as { fgColor?: { argb?: string }; bgColor?: { argb?: string } }).fgColor?.argb ||
+    (fill as { fgColor?: { argb?: string }; bgColor?: { argb?: string } }).bgColor?.argb;
+  if (!argb || typeof argb !== "string") return null;
+  const hex = argb.length === 8 ? argb.slice(2) : argb;
+  if (hex.length !== 6) return null;
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  if ([r, g, b].some((part) => Number.isNaN(part))) return null;
+  return { r, g, b };
+}
+
+function matchesFill(cell: ExcelJS.Cell, test: (rgb: { r: number; g: number; b: number }) => boolean): boolean {
+  const master = cell.master ?? cell;
+  for (const fill of [cell.fill, master.fill]) {
+    const rgb = fillRgb(fill);
+    if (rgb && test(rgb)) return true;
+  }
+  return false;
 }
 
 function isYellowCell(cell: ExcelJS.Cell): boolean {
-  const master = cell.master ?? cell;
-  const fills = [cell.fill, master.fill];
-  for (const f of fills) {
-    if (!f || typeof f !== "object") continue;
-    const argb =
-      (f as { fgColor?: { argb?: string }; bgColor?: { argb?: string } }).fgColor?.argb ||
-      (f as { fgColor?: { argb?: string }; bgColor?: { argb?: string } }).bgColor?.argb;
-    if (!argb || typeof argb !== "string") continue;
-    const hex = argb.length === 8 ? argb.slice(2) : argb;
-    if (hex.length !== 6) continue;
-    const r = parseInt(hex.slice(0, 2), 16);
-    const g = parseInt(hex.slice(2, 4), 16);
-    const b = parseInt(hex.slice(4, 6), 16);
-    if (r >= 180 && g >= 180 && b <= 120) return true;
-  }
-  return false;
+  return matchesFill(cell, ({ r, g, b }) => r >= 180 && g >= 180 && b <= 120);
+}
+
+/** Sheet red is FF0000. Orange timing cells (FF9900) and amber headers are not red. */
+function isRedCell(cell: ExcelJS.Cell): boolean {
+  return matchesFill(cell, ({ r, g, b }) => r >= 170 && g <= 80 && b <= 80 && r - g >= 100 && r - b >= 100);
+}
+
+function isBreakSubject(subject: string) {
+  return /^(lunch(\s*break)?|short\s*break|break|recess)$/i.test(canon(subject));
 }
 
 const HEADER_ALIASES: Record<string, string[]> = {
@@ -125,8 +144,10 @@ function loadMatrix(worksheet: ExcelJS.Worksheet): Matrix {
       return { row: Number(master.row), col: columnIndex(master), text };
     },
     isYellow(row, col) {
-      const cell = worksheet.getCell(row, col);
-      return isYellowCell(cell);
+      return isYellowCell(worksheet.getCell(row, col));
+    },
+    isRed(row, col) {
+      return isRedCell(worksheet.getCell(row, col));
     },
   };
 }
@@ -325,10 +346,14 @@ function parseGrid(matrix: Matrix, tabName: string, dateOrder: "DMY" | "MDY"): P
       let subject = valueAt(matrix, blockRow, division.col, true);
       const faculty = facultyRow ? valueAt(matrix, facultyRow, division.col, false) : "";
       const room = roomRow ? valueAt(matrix, roomRow, division.col, false) : "";
-      const statusText = statusRow ? valueAt(matrix, statusRow, division.col, false) : "";
+      let statusText = statusRow ? valueAt(matrix, statusRow, division.col, false) : "";
       const reasonText = reasonRow ? valueAt(matrix, reasonRow, division.col, false) : "";
       if (!canon(subject) && matrix.isYellow(blockRow, division.col)) {
         subject = "LUNCH BREAK";
+      }
+      // A red subject cell is a cancellation. The subject stays so the card can keep its colour.
+      if (canon(subject) && !isBreakSubject(subject) && matrix.isRed(blockRow, division.col)) {
+        if (!canon(statusText) || /^(scheduled|confirmed)$/i.test(canon(statusText))) statusText = "cancelled";
       }
       if (!canon(subject) && !canon(statusText)) continue;
       slots.push({
@@ -406,7 +431,10 @@ function parseRowTable(matrix: Matrix, tabName: string, dateOrder: "DMY" | "MDY"
     if (!canon(subject) && subjectCol && matrix.isYellow(row, subjectCol)) {
       subject = "LUNCH BREAK";
     }
-    const statusText = read("status");
+    let statusText = read("status");
+    if (canon(subject) && !isBreakSubject(subject) && subjectCol && matrix.isRed(row, subjectCol)) {
+      if (!canon(statusText) || /^(scheduled|confirmed)$/i.test(canon(statusText))) statusText = "cancelled";
+    }
     const timeText = read("time");
     const startText = read("start");
     const endText = read("end");

@@ -21,8 +21,8 @@ Shared types and faculty-name matching are in `docs/agent/server.md`. Read a sec
 - The sheet stays shared so anyone with the link can view. The browser never gets a Google key.
 - A lecture removed from a day that is still published stays on the grid as cancelled. It keeps its subject colour, with strikethrough and a Cancelled label. It must survive a process restart through the blob archive.
 - A new sheet whose dates do not overlap the saved week is a fresh baseline: no added, removed, or cancelled events, and change rows from other weeks are dropped.
-- Only the text `OFF`, `cancelled`, or `holiday` is a cancellation. A full-day merged label such as Dussehra is that subject on every slot, including lunch.
-- Monday and Saturday off days are white cells in the sheet, not a special fill. Cancellation is text, not cell colour.
+- A slot is cancelled by the text `OFF`, `cancelled`, or `holiday`, or by a red fill on the subject cell. A red lecture keeps its subject. A full-day merged label such as Dussehra is that subject on every slot, including lunch, unless that cell is red.
+- Monday and Saturday off days are white cells in the sheet. The word `OFF` cancels them. Orange, amber, gold, yellow, and white fills do not.
 - Faculty names can share a cell (`Dr. Aarti & Ms. Kashmira`). Match people with `shared/faculty.ts`. Do not invent a second matcher.
 - Phone timetable stays sparse: subject, cohort or faculty, compact room. Do not add extra lines to lecture cards.
 - Cancelled cards keep the subject colour. Graphite is only for OFF. Do not bring back a solid danger fill.

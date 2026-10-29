@@ -147,6 +147,69 @@ describe("messy and alternate tabs", () => {
     assert.equal(breakSlot?.startMinutes, 780);
     assert.equal(breakSlot?.endMinutes, 840);
   });
+
+  it("treats a red subject cell as cancelled and leaves orange and white cells scheduled", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Sunday");
+    sheet.getCell("A1").value = "ITM SKILLS UNIVERSITY";
+    sheet.getCell("A2").value = "SEMESTER - 3";
+    sheet.getCell("A3").value = "BATCH 2025 - 29";
+    sheet.getCell("A4").value = "01/11/2026 (Saturday)";
+    sheet.getCell("A5").value = "Timing";
+    sheet.getCell("B5").value = "Sam Altman 2025";
+    sheet.getCell("C5").value = "Jeff Bezos 2025";
+    sheet.getCell("D5").value = "Larry Page 2025";
+    sheet.getCell("A7").value = "10:00 AM - 11:00 AM";
+    sheet.getCell("A7").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF9900" } };
+
+    const red = sheet.getCell("B7");
+    red.value = "Machine Learning Fundamentals";
+    red.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF0000" } };
+    sheet.getCell("A8").value = "Faculty";
+    sheet.getCell("B8").value = "Prof. Harshal";
+    sheet.getCell("B8").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF0000" } };
+    sheet.getCell("A9").value = "Classroom No";
+    sheet.getCell("B9").value = "meet.google.com/mzz-byaf-nnk";
+    sheet.getCell("B9").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF0000" } };
+
+    sheet.getCell("C7").value = "Data Structures and Algorithm - II";
+    sheet.getCell("C7").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFFFF" } };
+    sheet.getCell("C8").value = "Prof. Shreya";
+    sheet.getCell("C9").value = "Classroom - 5";
+
+    const orange = sheet.getCell("D7");
+    orange.value = "Software Engineering";
+    orange.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF9900" } };
+    sheet.getCell("D8").value = "Mr. Lokesh (VF)";
+    sheet.getCell("D9").value = "Classroom - 6";
+
+    sheet.getCell("A13").value = "12:10 PM - 01:00 PM";
+    const lunch = sheet.getCell("B13");
+    lunch.value = "LUNCH BREAK";
+    lunch.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFF00" } };
+
+    const parsed = await parseTimetableSource(workbook, { dateOrder: "DMY" });
+    const normalized = normalizeWorkbook(parsed, { courseFallback: "BTech" });
+    const sam = normalized.lectures.find((lecture) => lecture.division === "Sam Altman 2025" && lecture.startMinutes === 600);
+    const jeff = normalized.lectures.find((lecture) => lecture.division === "Jeff Bezos 2025" && lecture.startMinutes === 600);
+    const larry = normalized.lectures.find((lecture) => lecture.division === "Larry Page 2025" && lecture.startMinutes === 600);
+    const breakSlot = normalized.lectures.find((lecture) => lecture.kind === "break");
+
+    assert.equal(sam?.subject, "Machine Learning Fundamentals");
+    assert.equal(sam?.faculty, "Prof. Harshal");
+    assert.equal(sam?.room, "meet.google.com/mzz-byaf-nnk");
+    assert.equal(sam?.kind, "lecture");
+    assert.equal(sam?.sourceStatus, "cancelled");
+    assert.equal(sam?.explicitMark, "cancelled");
+    assert.equal(sam?.date, "2026-11-01");
+    assert.equal(sam?.weekday, "Sunday");
+    assert.equal(jeff?.sourceStatus, "scheduled");
+    assert.equal(jeff?.subject, "Data Structures and Algorithm - II");
+    assert.equal(larry?.sourceStatus, "scheduled");
+    assert.equal(larry?.subject, "Software Engineering");
+    assert.equal(breakSlot?.subject, "Lunch break");
+    assert.equal(breakSlot?.sourceStatus, "scheduled");
+  });
 });
 
 describe("program and batch lines", () => {

@@ -57,7 +57,7 @@ SQLite is `server/src/db.ts`. Local file defaults to `server/data/timetable.sqli
 
 ## Parser
 
-`timetableParser.ts` reads the xlsx. It does not use fill colour.
+`timetableParser.ts` reads the xlsx. A yellow fill on an empty subject cell is a lunch break. A red fill on a subject cell marks that lecture cancelled and keeps the subject. Other fills are ignored.
 
 Weekday tabs are a grid. Column A labels the row (`classify`): time range, `Timing` header, faculty, classroom/room, status, reason, semester/batch/date meta. Cohort names are the header cells. A merged day-level value (OFF, or a holiday name) is inherited by later time slots. Faculty and room rows must not inherit that merge (`valueAt` with `allowTimeMerge`).
 

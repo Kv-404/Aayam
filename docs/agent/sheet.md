@@ -21,15 +21,18 @@ Lunch and other breaks are their own rows. They are not lectures. Faculty mode h
 
 ## What is cancelled
 
-Text only. The October 2026 sheet has no red fills and no tab colours used as status. Fills that do exist are orange, amber, yellow, and white. Monday and Saturday OFF cells are white.
+A slot is cancelled when the subject cell says `OFF`, `cancelled`, or `holiday`, or when that cell is filled red. On the current sheets the red is `FF0000`.
 
-These words cancel a slot: `OFF`, `cancelled`, `holiday` (matched by the parser, not by colour).
+A red lecture keeps its subject, faculty, and room. The client draws it in the subject colour, with strikethrough and a Cancelled label. It is not an OFF day.
 
 These do not:
 
-- A holiday name merged down the day, such as Dussehra. That name is the subject of every slot in the merge, including lunch.
-- A blank cell.
+- Orange (`FF9900`), amber, gold, yellow, and white fills. The timing column is orange. Yellow on an empty cell is still a lunch break. Yellow behind a subject name leaves that subject scheduled.
+- A holiday name merged down the day, such as Dussehra, unless that cell is also red. The name is the subject of every slot in the merge, including lunch.
+- A blank cell, including a blank red cell.
 - A row that vanished because the whole day tab was replaced. That is a new day, not a set of cancellations.
+
+Monday and Saturday OFF cells are white. The word `OFF` cancels the slot. The white fill does not.
 
 `OFF` stays on the grid until the sheet text changes. The client renders a full OFF day as one off state, not as a stack of struck-through classes. See `docs/agent/client.md`.
 
