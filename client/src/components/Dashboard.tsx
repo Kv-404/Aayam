@@ -4,6 +4,7 @@ import { findCoordinator } from "@shared/coordinators";
 import { changeMatchesFaculty, listFacultyNames } from "@shared/faculty";
 import { CalendarPlus, Check, ChevronDown, ChevronLeft, Download, FileSpreadsheet, LogOut, RefreshCw, Settings } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { motion } from "motion/react";
 import { FacultyLoginModal } from "@/components/FacultyLoginModal";
 import { FacultyScopeMenu } from "@/components/FacultyScopeMenu";
 import CodeSlots from "@/components/CodeSlots";
@@ -518,10 +519,10 @@ export function Dashboard({
     <Tabs value={view} onValueChange={setView} className="min-h-dvh flex flex-col">
       <header className="sticky top-0 z-30 border-b border-border bg-background/90 backdrop-blur-md">
         <div className="flex flex-col gap-2 px-3 py-2.5 sm:gap-3 sm:px-6 sm:py-3.5">
-          {/* Row 1: Brand (left), HeaderStatus (center on desktop), Toolbar (right) */}
-          <div className="flex flex-wrap items-center gap-y-2 gap-x-2 sm:gap-x-3">
+          {/* Row 1: Brand (left), Desktop Status (center), Toolbar (right) - NEVER wraps on mobile */}
+          <div className="flex items-center justify-between gap-1.5 sm:gap-3 w-full min-w-0">
             {/* Left: Brand + Identity (Cohort / Faculty) */}
-            <div className="order-1 min-w-0 flex items-center gap-1.5 sm:gap-2">
+            <div className="min-w-0 flex items-center gap-1.5 sm:gap-2 shrink">
               <a
                 href="/"
                 onClick={(e) => {
@@ -530,9 +531,9 @@ export function Dashboard({
                 }}
                 title="Aayam Home"
                 aria-label="Aayam Home"
-                className="inline-flex shrink-0 items-center justify-center rounded-lg p-1 text-foreground/80 hover:text-foreground hover:bg-muted transition-colors"
+                className="inline-flex shrink-0 items-center justify-center rounded-lg p-0.5 text-foreground/80 hover:text-foreground hover:bg-muted transition-colors"
               >
-                <AayamLogo size={18} className="sm:scale-110 sm:origin-left transition-transform" />
+                <AayamLogo size={16} className="sm:scale-110 sm:origin-left transition-transform" />
               </a>
               {role === "faculty" ? (
                 board.wide ? (
@@ -562,8 +563,20 @@ export function Dashboard({
               )}
             </div>
 
+            {/* Center on Desktop: HeaderStatus */}
+            <div className="hidden sm:flex flex-1 items-center justify-center min-w-0 px-2 max-w-lg mx-auto">
+              <HeaderStatus
+                lecture={upcoming}
+                today={zone.iso}
+                minutes={zone.minutes}
+                showCohort={role === "faculty" && board.showDivision}
+                meet={meet}
+                clockLabel={formatClockTime(now, data.timezone)}
+              />
+            </div>
+
             {/* Right: Actions Toolbar */}
-            <div className="order-2 ml-auto sm:order-3 relative z-30 flex shrink-0 items-center gap-0.5 sm:gap-1">
+            <div className="relative z-30 flex shrink-0 items-center gap-0.5 sm:gap-1">
               <SearchPanel
                 query={filters.query}
                 placeholder={searchPlaceholder}
@@ -596,7 +609,7 @@ export function Dashboard({
                 target="_blank"
                 rel="noreferrer"
                 aria-label="Open the sheet"
-                className="inline-flex size-8 sm:size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                className="inline-flex size-7.5 sm:size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
               >
                 <FileSpreadsheet className="size-4" aria-hidden="true" />
               </a>
@@ -605,21 +618,21 @@ export function Dashboard({
               </IconButton>
               <AppearanceMenu theme={theme} colors={colors} bold={bold} meet={meet} subjects={subjects} notifications={notifications.optedIn} onTheme={onTheme} onColors={onColors} onBold={onBold} onMeet={onMeet} onDisable={notifications.disable} role={role} onStudentLogout={handleStudentLogout} />
             </div>
-
-            {/* Center on Desktop, Line 2 on Mobile */}
-            <div className="order-3 w-full sm:order-2 sm:w-auto sm:flex-1 sm:max-w-lg sm:mx-auto min-w-0">
-              <HeaderStatus
-                lecture={upcoming}
-                today={zone.iso}
-                minutes={zone.minutes}
-                showCohort={role === "faculty" && board.showDivision}
-                meet={meet}
-                clockLabel={formatClockTime(now, data.timezone)}
-              />
-            </div>
           </div>
 
-          {/* Row 2: View Controls (RubberSegment + Notify) and Day Navigation Chips */}
+          {/* Row 2 on Mobile: HeaderStatus Pill */}
+          <div className="sm:hidden w-full">
+            <HeaderStatus
+              lecture={upcoming}
+              today={zone.iso}
+              minutes={zone.minutes}
+              showCohort={role === "faculty" && board.showDivision}
+              meet={meet}
+              clockLabel={formatClockTime(now, data.timezone)}
+            />
+          </div>
+
+          {/* Row 3: View Controls (RubberSegment + Notify) and Day Navigation Chips */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4">
             {/* View switcher + Notify: on mobile sits above day chips, on desktop sits on the right */}
             <div className="order-1 sm:order-2 flex items-center justify-between sm:justify-end gap-2 shrink-0">
@@ -680,6 +693,7 @@ export function Dashboard({
           <TabsContent value="today" className="rise mt-0">
             <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd} className="min-h-[40vh]">
               <TodayView
+                key={filters.day || todayPack.lectures[0]?.date || zone.weekday}
                 lectures={todayPack.lectures}
                 today={zone.iso}
                 minutes={zone.minutes}
@@ -694,7 +708,7 @@ export function Dashboard({
           <TabsContent value="week" className="rise mt-0">
             <WeeklyView lectures={weekLectures} showDivision={role === "faculty" && board.showDivision} today={zone.iso} minutes={zone.minutes} meet={meet} />
           </TabsContent>
-          <TabsContent value="updates" className="mt-0">
+          <TabsContent value="updates" className="rise mt-0">
             <RecentChanges changes={changes} timeZone={data.timezone} />
           </TabsContent>
         </div>
@@ -1062,10 +1076,10 @@ function StudentCohortMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((prev) => !prev)}
-        className="inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-1 text-sm font-medium hover:bg-muted/50 transition-colors"
+        className="inline-flex max-w-full items-center gap-1 rounded-md px-1 sm:px-1.5 py-1 text-sm font-medium hover:bg-muted/50 transition-colors"
       >
         <span className="min-w-0 text-left">
-          <span className="block truncate max-w-[110px] xs:max-w-[150px] sm:max-w-[200px] font-semibold text-foreground text-sm">
+          <span className="block truncate max-w-[85px] xs:max-w-[130px] sm:max-w-[200px] font-semibold text-foreground text-xs sm:text-sm">
             {selected ? cohortLabel(selected.division) : "Cohort"}
           </span>
           {selected && (
@@ -1074,7 +1088,7 @@ function StudentCohortMenu({
             </span>
           )}
         </span>
-        <ChevronDown className="size-3.5 sm:size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <ChevronDown className="size-3 sm:size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       </button>
       {open && (
         <div role="menu" aria-label="Cohorts in batch" className="menu-pop absolute top-full left-0 z-40 mt-1 max-h-[min(24rem,calc(100dvh-5rem))] min-w-56 overflow-y-auto rounded-lg border border-border bg-background p-1 shadow-sm">
@@ -1250,17 +1264,28 @@ function DayChip({
       aria-pressed={selected}
       aria-current={today ? "date" : undefined}
       onClick={onClick}
-      className={`day-chip shrink-0 flex flex-col items-center justify-center rounded-md px-2 py-1.5 text-xs sm:text-[13px] sm:px-2.5 transition-all ${
-        selected
-          ? "bg-foreground font-semibold text-background shadow-xs"
-          : today
-            ? "bg-background/80 sm:bg-transparent font-semibold text-foreground hover:bg-background sm:hover:bg-muted"
-            : "text-muted-foreground hover:text-foreground hover:bg-background/40 sm:hover:bg-muted"
-      }`}
+      className="relative day-chip shrink-0 flex flex-col items-center justify-center rounded-md px-2 py-1.5 text-xs sm:text-[13px] sm:px-2.5 transition-colors"
     >
-      <span>{children}</span>
+      {selected && (
+        <motion.span
+          layoutId="active-day-chip"
+          transition={{ type: "spring", stiffness: 450, damping: 35 }}
+          className="absolute inset-0 rounded-md bg-foreground shadow-xs"
+        />
+      )}
+      <span
+        className={`relative z-10 transition-colors ${
+          selected
+            ? "text-background font-semibold"
+            : today
+              ? "text-foreground font-semibold"
+              : "text-muted-foreground hover:text-foreground"
+        }`}
+      >
+        {children}
+      </span>
       {today && !selected && (
-        <span className="size-1 rounded-full bg-primary mt-0.5 sm:hidden" />
+        <span className="relative z-10 size-1 rounded-full bg-primary mt-0.5 sm:hidden" />
       )}
     </button>
   );

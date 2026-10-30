@@ -37,7 +37,7 @@ export function TodayView({
   }
   const todayHeading = date === today;
   return (
-    <div>
+    <div className="rise">
       <div className="flex items-center justify-between mb-2 sm:mb-4">
         <h2 className={todayHeading ? "text-foreground" : "text-muted-foreground"}>
           <span className="font-sans text-sm font-semibold tracking-normal sm:hidden">
