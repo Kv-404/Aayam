@@ -237,6 +237,72 @@ export function Dashboard({
   const activeSheet = role === "student" ? choice : facultyChoice;
   const sheetUrl = sheetUrlFor(data.sheets, activeSheet, data.spreadsheetUrl);
 
+  function navigateDay(direction: -1 | 1) {
+    if (days.length <= 1) return;
+    const activeDay = filters.day || zone.weekday;
+    const idx = days.indexOf(activeDay);
+    const validIdx = idx === -1 ? 0 : idx;
+    const nextIdx = (validIdx + direction + days.length) % days.length;
+    const nextDay = days[nextIdx];
+    if (nextDay) {
+      patch({ day: nextDay });
+      if (view !== "today") setView("today");
+    }
+  }
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      if (e.key === "w" || e.key === "W") {
+        setView("week");
+      } else if (e.key === "d" || e.key === "D" || e.key === "t" || e.key === "T") {
+        setView("today");
+      } else if (e.key === "u" || e.key === "U") {
+        setView("updates");
+      } else if (e.key === "ArrowLeft" && view === "today") {
+        navigateDay(-1);
+      } else if (e.key === "ArrowRight" && view === "today") {
+        navigateDay(1);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [view, filters.day, zone.weekday, days]);
+
+  const touchStartX = useRef<number | null>(null);
+  const touchStartY = useRef<number | null>(null);
+
+  function handleTouchStart(e: React.TouchEvent) {
+    touchStartX.current = e.touches[0]?.clientX ?? null;
+    touchStartY.current = e.touches[0]?.clientY ?? null;
+  }
+
+  function handleTouchEnd(e: React.TouchEvent) {
+    if (touchStartX.current == null || touchStartY.current == null) return;
+    const deltaX = (e.changedTouches[0]?.clientX ?? 0) - touchStartX.current;
+    const deltaY = (e.changedTouches[0]?.clientY ?? 0) - touchStartY.current;
+    touchStartX.current = null;
+    touchStartY.current = null;
+
+    if (Math.abs(deltaX) > 45 && Math.abs(deltaX) > Math.abs(deltaY) * 1.4) {
+      if (deltaX < 0) {
+        navigateDay(1);
+      } else {
+        navigateDay(-1);
+      }
+    }
+  }
+
   function choose(division: string) {
     const next = choices.find((item) => item.division === division || item.division.toLowerCase() === division.toLowerCase());
     const targetDivision = next?.division ?? division;
@@ -449,11 +515,13 @@ export function Dashboard({
   const searchPlaceholder = role === "faculty" ? "Subject, cohort, or room" : "Subject, faculty, or room";
 
   return (
-    <Tabs value={view} onValueChange={setView} className="min-h-dvh">
+    <Tabs value={view} onValueChange={setView} className="min-h-dvh flex flex-col">
       <header className="sticky top-0 z-30 border-b border-border bg-background/90 backdrop-blur-md">
-        <div className="flex flex-col gap-2.5 px-4 py-3 sm:gap-3 sm:px-6 sm:py-4">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <div className="order-1 min-w-0 shrink-0 flex items-center gap-2">
+        <div className="flex flex-col gap-2 px-3 py-2.5 sm:gap-3 sm:px-6 sm:py-3.5">
+          {/* Row 1: Brand (left), HeaderStatus (center on desktop), Toolbar (right) */}
+          <div className="flex flex-wrap items-center gap-y-2 gap-x-2 sm:gap-x-3">
+            {/* Left: Brand + Identity (Cohort / Faculty) */}
+            <div className="order-1 min-w-0 flex items-center gap-1.5 sm:gap-2">
               <a
                 href="/"
                 onClick={(e) => {
@@ -462,9 +530,9 @@ export function Dashboard({
                 }}
                 title="Aayam Home"
                 aria-label="Aayam Home"
-                className="inline-flex items-center justify-center rounded-lg p-1 text-foreground/80 hover:text-foreground hover:bg-muted transition-colors"
+                className="inline-flex shrink-0 items-center justify-center rounded-lg p-1 text-foreground/80 hover:text-foreground hover:bg-muted transition-colors"
               >
-                <AayamLogo size={22} />
+                <AayamLogo size={18} className="sm:scale-110 sm:origin-left transition-transform" />
               </a>
               {role === "faculty" ? (
                 board.wide ? (
@@ -493,14 +561,16 @@ export function Dashboard({
                 <StudentCohortMenu choices={availableChoices} value={selected} onChange={choose} onSwitch={handleSwitchToFaculty} />
               )}
             </div>
-            <div className="relative z-30 order-2 ml-auto flex shrink-0 items-center sm:order-3">
+
+            {/* Right: Actions Toolbar */}
+            <div className="order-2 ml-auto sm:order-3 relative z-30 flex shrink-0 items-center gap-0.5 sm:gap-1">
               <SearchPanel
                 query={filters.query}
                 placeholder={searchPlaceholder}
                 filters={effective}
-                courses={courses}
-                batches={batches}
-                semesters={semesters}
+                courses={role === "student" ? [] : courses}
+                batches={role === "student" ? [] : batches}
+                semesters={role === "student" ? [] : semesters}
                 days={days}
                 subjects={subjects}
                 faculties={faculties}
@@ -526,7 +596,7 @@ export function Dashboard({
                 target="_blank"
                 rel="noreferrer"
                 aria-label="Open the sheet"
-                className="inline-flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                className="inline-flex size-8 sm:size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
               >
                 <FileSpreadsheet className="size-4" aria-hidden="true" />
               </a>
@@ -535,7 +605,9 @@ export function Dashboard({
               </IconButton>
               <AppearanceMenu theme={theme} colors={colors} bold={bold} meet={meet} subjects={subjects} notifications={notifications.optedIn} onTheme={onTheme} onColors={onColors} onBold={onBold} onMeet={onMeet} onDisable={notifications.disable} role={role} onStudentLogout={handleStudentLogout} />
             </div>
-            <div className="order-3 w-full min-w-0 sm:order-2 sm:w-auto sm:flex-1 sm:overflow-hidden">
+
+            {/* Center on Desktop, Line 2 on Mobile */}
+            <div className="order-3 w-full sm:order-2 sm:w-auto sm:flex-1 sm:max-w-lg sm:mx-auto min-w-0">
               <HeaderStatus
                 lecture={upcoming}
                 today={zone.iso}
@@ -546,23 +618,11 @@ export function Dashboard({
               />
             </div>
           </div>
-          <div className="flex min-w-0 items-center gap-2">
-            <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-              {days.map((day) => (
-                <DayChip
-                  key={day}
-                  today={day === zone.weekday}
-                  selected={view === "today" && (filters.day === day || (filters.day === "" && day === zone.weekday))}
-                  onClick={() => {
-                    patch({ day });
-                    setView("today");
-                  }}
-                >
-                  {day.slice(0, 3)}
-                </DayChip>
-              ))}
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
+
+          {/* Row 2: View Controls (RubberSegment + Notify) and Day Navigation Chips */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4">
+            {/* View switcher + Notify: on mobile sits above day chips, on desktop sits on the right */}
+            <div className="order-1 sm:order-2 flex items-center justify-between sm:justify-end gap-2 shrink-0">
               <RubberSegment
                 items={[
                   { value: "today", label: "Day" },
@@ -578,30 +638,67 @@ export function Dashboard({
                 size="sm"
                 radius={8}
                 aria-label="Timetable views"
-                className="shrink-0"
+                className="flex-1 sm:flex-initial max-w-[240px] sm:max-w-none shrink-0"
               />
               <NotifyControl optedIn={notifications.optedIn} pulse={reminders.pulse} onEnable={() => void notifications.enable()} />
             </div>
+
+            {/* Day Chips: on mobile displays as 6-col grid in Day view, on desktop displays as horizontal flex list */}
+            {days.length > 0 && (
+              <div
+                className={`order-2 sm:order-1 min-w-0 ${
+                  view === "today" ? "grid sm:flex" : "hidden sm:flex"
+                } gap-1 sm:overflow-x-auto rounded-lg bg-muted/40 p-1 sm:bg-transparent sm:p-0`}
+                style={view === "today" ? { gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))` } : undefined}
+              >
+                {days.map((day) => (
+                  <DayChip
+                    key={day}
+                    today={day === zone.weekday}
+                    selected={view === "today" && (filters.day === day || (filters.day === "" && day === zone.weekday))}
+                    onClick={() => {
+                      patch({ day });
+                      setView("today");
+                    }}
+                  >
+                    {day.slice(0, 3)}
+                  </DayChip>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </header>
 
-      <main id="timetable" className="px-4 py-4 sm:px-6 sm:py-5">
+      <main id="timetable" className="flex-1 flex flex-col px-4 py-4 sm:px-6 sm:py-5">
         <h1 className="sr-only">{role === "faculty" ? board.label : cohortLabel(selected)} timetable</h1>
         <p data-testid="sync-status" role={failing ? "alert" : "status"} className={`text-sm ${failing ? "mb-3 text-warning" : "sr-only"}`}>
           {failing ? data.sync.lastError || "Could not refresh. The last timetable is still shown." : syncedLabel(data.sync.lastSuccessAt, now)}
         </p>
 
-        <TabsContent value="today" className="rise mt-0">
-          <TodayView lectures={todayPack.lectures} today={zone.iso} minutes={zone.minutes} showDivision={role === "faculty" && board.showDivision} note={todayPack.note} meet={meet} />
-        </TabsContent>
-        <TabsContent value="week" className="rise mt-0">
-          <WeeklyView lectures={weekLectures} showDivision={role === "faculty" && board.showDivision} today={zone.iso} minutes={zone.minutes} meet={meet} />
-        </TabsContent>
-        <TabsContent value="updates" className="mt-0">
-          <RecentChanges changes={changes} timeZone={data.timezone} />
-        </TabsContent>
-        <footer className="mt-12 border-t border-border/40 py-6 text-center text-xs text-muted-foreground flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+        <div className="flex-1">
+          <TabsContent value="today" className="rise mt-0">
+            <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd} className="min-h-[40vh]">
+              <TodayView
+                lectures={todayPack.lectures}
+                today={zone.iso}
+                minutes={zone.minutes}
+                showDivision={role === "faculty" && board.showDivision}
+                note={todayPack.note}
+                meet={meet}
+                onPrevDay={() => navigateDay(-1)}
+                onNextDay={() => navigateDay(1)}
+              />
+            </div>
+          </TabsContent>
+          <TabsContent value="week" className="rise mt-0">
+            <WeeklyView lectures={weekLectures} showDivision={role === "faculty" && board.showDivision} today={zone.iso} minutes={zone.minutes} meet={meet} />
+          </TabsContent>
+          <TabsContent value="updates" className="mt-0">
+            <RecentChanges changes={changes} timeZone={data.timezone} />
+          </TabsContent>
+        </div>
+        <footer className="mt-auto pt-10 pb-6 border-t border-border/40 text-center text-xs text-muted-foreground flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
           <span>ITM / ISU Timetable</span>
           <span>•</span>
           <a
@@ -743,7 +840,7 @@ function CalendarMenu({ scope, label }: { scope: { division?: string; faculty?: 
         aria-expanded={open}
         aria-label={`Add ${label}'s week to a calendar`}
         onClick={() => setOpen((current) => !current)}
-        className="inline-flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+        className="inline-flex size-8 sm:size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
       >
         <CalendarPlus className="size-4" aria-hidden="true" />
       </button>
@@ -965,13 +1062,19 @@ function StudentCohortMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((prev) => !prev)}
-        className="inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-1 text-sm font-medium"
+        className="inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-1 text-sm font-medium hover:bg-muted/50 transition-colors"
       >
         <span className="min-w-0 text-left">
-          <span className="block truncate">{selected ? cohortLabel(selected.division) : "Cohort"}</span>
-          {selected && <span className="block truncate text-[11px] font-normal text-muted-foreground">{selected.course} · {selected.batch}</span>}
+          <span className="block truncate max-w-[110px] xs:max-w-[150px] sm:max-w-[200px] font-semibold text-foreground text-sm">
+            {selected ? cohortLabel(selected.division) : "Cohort"}
+          </span>
+          {selected && (
+            <span className="hidden xs:block truncate text-[10px] sm:text-[11px] font-normal text-muted-foreground">
+              {selected.course} · {selected.batch}
+            </span>
+          )}
         </span>
-        <ChevronDown className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <ChevronDown className="size-3.5 sm:size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       </button>
       {open && (
         <div role="menu" aria-label="Cohorts in batch" className="menu-pop absolute top-full left-0 z-40 mt-1 max-h-[min(24rem,calc(100dvh-5rem))] min-w-56 overflow-y-auto rounded-lg border border-border bg-background p-1 shadow-sm">
@@ -1123,23 +1226,42 @@ function IconButton({
       disabled={disabled}
       data-testid={testId}
       onClick={onClick}
-      className="inline-flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+      className="inline-flex size-8 sm:size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
     >
       {children}
     </button>
   );
 }
 
-function DayChip({ selected, today, children, onClick }: { selected: boolean; today: boolean; children: string; onClick: () => void }) {
+function DayChip({
+  selected,
+  today,
+  children,
+  onClick,
+}: {
+  selected: boolean;
+  today: boolean;
+  children: string;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
       aria-pressed={selected}
       aria-current={today ? "date" : undefined}
       onClick={onClick}
-      className={`day-chip shrink-0 rounded-md px-2.5 py-1.5 text-[13px] ${selected ? "bg-foreground font-medium text-background" : today ? "font-medium text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+      className={`day-chip shrink-0 flex flex-col items-center justify-center rounded-md px-2 py-1.5 text-xs sm:text-[13px] sm:px-2.5 transition-all ${
+        selected
+          ? "bg-foreground font-semibold text-background shadow-xs"
+          : today
+            ? "bg-background/80 sm:bg-transparent font-semibold text-foreground hover:bg-background sm:hover:bg-muted"
+            : "text-muted-foreground hover:text-foreground hover:bg-background/40 sm:hover:bg-muted"
+      }`}
     >
-      {children}
+      <span>{children}</span>
+      {today && !selected && (
+        <span className="size-1 rounded-full bg-primary mt-0.5 sm:hidden" />
+      )}
     </button>
   );
 }
@@ -1161,25 +1283,41 @@ function HeaderStatus({
 }) {
   if (!lecture) {
     return (
-      <p className="min-w-0 truncate text-sm text-muted-foreground">
-        {clockLabel}
-      </p>
+      <div className="flex items-center justify-between rounded-lg border border-border/40 bg-muted/20 px-2.5 py-1 text-xs text-muted-foreground w-full">
+        <span className="truncate">{clockLabel}</span>
+        <span className="text-[11px] text-muted-foreground/75 font-mono">No upcoming classes</span>
+      </div>
     );
   }
   const live = slotPhase(lecture, today, minutes) === "now";
   const range = formatCompactRange(lecture.startLabel, lecture.endLabel);
   const when = lecture.date && lecture.date !== today ? `${lecture.weekday.slice(0, 3)} ${range}` : range;
   return (
-    <p className="min-w-0 truncate text-sm" data-testid={live ? "now-banner" : "next-banner"}>
-      <span className={`mr-2 text-[11px] font-medium tracking-[0.14em] uppercase ${live ? "text-foreground" : "text-muted-foreground"}`}>{live ? "Now" : "Next"}</span>
-      <span className="font-medium tracking-tight">{lecture.subject}</span>
-      <span className="text-muted-foreground">
-        {" · "}
-        {showCohort ? `${cohortLabel(lecture.division)} · ` : ""}
-        {when}
-      </span>
-      {lecture.room ? <LectureRoom room={lecture.room} action={meet} variant="inline" /> : null}
-    </p>
+    <div
+      data-testid={live ? "now-banner" : "next-banner"}
+      className="flex items-center justify-between gap-2 rounded-lg border border-border/50 bg-muted/30 px-2.5 py-1 text-xs transition-colors w-full"
+    >
+      <div className="flex min-w-0 items-center gap-1.5">
+        <span
+          className={`inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+            live
+              ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold"
+              : "bg-muted text-muted-foreground font-mono"
+          }`}
+        >
+          {live && <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />}
+          {live ? "Now" : "Next"}
+        </span>
+        <span className="font-medium text-foreground truncate max-w-[130px] xs:max-w-[190px] sm:max-w-[240px] md:max-w-none">
+          {lecture.subject}
+        </span>
+      </div>
+      <div className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+        {showCohort && <span className="hidden xs:inline">{cohortLabel(lecture.division)} · </span>}
+        <span className="font-mono">{when}</span>
+        {lecture.room && <LectureRoom room={lecture.room} action={meet} variant="inline" />}
+      </div>
+    </div>
   );
 }
 
@@ -1211,8 +1349,10 @@ function resolveToday(lectures: PublicLecture[], today: string, day: string) {
   };
 }
 
+const shortDateFormatter = new Intl.DateTimeFormat("en-IN", { timeZone: "UTC", day: "numeric", month: "short" });
+
 function formatShort(iso: string) {
-  return new Intl.DateTimeFormat("en-IN", { timeZone: "UTC", day: "numeric", month: "short" }).format(new Date(`${iso}T12:00:00Z`));
+  return shortDateFormatter.format(new Date(`${iso}T12:00:00Z`));
 }
 
 function syncedLabel(iso: string | null, now: Date) {

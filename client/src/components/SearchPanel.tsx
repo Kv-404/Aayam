@@ -65,6 +65,27 @@ export function SearchPanel({
   }
 
   useEffect(() => {
+    function onGlobalKey(event: KeyboardEvent) {
+      if (event.key === "/" && !open) {
+        const target = event.target as HTMLElement | null;
+        if (
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          target instanceof HTMLSelectElement ||
+          target?.isContentEditable
+        ) {
+          return;
+        }
+        event.preventDefault();
+        place();
+        setOpen(true);
+      }
+    }
+    window.addEventListener("keydown", onGlobalKey);
+    return () => window.removeEventListener("keydown", onGlobalKey);
+  }, [open]);
+
+  useEffect(() => {
     if (!open) return;
     inputRef.current?.focus();
     place();
@@ -97,7 +118,7 @@ export function SearchPanel({
         data-testid="search-button"
         onClick={toggle}
         className={cn(
-          "inline-flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground",
+          "inline-flex size-8 sm:size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground",
           pressed && "bg-muted text-foreground",
         )}
       >

@@ -6,7 +6,18 @@ import CodeSlots from "@/components/CodeSlots";
 import { ColorSwitch } from "@/components/ColorSwitch";
 import { MeetChoice } from "@/components/MeetLink";
 import { verifyPin } from "@/lib/auth";
-import { clearStudentAuth, readStudentBatch, saveRole, saveSetup, saveStudentBatch, themes, type MeetAction, type ThemeId } from "@/lib/prefs";
+import {
+  clearStudentAuth,
+  isBatchUnlocked,
+  readStoredCohort,
+  readStudentBatch,
+  saveRole,
+  saveSetup,
+  saveStudentBatch,
+  themes,
+  type MeetAction,
+  type ThemeId,
+} from "@/lib/prefs";
 import { cohortToSlug } from "@/lib/slug";
 
 type Step = "role" | "pin" | "cohort" | "theme";
@@ -62,6 +73,12 @@ export function HomePage({
   onMeet,
 }: HomePageProps) {
   const initialBatch = readStudentBatch();
+  const savedCohort = readStoredCohort();
+  const hasSavedAccess = Boolean(
+    savedCohort &&
+    initialBatch &&
+    isBatchUnlocked(initialBatch.course, initialBatch.batch)
+  );
   const [step, setStep] = useState<Step>("role");
   const [program, setProgram] = useState(initialBatch?.course ?? "");
   const [year, setYear] = useState(initialBatch?.batch ?? "");
@@ -165,10 +182,26 @@ export function HomePage({
                 This site reads the official timetable sheet and shows it for one section, or for one teacher. You get today, the week, and the changes: a cancelled class or a moved room shows up here.
               </p>
               <div className="mt-8 flex flex-col gap-2.5 sm:flex-row sm:flex-wrap">
-                <button type="button" onClick={openStudent} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-foreground px-4 py-2.5 text-sm text-background sm:w-auto">
-                  Open as student
-                  <ArrowRight className="size-4" aria-hidden="true" />
-                </button>
+                {hasSavedAccess ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => onNavigateCohort(cohortToSlug(savedCohort))}
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-foreground px-4 py-2.5 text-sm text-background sm:w-auto font-medium"
+                    >
+                      Continue to {cohortLabel(savedCohort)}
+                      <ArrowRight className="size-4" aria-hidden="true" />
+                    </button>
+                    <button type="button" onClick={openStudent} className="w-full rounded-lg border border-border px-4 py-2.5 text-sm hover:bg-muted sm:w-auto">
+                      All sections
+                    </button>
+                  </>
+                ) : (
+                  <button type="button" onClick={openStudent} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-foreground px-4 py-2.5 text-sm text-background sm:w-auto">
+                    Open as student
+                    <ArrowRight className="size-4" aria-hidden="true" />
+                  </button>
+                )}
                 <button type="button" onClick={() => onOpenFacultyLogin?.()} className="w-full rounded-lg border border-border px-4 py-2.5 text-sm hover:bg-muted sm:w-auto">
                   Faculty sign in
                 </button>

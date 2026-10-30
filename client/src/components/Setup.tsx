@@ -10,6 +10,7 @@ import { fetchGoogleClientId, loginWithGoogleCredential, verifyPin } from "@/lib
 import { signInFacultyLens } from "@/lib/facultyView";
 import {
   clearStudentAuth,
+  isBatchUnlocked,
   readStoredCohort,
   readStudentBatch,
   saveCanSeeAllFaculty,
@@ -76,13 +77,13 @@ export function Setup({
     initialRole === "faculty"
       ? "faculty"
       : initialRole === "student"
-      ? (savedBatch || saved ? "cohort" : "pin")
+      ? (savedBatch ? "cohort" : "pin")
       : "role"
   );
   const [role, setRole] = useState<ViewerRole | "">(initialRole);
-  const [program, setProgram] = useState(savedBatch?.course ?? saved?.course ?? "");
-  const [year, setYear] = useState(savedBatch?.batch ?? saved?.batch ?? "");
-  const [picked, setPicked] = useState(saved ? saved.division : "");
+  const [program, setProgram] = useState(savedBatch?.course ?? "");
+  const [year, setYear] = useState(savedBatch?.batch ?? "");
+  const [picked, setPicked] = useState(savedBatch && saved ? saved.division : "");
   const [name, setName] = useState(faculties.includes(faculty) ? faculty : "");
   const [query, setQuery] = useState("");
   const [codeStatus, setCodeStatus] = useState<"idle" | "error" | "success">("idle");
@@ -255,7 +256,7 @@ export function Setup({
         <p className="text-muted-foreground mt-2 text-sm">{note}</p>
         {step === "role" && (
           <div className="mt-8 flex flex-col gap-3">
-            {readStoredCohort() && (
+            {readStoredCohort() && savedBatch && isBatchUnlocked(savedBatch.course, savedBatch.batch) && (
               <div className="rounded-xl border border-border/70 bg-card/60 p-3.5 flex items-center justify-between">
                 <div className="flex flex-col text-left">
                   <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">

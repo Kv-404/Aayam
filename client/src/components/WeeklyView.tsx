@@ -54,7 +54,7 @@ export function WeeklyView({
   useEffect(() => {
     const block = todayBlock.current;
     if (!block || !window.matchMedia("(max-width: 639px)").matches) return;
-    block.scrollIntoView({ block: "start", behavior: "instant" });
+    block.scrollIntoView({ block: "start", behavior: "smooth" });
   }, [today, dayKey]);
   if (days.length === 0) {
     return <p className="py-8 text-sm text-muted-foreground">No dated lectures match these filters.</p>;
@@ -73,8 +73,8 @@ export function WeeklyView({
         const weekday = dayLectures[0]?.weekday ?? "";
         const off = offDay(date);
         return (
-          <section key={date} ref={date === today ? todayBlock : undefined} className={`mb-6 ${date === today ? "scroll-mt-28" : ""}`}>
-            <h2 className="sticky top-24 z-20 flex items-baseline gap-2 border-b border-border bg-background py-2">
+          <section key={date} ref={date === today ? todayBlock : undefined} className={`mb-6 ${date === today ? "scroll-mt-36" : ""}`}>
+            <h2 className="flex items-baseline gap-2 border-b border-border bg-background py-2">
               <span className={`text-base font-semibold tracking-tight ${off ? "text-danger" : ""}`}>{off ? `${weekday} Off` : weekday.slice(0, 3)}</span>
               {!off && <span className="text-sm text-muted-foreground">{formatCalendarDate(date).replace(/^[A-Za-z]{3},?\s*/, "")}</span>}
               {date === today && !off && <span className="text-xs font-medium text-muted-foreground">Today</span>}
@@ -96,7 +96,7 @@ export function WeeklyView({
       <table className="w-full min-w-[760px] border-collapse text-left text-sm">
         <thead>
           <tr className="border-b border-border">
-            <th className="sticky left-0 z-10 bg-background px-3 py-3 align-bottom font-mono text-[11px] font-medium tracking-[0.22em] whitespace-nowrap text-muted-foreground uppercase">Time</th>
+            <th className="sticky left-0 z-10 bg-background border-r border-border/60 px-3 py-3 align-bottom font-mono text-[11px] font-medium tracking-[0.22em] whitespace-nowrap text-muted-foreground uppercase">Time</th>
             {days.map((date) => {
               const dayLectures = forDay(date);
               const weekday = dayLectures[0]?.weekday ?? "";
@@ -177,7 +177,7 @@ export function WeeklyView({
 
               return (
                 <tr key={start} className="border-b border-border align-top">
-                  <th className="sticky left-0 z-10 bg-background px-3 py-3 font-mono text-xs font-medium whitespace-nowrap text-muted-foreground">
+                  <th className="sticky left-0 z-10 bg-background border-r border-border/60 px-3 py-3 font-mono text-xs font-medium whitespace-nowrap text-muted-foreground">
                     <ClockLabel label={sample?.startLabel ?? ""} />
                     <span className="mt-1 block font-normal">
                       <ClockLabel label={sample?.endLabel ?? ""} />

@@ -74,9 +74,9 @@ export function TimetableFilters({
         <Select label="Cohort" value={filters.division} options={cohorts} allLabel="All cohorts" format={cohortFormat ?? cohortName} onChange={(division) => onChange({ division })} />
       ) : (
         <>
-          <Select label="Program" value={filters.course} options={courses} onChange={(course) => onChange({ course, batch: "", semester: "", division: "", subject: "", faculty: "", room: "" })} />
-          <Select label="Batch" value={filters.batch} options={batches} onChange={(batch) => onChange({ batch, semester: "", division: "", subject: "", faculty: "", room: "" })} />
-          <Select label="Semester" value={filters.semester} options={semesters} onChange={(semester) => onChange({ semester, division: "", subject: "", faculty: "", room: "" })} />
+          {courses.length > 1 && <Select label="Program" value={filters.course} options={courses} onChange={(course) => onChange({ course, batch: "", semester: "", division: "", subject: "", faculty: "", room: "" })} />}
+          {batches.length > 1 && <Select label="Batch" value={filters.batch} options={batches} onChange={(batch) => onChange({ batch, semester: "", division: "", subject: "", faculty: "", room: "" })} />}
+          {semesters.length > 1 && <Select label="Semester" value={filters.semester} options={semesters} onChange={(semester) => onChange({ semester, division: "", subject: "", faculty: "", room: "" })} />}
         </>
       )}
       <div className="space-y-1.5">
