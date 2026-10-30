@@ -22,6 +22,9 @@ const colorsKey = "timetable-colors";
 const boldKey = "timetable-bold";
 const meetKey = "timetable-meet";
 const canSeeAllKey = "timetable-can-see-all-faculty";
+const facultyEmailKey = "timetable-faculty-email";
+const facultyLensKey = "timetable-faculty-lens";
+const facultyPreviewKey = "timetable-faculty-preview";
 const facultySessionKey = "timetable-faculty-session";
 const unlockedBatchesKey = "timetable-unlocked-batches";
 const studentBatchKey = "timetable-student-batch";
@@ -73,6 +76,66 @@ export function readCanSeeAllFaculty(): boolean {
 
 export function saveCanSeeAllFaculty(allowed: boolean) {
   storageSet(canSeeAllKey, allowed ? "1" : "0");
+}
+
+export type FacultyLens =
+  | { kind: "self" }
+  | { kind: "all" }
+  | { kind: "cohorts" }
+  | { kind: "cohort"; division: string }
+  | { kind: "faculty"; name: string };
+
+export function readFacultyEmail() {
+  return storageGet(facultyEmailKey) ?? "";
+}
+
+export function saveFacultyEmail(email: string) {
+  if (email) storageSet(facultyEmailKey, email);
+  else {
+    try {
+      localStorage.removeItem(facultyEmailKey);
+    } catch {
+      // A blocked store still drops the address for this visit.
+    }
+  }
+}
+
+export function readFacultyPreview() {
+  return storageGet(facultyPreviewKey) === "1";
+}
+
+export function saveFacultyPreview(on: boolean) {
+  storageSet(facultyPreviewKey, on ? "1" : "0");
+}
+
+export function readFacultyLens(): FacultyLens | null {
+  const raw = storageGet(facultyLensKey);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as FacultyLens;
+    if (!parsed || typeof parsed !== "object" || !("kind" in parsed)) return null;
+    if (parsed.kind === "self" || parsed.kind === "all" || parsed.kind === "cohorts") return { kind: parsed.kind };
+    if (parsed.kind === "cohort" && typeof parsed.division === "string" && parsed.division) return parsed;
+    if (parsed.kind === "faculty" && typeof parsed.name === "string" && parsed.name) return parsed;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export function saveFacultyLens(lens: FacultyLens) {
+  storageSet(facultyLensKey, JSON.stringify(lens));
+}
+
+export function clearFacultyBrowse() {
+  saveCanSeeAllFaculty(false);
+  saveFacultyEmail("");
+  saveFacultyPreview(false);
+  try {
+    localStorage.removeItem(facultyLensKey);
+  } catch {
+    // The sign-out still leaves faculty mode.
+  }
 }
 
 export function readUnlockedBatches(): string[] {
@@ -203,12 +266,83 @@ export function saveFaculty(name: string) {
   }
 }
 
+const deviceCookie = "timetable_faculty_device";
+const sessionDb = "aayam-faculty";
+const sessionStore = "session";
+
+function writeDeviceCookie(token: string) {
+  if (typeof document === "undefined") return;
+  const maxAge = token ? 7 * 24 * 60 * 60 : 0;
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `${deviceCookie}=${encodeURIComponent(token)}; Path=/; Max-Age=${maxAge}; SameSite=Lax${secure}`;
+}
+
+export function readDeviceFacultySession() {
+  if (typeof document === "undefined") return "";
+  const prefix = `${deviceCookie}=`;
+  const item = document.cookie.split("; ").find((part) => part.startsWith(prefix));
+  if (!item) return "";
+  try {
+    return decodeURIComponent(item.slice(prefix.length));
+  } catch {
+    return "";
+  }
+}
+
+function sessionDatabase() {
+  if (typeof indexedDB === "undefined") return Promise.resolve(null);
+  return new Promise<IDBDatabase | null>((resolve) => {
+    const request = indexedDB.open(sessionDb, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(sessionStore)) db.createObjectStore(sessionStore);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => resolve(null);
+  });
+}
+
+function mirrorFacultySession(token: string) {
+  void sessionDatabase().then((db) => {
+    if (!db) return;
+    const tx = db.transaction(sessionStore, "readwrite");
+    const store = tx.objectStore(sessionStore);
+    if (token) store.put(token, "token");
+    else store.delete("token");
+    tx.oncomplete = () => db.close();
+    tx.onerror = () => db.close();
+  }).catch(() => {
+    // The local copy and the device cookie still hold the sign-in.
+  });
+}
+
+export function readMirroredFacultySession() {
+  return sessionDatabase().then((db) => {
+    if (!db) return "";
+    return new Promise<string>((resolve) => {
+      const tx = db.transaction(sessionStore, "readonly");
+      const request = tx.objectStore(sessionStore).get("token");
+      request.onsuccess = () => {
+        db.close();
+        resolve(typeof request.result === "string" ? request.result : "");
+      };
+      request.onerror = () => {
+        db.close();
+        resolve("");
+      };
+    });
+  }).catch(() => "");
+}
+
 export function readFacultySession() {
   return storageGet(facultySessionKey) ?? "";
 }
 
 export function saveFacultySession(token: string) {
-  if (token) storageSet(facultySessionKey, token);
+  if (!token) return;
+  storageSet(facultySessionKey, token);
+  writeDeviceCookie(token);
+  mirrorFacultySession(token);
 }
 
 export function clearFacultySession() {
@@ -217,6 +351,8 @@ export function clearFacultySession() {
   } catch {
     // The cookie clear still signs the browser out.
   }
+  writeDeviceCookie("");
+  mirrorFacultySession("");
 }
 
 export function saveRole(role: ViewerRole) {

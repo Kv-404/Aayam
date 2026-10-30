@@ -1,9 +1,11 @@
 import type { BootstrapResponse, PublicLecture, SheetLink } from "@shared/types";
 import { cohortChoices, cohortLabel, cohortPrograms, cohortYears, cohortsInYear, lectureInCohort, type CohortChoice } from "@shared/cohort";
-import { changeMatchesFaculty, lectureMatchesFaculty, listFacultyNames } from "@shared/faculty";
+import { findCoordinator } from "@shared/coordinators";
+import { changeMatchesFaculty, listFacultyNames } from "@shared/faculty";
 import { CalendarPlus, Check, ChevronDown, ChevronLeft, Download, FileSpreadsheet, LogOut, RefreshCw, Settings } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { FacultyLoginModal } from "@/components/FacultyLoginModal";
+import { FacultyScopeMenu } from "@/components/FacultyScopeMenu";
 import CodeSlots from "@/components/CodeSlots";
 import { fetchCurrentAuth, logoutFaculty, verifyBatchCode } from "@/lib/auth";
 import { LectureRoom, MeetChoice } from "@/components/MeetLink";
@@ -18,7 +20,8 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { useChangeNotifications } from "@/hooks/useNotifications";
 import { useLectureReminders } from "@/hooks/useLectureReminders";
 import { appleWeekCalendarUrl, calendarFeedUrl, googleWeekCalendarUrl, outlookWeekCalendarUrl } from "@/lib/calendar";
-import { clearStudentAuth, hasChosenRole, isBatchUnlocked, readCanSeeAllFaculty, readRole, readSetup, readStoredCohort, readStoredFaculty, readStudentBatch, saveCanSeeAllFaculty, saveCohort, saveFaculty, saveSetup, saveUnlockedBatch, themes, type MeetAction, type ThemeId, type ViewerRole } from "@/lib/prefs";
+import { lensFromScopeId, resolveFacultyView, signInFacultyLens } from "@/lib/facultyView";
+import { clearFacultyBrowse, clearStudentAuth, hasChosenRole, isBatchUnlocked, readCanSeeAllFaculty, readFacultyEmail, readFacultyLens, readFacultyPreview, readRole, readSetup, readStoredCohort, readStoredFaculty, readStudentBatch, saveCanSeeAllFaculty, saveCohort, saveFaculty, saveFacultyEmail, saveFacultyLens, saveFacultyPreview, saveSetup, saveUnlockedBatch, themes, type FacultyLens, type MeetAction, type ThemeId, type ViewerRole } from "@/lib/prefs";
 import { ColorEditor } from "@/components/ColorEditor";
 import { ColorSwitch } from "@/components/ColorSwitch";
 import { formatClockTime, formatCompactRange, zonedNow } from "@/lib/time";
@@ -71,14 +74,15 @@ export function Dashboard({
   onBold: (on: boolean) => void;
   onMeet: (action: MeetAction) => void;
   onReset?: () => void;
-  onScopeChange?: (scope: { division?: string; faculty?: string }) => void;
+  onScopeChange?: (scope: { division?: string; faculty?: string; all?: boolean }) => void;
 }) {
   const [ready, setReady] = useState(() => readSetup() && hasChosenRole());
   const [role, setRole] = useState<ViewerRole>(readRole);
   const [cohort, setCohort] = useState(readStoredCohort);
   const [faculty, setFaculty] = useState(readStoredFaculty);
   const [canSeeAll, setCanSeeAll] = useState(() => readCanSeeAllFaculty());
-  const [authEmail, setAuthEmail] = useState<string | undefined>(undefined);
+  const [authEmail, setAuthEmail] = useState<string | undefined>(() => readFacultyEmail() || undefined);
+  const [lens, setLens] = useState<FacultyLens | null>(() => readFacultyLens());
   const [loginModalOpen, setLoginModalOpen] = useState(false);
   const [setupSeed, setSetupSeed] = useState(0);
   const [seedRole, setSeedRole] = useState<ViewerRole | "">("");
@@ -107,33 +111,39 @@ export function Dashboard({
   );
   const selected = choice ? choice.division : cohort;
 
-  const isAllFaculty =
-    canSeeAll &&
-    (faculty === "All" ||
-      faculty === "All Faculty" ||
-      faculty.toLowerCase() === "karamveer" ||
-      (!faculty && !readStoredFaculty()));
-
-  const selectedFaculty = isAllFaculty && faculty.toLowerCase() === "karamveer"
-    ? "Karamveer"
-    : isAllFaculty
-      ? "All Faculty"
-      : (facultyNames.find(
-          (name) =>
-            name === faculty ||
-            name.toLowerCase() === faculty.toLowerCase() ||
-            lectureMatchesFaculty(name, faculty),
-        ) ?? faculty ?? facultyNames[0] ?? "");
+  const board = resolveFacultyView({
+    lectures: data.lectures,
+    choices,
+    facultyNames,
+    signedInName: faculty,
+    email: authEmail,
+    canSeeAll,
+    lens,
+  });
+  const selectedFaculty = board.signedInName;
 
   useEffect(() => {
+    if (import.meta.env.DEV && readFacultyPreview()) {
+      setAuthEmail(readFacultyEmail() || undefined);
+      setCanSeeAll(readCanSeeAllFaculty());
+      setLens(readFacultyLens());
+      return;
+    }
     let cancelled = false;
     fetchCurrentAuth().then((auth) => {
       if (cancelled || auth.offline) return;
       if (auth.authenticated && auth.faculty) {
         setAuthEmail(auth.email);
+        saveFacultyEmail(auth.email ?? "");
         const hasAll = Boolean(auth.canSeeAllFaculty);
         setCanSeeAll(hasAll);
         saveCanSeeAllFaculty(hasAll);
+        saveFacultyPreview(false);
+        if (!readFacultyLens()) {
+          const next = signInFacultyLens(auth.email ?? "", auth.faculty, hasAll);
+          saveFacultyLens(next);
+          setLens(next);
+        }
         if (role === "faculty") {
           const stored = readStoredFaculty();
           if (stored) {
@@ -146,22 +156,20 @@ export function Dashboard({
       } else {
         setAuthEmail(undefined);
         setCanSeeAll(false);
-        saveCanSeeAllFaculty(false);
-        if (readRole() === "faculty") {
-          const fallback = readStoredCohort();
-          if (fallback) {
-            choose(fallback);
-          } else {
-            setRole("student");
-            openSetup("student");
-          }
-        }
+        setLens(null);
+        clearFacultyBrowse();
+        if (readRole() === "faculty") onReset?.();
       }
     });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (role !== "faculty" || !board.wide || !selectedFaculty) return;
+    onScopeChange?.({ all: true, faculty: selectedFaculty });
+  }, [role, board.wide, selectedFaculty]);
 
   useEffect(() => {
     const nextRole = readRole();
@@ -188,18 +196,25 @@ export function Dashboard({
     }
     return choices;
   }, [choices, role, studentBatch, selected]);
-  const facultyPool = isAllFaculty || selectedFaculty === "All Faculty"
-    ? data.lectures.filter((lecture) => lecture.kind !== "break")
-    : data.lectures.filter((lecture) => lecture.kind !== "break" && lectureMatchesFaculty(lecture.faculty, selectedFaculty));
-  const facultyChoice = choices.find((item) => item.division === filters.division);
-  const facultyVisible = facultyChoice ? facultyPool.filter((lecture) => lectureInCohort(lecture, facultyChoice)) : facultyPool;
+  const facultyPool = board.lectures;
+  const facultyChoice = choices.find((item) => item.division === filters.division) ?? board.sheet;
+  const facultyVisible = filters.division
+    ? facultyPool.filter((lecture) => {
+        const picked = choices.find((item) => item.division === filters.division);
+        return picked ? lectureInCohort(lecture, picked) : lecture.division === filters.division;
+      })
+    : facultyPool;
   const studentPool = choice ? data.lectures.filter((lecture) => lectureInCohort(lecture, choice)) : [];
   const watchedDivisions = new Set(choice ? [choice.division, ...choice.also] : selected ? [selected] : []);
   const facultyIds = new Set(facultyPool.map((lecture) => lecture.id));
+  const facultyFilter = board.facultyFilter;
+  const facultyDivisions = board.watchedDivisions;
   const cohortChanges = role === "faculty"
-    ? (isAllFaculty || selectedFaculty === "All Faculty"
-        ? data.changes
-        : data.changes.filter((change) => changeMatchesFaculty(change, selectedFaculty, facultyIds)))
+    ? (facultyFilter
+        ? data.changes.filter((change) => changeMatchesFaculty(change, facultyFilter, facultyIds))
+        : facultyDivisions
+          ? data.changes.filter((change) => !change.division || facultyDivisions.has(change.division))
+          : data.changes)
     : data.changes.filter((change) => watchedDivisions.size === 0 || !change.division || watchedDivisions.has(change.division));
   const notifications = useChangeNotifications(cohortChanges);
 
@@ -246,15 +261,21 @@ export function Dashboard({
 
   function handleFacultyLoginSuccess(facultyName: string, email: string, canSeeAllFaculty?: boolean) {
     const isAllAccess = Boolean(canSeeAllFaculty);
+    const nextLens = signInFacultyLens(email, facultyName, isAllAccess);
     setAuthEmail(email);
     setCanSeeAll(isAllAccess);
+    setLens(nextLens);
+    saveFacultyEmail(email);
     saveCanSeeAllFaculty(isAllAccess);
+    saveFacultyPreview(false);
+    saveFacultyLens(nextLens);
     setRole("faculty");
 
     setFaculty(facultyName);
     saveFaculty(facultyName);
     saveSetup({ role: "faculty", cohort: selected, faculty: facultyName, theme });
-    onScopeChange?.({ faculty: facultyName });
+    const person = findCoordinator(email, facultyName);
+    onScopeChange?.(isAllAccess || person ? { all: true, faculty: facultyName } : { faculty: facultyName });
     setFilters((current) => ({ ...current, division: "", day: "", subject: "", faculty: "", room: "", query: "", status: "all" }));
     setLoginModalOpen(false);
   }
@@ -263,7 +284,8 @@ export function Dashboard({
     await logoutFaculty();
     setAuthEmail(undefined);
     setCanSeeAll(false);
-    saveCanSeeAllFaculty(false);
+    setLens(null);
+    clearFacultyBrowse();
     const targetDivision = readStoredCohort();
     if (targetDivision) {
       choose(targetDivision);
@@ -285,11 +307,11 @@ export function Dashboard({
     openSetup("");
   }
 
-  function chooseFaculty(name: string) {
-    saveFaculty(name);
-    setFaculty(name);
+  function chooseLens(id: string) {
+    const next = lensFromScopeId(id);
+    saveFacultyLens(next);
+    setLens(next);
     setRole("faculty");
-    onScopeChange?.({ faculty: name === "All Faculty" || name.toLowerCase() === "karamveer" ? "" : name });
     setFilters((current) => ({ ...current, division: "", day: "", subject: "", faculty: "", room: "", query: "", status: "all" }));
   }
 
@@ -315,8 +337,16 @@ export function Dashboard({
     setRole(choice.role);
     if (choice.cohort) setCohort(choice.cohort);
     if (choice.faculty) setFaculty(choice.faculty);
-    if (choice.role === "faculty") onScopeChange?.({ faculty: choice.faculty });
-    else onScopeChange?.({ division: choice.cohort });
+    if (choice.role === "faculty") {
+      const email = readFacultyEmail();
+      const allowed = readCanSeeAllFaculty();
+      const nextLens = readFacultyLens() ?? signInFacultyLens(email, choice.faculty, allowed);
+      setAuthEmail(email || undefined);
+      setCanSeeAll(allowed);
+      setLens(nextLens);
+      const person = findCoordinator(email, choice.faculty);
+      onScopeChange?.(allowed || person ? { all: true, faculty: choice.faculty } : { faculty: choice.faculty });
+    } else onScopeChange?.({ division: choice.cohort });
     const next = choices.find((item) => item.division === choice.cohort);
     setFilters((current) => ({
       ...current,
@@ -373,13 +403,13 @@ export function Dashboard({
     });
   }
 
-  const missingIdentity = role === "faculty" ? (!selectedFaculty && !canSeeAll) : !selected;
+  const missingIdentity = role === "faculty" ? (!selectedFaculty && !board.wide) : !selected;
   const reminders = useLectureReminders({
     lectures: scope,
     today: zone.iso,
     minutes: zone.minutes,
     enabled: ready && !missingIdentity && notifications.optedIn,
-    showCohort: role === "faculty",
+    showCohort: role === "faculty" && board.showDivision,
   });
   if (!ready || missingIdentity) {
     return (
@@ -399,7 +429,12 @@ export function Dashboard({
         onBold={onBold}
         onMeet={onMeet}
         onPickCohort={(c) => onScopeChange?.({ division: c })}
-        onPickFaculty={(f) => onScopeChange?.({ faculty: f })}
+        onPickFaculty={(f) => {
+          const email = readFacultyEmail();
+          const allowed = readCanSeeAllFaculty();
+          const person = findCoordinator(email, f);
+          onScopeChange?.(allowed || person ? { all: true, faculty: f } : { faculty: f });
+        }}
         onDone={applyIdentity}
       />
     );
@@ -418,7 +453,7 @@ export function Dashboard({
       <header className="sticky top-0 z-30 border-b border-border bg-background/90 backdrop-blur-md">
         <div className="flex flex-col gap-2.5 px-4 py-3 sm:gap-3 sm:px-6 sm:py-4">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <div className="relative z-20 order-1 min-w-0 shrink-0 flex items-center gap-2">
+            <div className="order-1 min-w-0 shrink-0 flex items-center gap-2">
               <a
                 href="/"
                 onClick={(e) => {
@@ -432,13 +467,14 @@ export function Dashboard({
                 <AayamLogo size={22} />
               </a>
               {role === "faculty" ? (
-                canSeeAll ? (
-                  <CoordinatorFacultyMenu
-                    label={selectedFaculty || "All Faculty"}
-                    value={selectedFaculty}
-                    options={facultyNames}
+                board.wide ? (
+                  <FacultyScopeMenu
+                    label={board.label}
                     email={authEmail}
-                    onChange={chooseFaculty}
+                    badge={board.badge || "Coordinator"}
+                    sections={board.sections}
+                    activeId={board.activeId}
+                    onPick={chooseLens}
                     onLogout={handleFacultyLogout}
                     onSwitchToStudent={() => {
                       const fallback = readStoredCohort();
@@ -457,7 +493,7 @@ export function Dashboard({
                 <StudentCohortMenu choices={availableChoices} value={selected} onChange={choose} onSwitch={handleSwitchToFaculty} />
               )}
             </div>
-            <div className="relative z-20 order-2 ml-auto flex shrink-0 items-center sm:order-3">
+            <div className="relative z-30 order-2 ml-auto flex shrink-0 items-center sm:order-3">
               <SearchPanel
                 query={filters.query}
                 placeholder={searchPlaceholder}
@@ -479,7 +515,12 @@ export function Dashboard({
                 onChange={patch}
                 onClear={() => patch({ division: "", day: "", subject: "", faculty: "", room: "", status: "all", query: "" })}
               />
-              <CalendarMenu scope={role === "faculty" ? { faculty: selectedFaculty } : { division: selected }} label={role === "faculty" ? selectedFaculty : cohortLabel(selected)} />
+              {role !== "faculty" || board.calendar ? (
+                <CalendarMenu
+                  scope={role === "faculty" ? board.calendar ?? { faculty: selectedFaculty } : { division: selected }}
+                  label={role === "faculty" ? board.label : cohortLabel(selected)}
+                />
+              ) : null}
               <a
                 href={sheetUrl}
                 target="_blank"
@@ -499,7 +540,7 @@ export function Dashboard({
                 lecture={upcoming}
                 today={zone.iso}
                 minutes={zone.minutes}
-                showCohort={role === "faculty"}
+                showCohort={role === "faculty" && board.showDivision}
                 meet={meet}
                 clockLabel={formatClockTime(now, data.timezone)}
               />
@@ -546,16 +587,16 @@ export function Dashboard({
       </header>
 
       <main id="timetable" className="px-4 py-4 sm:px-6 sm:py-5">
-        <h1 className="sr-only">{role === "faculty" ? selectedFaculty : cohortLabel(selected)} timetable</h1>
+        <h1 className="sr-only">{role === "faculty" ? board.label : cohortLabel(selected)} timetable</h1>
         <p data-testid="sync-status" role={failing ? "alert" : "status"} className={`text-sm ${failing ? "mb-3 text-warning" : "sr-only"}`}>
           {failing ? data.sync.lastError || "Could not refresh. The last timetable is still shown." : syncedLabel(data.sync.lastSuccessAt, now)}
         </p>
 
         <TabsContent value="today" className="rise mt-0">
-          <TodayView lectures={todayPack.lectures} today={zone.iso} minutes={zone.minutes} showDivision={role === "faculty"} note={todayPack.note} meet={meet} />
+          <TodayView lectures={todayPack.lectures} today={zone.iso} minutes={zone.minutes} showDivision={role === "faculty" && board.showDivision} note={todayPack.note} meet={meet} />
         </TabsContent>
         <TabsContent value="week" className="rise mt-0">
-          <WeeklyView lectures={weekLectures} showDivision={role === "faculty"} today={zone.iso} minutes={zone.minutes} meet={meet} />
+          <WeeklyView lectures={weekLectures} showDivision={role === "faculty" && board.showDivision} today={zone.iso} minutes={zone.minutes} meet={meet} />
         </TabsContent>
         <TabsContent value="updates" className="mt-0">
           <RecentChanges changes={changes} timeZone={data.timezone} />
@@ -645,172 +686,6 @@ function AuthenticatedFacultyBadge({
         <LogOut className="size-3.5" aria-hidden="true" />
         <span className="hidden sm:inline">Sign out</span>
       </button>
-    </div>
-  );
-}
-
-function CoordinatorFacultyMenu({
-  label,
-  value,
-  options,
-  email,
-  onChange,
-  onLogout,
-  onSwitchToStudent,
-}: {
-  label: string;
-  value: string;
-  options: string[];
-  email?: string;
-  onChange: (value: string) => void;
-  onLogout: () => void;
-  onSwitchToStudent: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [filterQuery, setFilterQuery] = useState("");
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onPointer(event: MouseEvent) {
-      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
-    }
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
-    window.addEventListener("mousedown", onPointer);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onPointer);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  const filtered = options.filter((name) =>
-    name.toLowerCase().includes(filterQuery.trim().toLowerCase()),
-  );
-
-  return (
-    <div ref={menuRef} className="relative flex items-center gap-1.5">
-      <button
-        type="button"
-        aria-label="Coordinator Faculty Menu"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
-        className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border/80 bg-background/90 px-2.5 py-1 text-sm font-medium shadow-xs hover:bg-muted/50 transition-colors"
-      >
-        <div className="flex flex-col text-left min-w-0">
-          <div className="flex items-center gap-1.5">
-            <span className="font-semibold text-foreground truncate max-w-[130px] sm:max-w-[190px]">
-              {label}
-            </span>
-            <span className="inline-flex items-center rounded-full bg-purple-500/15 px-1.5 py-0.5 text-[10px] font-medium text-purple-600 dark:text-purple-400">
-              All Access
-            </span>
-          </div>
-          {email && (
-            <span className="text-[11px] text-muted-foreground truncate max-w-[130px] sm:max-w-[190px]">
-              {email}
-            </span>
-          )}
-        </div>
-        <ChevronDown className="size-4 shrink-0 text-muted-foreground ml-0.5" aria-hidden="true" />
-      </button>
-
-      <button
-        type="button"
-        onClick={onLogout}
-        className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors border border-border/60"
-        title="Sign out of faculty mode"
-      >
-        <LogOut className="size-3.5" aria-hidden="true" />
-        <span className="hidden sm:inline">Sign out</span>
-      </button>
-
-      {open && (
-        <div
-          role="menu"
-          aria-label="Select Faculty"
-          className="menu-pop absolute top-full left-0 z-40 mt-1 max-h-[min(26rem,calc(100dvh-5rem))] min-w-64 overflow-y-auto rounded-lg border border-border bg-background p-1.5 shadow-md"
-        >
-          <div className="p-1 pb-2">
-            <input
-              type="text"
-              value={filterQuery}
-              onChange={(e) => setFilterQuery(e.target.value)}
-              placeholder="Search faculty..."
-              className="w-full rounded-md border border-border bg-muted/50 px-2.5 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-              autoFocus
-            />
-          </div>
-
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              onChange("Karamveer");
-              setOpen(false);
-            }}
-            className={`block w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted ${
-              value === "Karamveer" ? "font-semibold bg-accent/20" : ""
-            }`}
-          >
-            Karamveer (All Faculty View)
-          </button>
-
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              onChange("All Faculty");
-              setOpen(false);
-            }}
-            className={`block w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted ${
-              value === "All Faculty" || value === "All" ? "font-semibold bg-accent/20" : ""
-            }`}
-          >
-            All Faculty (Combined Grid)
-          </button>
-
-          <div className="my-1 border-t border-border" />
-
-          {filtered.map((name) => (
-            <button
-              key={name}
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                onChange(name);
-                setOpen(false);
-              }}
-              className={`block w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted ${
-                name === value ? "font-semibold bg-accent/20" : ""
-              }`}
-            >
-              {name}
-            </button>
-          ))}
-
-          {filtered.length === 0 && (
-            <p className="px-3 py-2 text-xs text-muted-foreground">No faculty found.</p>
-          )}
-
-          <div className="my-1 border-t border-border" />
-
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              onSwitchToStudent();
-            }}
-            className="block w-full rounded-md px-3 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            Switch to Student view
-          </button>
-        </div>
-      )}
     </div>
   );
 }

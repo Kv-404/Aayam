@@ -1,3 +1,4 @@
+import { recoverFacultySession } from "@/lib/facultyBoot";
 import { clearFacultySession, readFacultySession, saveFacultySession } from "@/lib/prefs";
 
 export interface AuthState {
@@ -18,6 +19,7 @@ function authHeaders(): HeadersInit {
 
 export async function fetchCurrentAuth(): Promise<AuthState> {
   try {
+    await recoverFacultySession();
     const res = await fetch(`${base}/api/auth/me`, {
       credentials: "include",
       headers: authHeaders(),

@@ -6,13 +6,15 @@ Vite + React + Tailwind. Entry `client/src/main.tsx` → `App.tsx` → `Dashboar
 
 `App.tsx` loads `GET /api/bootstrap` with React Query and refetches on `sync.intervalSeconds`. `useNow` ticks every 15s. Theme, class colours, and bold colours apply on `documentElement` from `client/src/lib/prefs.ts`.
 
+A saved faculty sign-in opens that faculty's timetable when the address is `/` or `/?faculty=`, including a phone home-screen icon. The public home page stays for a visit with no faculty token. The icon is a standalone web app (`manifest.webmanifest`). An icon added before that file existed must be removed and added again, or the phone keeps the old empty store.
+
 `Dashboard.tsx` owns setup, filters, week/day/updates, and the header. Do not split that state into a new store.
 
 Setup shows when `readSetup()` is false or `hasChosenRole()` is false, or the saved cohort/faculty is no longer on the sheet.
 
 1. Who are you? Student or Teacher (`Setup.tsx`).
 2. Student: 6-digit PIN entered via `<CodeSlots />`, verified via `/api/auth/pin-verify` against Neon PostgreSQL `batch_access_codes`. Teacher: Google OAuth sign-in restricted to `@itm.edu` and `@isu.ac.in`.
-3. Student: only the authenticated batch's cohorts (e.g., BTech 2025-29 lists its divisions). Teacher: name, searched from `listFacultyNames` (or full view if `can_see_all_faculty`).
+3. Student: only the authenticated batch's cohorts (e.g., BTech 2025-29 lists its divisions). Teacher: Google sign-in. A coordinator opens on their cohorts. `can_see_all_faculty` opens on every class. Anyone else opens on their own name.
 4. Theme, class colours, bold colours, and whether the Meet button opens or copies.
 
 The header cohort menu for students lists cohorts restricted to their authenticated batch.
@@ -28,9 +30,11 @@ The header cohort menu for students lists cohorts restricted to their authentica
 | `timetable-student-batch` | JSON `{ course, batch }` for verified student PIN |
 | `timetable-unlocked-batches` | JSON array of unlocked `course:batch` pairs |
 | `timetable-can-see-all-faculty` | `"1"` or `"0"` for faculty permissions |
+| `timetable-faculty-email` | Signed-in faculty email. Used to recognise a coordinator |
+| `timetable-faculty-lens` | JSON view: `self`, `all`, `cohorts`, one `cohort`, or one `faculty` |
 | `timetable-cohort` | division string, year included (`Sam Altman 2025`) |
 | `timetable-faculty` | display name from `listFacultyNames` |
-| `timetable-faculty-session` | Signed faculty session token. Kept so a home-screen shortcut stays signed in when the cookie is dropped. Cleared on faculty sign-out |
+| `timetable-faculty-session` | Signed faculty session token. Kept so a home-screen shortcut stays signed in when the cookie is dropped. A second copy is in the `timetable_faculty_device` cookie and in IndexedDB. Cleared on faculty sign-out |
 | `timetable-theme` | theme id. Old value `calendar` migrates to `light` |
 | `timetable-colors` | `"0"` off, anything else on |
 | `timetable-bold` | `"1"` on. Default off |
@@ -43,7 +47,7 @@ The header cohort menu for students lists cohorts restricted to their authentica
 
 ## Who sees what
 
-Student scope is one division, plus the default course and semester from `defaultFilters`. Faculty scope is `lectureMatchesFaculty` across every division, `kind !== "break"`. Course and semester filters are hidden. A cohort filter is optional. `showDivision` is true only for faculty: the card foot shows the cohort (`cohortName`) and the room, not the faculty name. Students see faculty + compact room.
+Student scope is one division, plus the default course and semester from `defaultFilters`. A regular teacher sees `lectureMatchesFaculty` across every division, `kind !== "break"`. A coordinator (`shared/coordinators.ts`) sees every lecture in the cohorts they own, and can open any faculty member's lectures. `can_see_all_faculty` sees every class, every cohort, and every faculty. Their bootstrap is unscoped (`scope.all`) and the grid filters on the client. Course and semester filters are hidden. A cohort filter is optional. `showDivision` is true for a faculty schedule and for more than one cohort: the card foot shows the cohort and the room. One cohort shows the faculty name and the room, same as a student. Phone cards stay one line.
 
 `compactRoom` turns `Classroom - N`, `Classroom No. - N`, and `Room N` into `Cr N`. A `meet.google.com` room is a Meet button (`LectureRoom` in `MeetLink.tsx`), not a text line. The setting `timetable-meet` chooses open (new tab) or copy. The full URL stays on the tooltip. The Now line uses the same control so it does not print the raw URL.
 
