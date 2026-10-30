@@ -1,5 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DEFAULT_COHORT_CHOICES, type CohortChoice } from "@shared/cohort";
+import { coordinatorPreview, findCoordinator } from "@shared/coordinators";
 import { DEFAULT_FACULTY_NAMES } from "@shared/faculty";
 import { useEffect, useState } from "react";
 import { AccessDenied } from "@/components/AccessDenied";
@@ -11,6 +12,9 @@ import { PrivacyPolicy } from "@/components/PrivacyPolicy";
 import { Setup } from "@/components/Setup";
 import { TermsOfService } from "@/components/TermsOfService";
 import { fetchBootstrap, refreshBootstrap, type BootstrapScope } from "@/lib/api";
+import { fetchCurrentAuth } from "@/lib/auth";
+import { isHomeScreenApp, recoverFacultySession, storedFacultyScope } from "@/lib/facultyBoot";
+import { signInFacultyLens } from "@/lib/facultyView";
 import { ColorProvider } from "@/lib/colorState";
 import {
   applyBold,
@@ -18,6 +22,9 @@ import {
   applyTheme,
   hasChosenRole,
   isBatchUnlocked,
+  readCanSeeAllFaculty,
+  readFacultyEmail,
+  readFacultyLens,
   readRole,
   readSetup,
   readStoredBold,
@@ -29,6 +36,9 @@ import {
   saveCanSeeAllFaculty,
   saveCohort,
   saveFaculty,
+  saveFacultyEmail,
+  saveFacultyLens,
+  saveFacultyPreview,
   saveMeet,
   saveRole,
   saveSetup,
@@ -91,6 +101,42 @@ function readScopeFromUrl(choices: CohortChoice[]): {
   return null;
 }
 
+function isPublicHome() {
+  if (typeof window === "undefined") return false;
+  const path = window.location.pathname;
+  if (path !== "/" && path !== "") return false;
+  const params = new URLSearchParams(window.location.search);
+  return !params.get("division") && !params.get("cohort");
+}
+
+function bootPreview(): BootstrapScope | null {
+  if (!import.meta.env.DEV || typeof window === "undefined") return null;
+  const id = new URLSearchParams(window.location.search).get("preview");
+  if (!id) return null;
+  const person = coordinatorPreview(id);
+  if (!person) return null;
+  const lens = signInFacultyLens(person.email, person.name, person.canSeeAllFaculty);
+  saveFaculty(person.name);
+  saveFacultyEmail(person.email);
+  saveCanSeeAllFaculty(person.canSeeAllFaculty);
+  saveFacultyPreview(true);
+  saveFacultyLens(lens);
+  saveSetup({ role: "faculty", cohort: readStoredCohort(), faculty: person.name, theme: readStoredTheme() });
+  return { all: true, faculty: person.name };
+}
+
+function keepPreview(target: string) {
+  if (!import.meta.env.DEV || typeof window === "undefined") return target;
+  const current = new URLSearchParams(window.location.search);
+  const preview = current.get("preview");
+  const menu = current.get("menu");
+  if (!preview && !menu) return target;
+  const url = new URL(target, window.location.origin);
+  if (preview) url.searchParams.set("preview", preview);
+  if (menu) url.searchParams.set("menu", menu);
+  return `${url.pathname}${url.search}`;
+}
+
 function syncUrl(scope: BootstrapScope) {
   if (typeof window === "undefined") return;
   const url = new URL(window.location.href);
@@ -103,7 +149,7 @@ function syncUrl(scope: BootstrapScope) {
   }
 
   if (scope.faculty) {
-    const target = `/?faculty=${encodeURIComponent(scope.faculty)}`;
+    const target = keepPreview(`/?faculty=${encodeURIComponent(scope.faculty)}`);
     const current = window.location.pathname + window.location.search;
     if (current !== target) {
       window.history.replaceState(null, "", target);
@@ -193,7 +239,14 @@ export function App() {
     return () => window.removeEventListener("popstate", handleLocation);
   }, []);
 
+  const [boot] = useState(bootPreview);
+  const [returning] = useState(() => (boot || !isPublicHome() ? null : storedFacultyScope()));
+  const [sessionGate, setSessionGate] = useState<"open" | "check">(() => {
+    if (boot || returning) return "open";
+    return isHomeScreenApp() ? "check" : "open";
+  });
   const [configured, setConfigured] = useState(() => {
+    if (boot || returning) return true;
     if (typeof window !== "undefined" && window.location.pathname === "/") {
       return false;
     }
@@ -204,6 +257,8 @@ export function App() {
   });
 
   const [scope, setScope] = useState<BootstrapScope>(() => {
+    if (boot) return boot;
+    if (returning) return returning;
     if (typeof window !== "undefined" && window.location.pathname === "/") {
       return {};
     }
@@ -221,7 +276,9 @@ export function App() {
     const role = readRole();
     if (role === "faculty") {
       const f = readStoredFaculty();
-      return f ? { faculty: f } : {};
+      if (!f) return {};
+      const wide = readCanSeeAllFaculty() || Boolean(findCoordinator(readFacultyEmail(), f));
+      return wide ? { all: true, faculty: f } : { faculty: f };
     }
     const c = readStoredCohort();
     return c ? { division: c } : {};
@@ -230,6 +287,44 @@ export function App() {
   useEffect(() => {
     syncUrl(scope);
   }, [scope]);
+
+  useEffect(() => {
+    if (boot || returning) return;
+    let cancel = false;
+    void (async () => {
+      await recoverFacultySession();
+      const saved = storedFacultyScope();
+      if (cancel) return;
+      if (saved && (isPublicHome() || isHomeScreenApp())) {
+        setScope(saved);
+        setConfigured(true);
+        setSessionGate("open");
+        return;
+      }
+      if (!isHomeScreenApp()) {
+        setSessionGate("open");
+        return;
+      }
+      const auth = await fetchCurrentAuth();
+      if (cancel) return;
+      if (auth.authenticated && auth.faculty) {
+        const allowed = Boolean(auth.canSeeAllFaculty);
+        saveFaculty(auth.faculty);
+        saveFacultyEmail(auth.email ?? "");
+        saveRole("faculty");
+        saveCanSeeAllFaculty(allowed);
+        saveFacultyPreview(false);
+        if (!readFacultyLens()) saveFacultyLens(signInFacultyLens(auth.email ?? "", auth.faculty, allowed));
+        const wide = allowed || Boolean(findCoordinator(auth.email, auth.faculty));
+        setScope(wide ? { all: true, faculty: auth.faculty } : { faculty: auth.faculty });
+        setConfigured(true);
+      }
+      setSessionGate("open");
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [boot, returning]);
 
   useEffect(() => {
     function onPopState() {
@@ -282,10 +377,22 @@ export function App() {
   }
 
   function handleScopeChange(next: BootstrapScope) {
+    if (next.all) {
+      const name = next.faculty || readStoredFaculty();
+      if (name) saveFaculty(name);
+      setScope({ all: true, faculty: name });
+      setConfigured(true);
+      if (name && typeof window !== "undefined") {
+        const target = keepPreview(`/?faculty=${encodeURIComponent(name)}`);
+        const current = window.location.pathname + window.location.search;
+        if (current !== target) window.history.replaceState(null, "", target);
+      }
+      return;
+    }
     if (next.faculty) {
       saveFaculty(next.faculty);
       if (typeof window !== "undefined") {
-        window.history.pushState(null, "", `/?faculty=${encodeURIComponent(next.faculty)}`);
+        window.history.pushState(null, "", keepPreview(`/?faculty=${encodeURIComponent(next.faculty)}`));
       }
       setScope(next);
       setConfigured(true);
@@ -314,7 +421,7 @@ export function App() {
     placeholderData: keepPreviousData,
     staleTime: 15 * 1000,
     gcTime: 10 * 60 * 1000,
-    enabled: Boolean(configured || scope.division || scope.faculty || (scope.course && scope.batch)),
+    enabled: Boolean(configured || scope.division || scope.faculty || scope.all || (scope.course && scope.batch)),
     refetchInterval: (result) => (result.state.data?.sync.intervalSeconds ?? 45) * 1000,
   });
 
@@ -413,8 +520,14 @@ export function App() {
     }
   }
 
+  const waitingForShortcut =
+    sessionGate === "check" && !configured && !scope.division && !scope.faculty && !scope.all;
+  if (waitingForShortcut) {
+    return <LoadingScreen />;
+  }
+
   // Root or unconfigured: Show Home Page
-  if (!configured || (typeof window !== "undefined" && window.location.pathname === "/" && !scope.division && !scope.faculty)) {
+  if (!configured || (typeof window !== "undefined" && window.location.pathname === "/" && !scope.division && !scope.faculty && !scope.all)) {
     return (
       <ColorProvider theme={preferences.theme}>
         <HomePage
@@ -457,14 +570,20 @@ export function App() {
           open={facultyModalOpen}
           onClose={() => setFacultyModalOpen(false)}
           onSuccess={(fac, email, allFac) => {
+            const allowed = Boolean(allFac);
+            const lens = signInFacultyLens(email, fac, allowed);
             saveFaculty(fac);
+            saveFacultyEmail(email);
             saveRole("faculty");
-            saveCanSeeAllFaculty(Boolean(allFac));
+            saveCanSeeAllFaculty(allowed);
+            saveFacultyPreview(false);
+            saveFacultyLens(lens);
             setFacultyModalOpen(false);
+            const wide = allowed || Boolean(findCoordinator(email, fac));
             if (typeof window !== "undefined") {
-              window.history.pushState(null, "", `/?faculty=${encodeURIComponent(fac)}`);
+              window.history.pushState(null, "", keepPreview(`/?faculty=${encodeURIComponent(fac)}`));
             }
-            setScope({ faculty: fac });
+            setScope(wide ? { all: true, faculty: fac } : { faculty: fac });
             setConfigured(true);
           }}
         />

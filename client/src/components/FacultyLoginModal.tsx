@@ -1,3 +1,4 @@
+import { coordinatorPreviews } from "@shared/coordinators";
 import { useEffect, useRef, useState } from "react";
 import { AlertCircle, Lock, X } from "lucide-react";
 import { fetchGoogleClientId, loginWithGoogleCredential } from "@/lib/auth";
@@ -151,6 +152,23 @@ export function FacultyLoginModal({
             <div className="mt-4 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-left text-xs text-red-500">
               <AlertCircle className="size-4 shrink-0 mt-0.5" />
               <span>{error}</span>
+            </div>
+          )}
+
+          {import.meta.env.DEV && (
+            <div className="mt-5 w-full border-t border-border pt-4 text-left">
+              <p className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Local coordinator preview</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {coordinatorPreviews().map((person) => (
+                  <a
+                    key={person.id}
+                    href={`/?preview=${person.id}&menu=1`}
+                    className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-muted"
+                  >
+                    {person.name}
+                  </a>
+                ))}
+              </div>
             </div>
           )}
 

@@ -1,4 +1,5 @@
 import { cohortLabel, cohortsInYear, type CohortChoice } from "@shared/cohort";
+import { coordinatorPreviews } from "@shared/coordinators";
 import { AlertCircle, ArrowRight, Check } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import CodeSlots from "@/components/CodeSlots";
@@ -6,6 +7,7 @@ import { ColorSwitch } from "@/components/ColorSwitch";
 import { MeetChoice } from "@/components/MeetLink";
 import { Input } from "@/components/ui/input";
 import { fetchGoogleClientId, loginWithGoogleCredential, verifyPin } from "@/lib/auth";
+import { signInFacultyLens } from "@/lib/facultyView";
 import {
   clearStudentAuth,
   readStoredCohort,
@@ -13,6 +15,9 @@ import {
   saveCanSeeAllFaculty,
   saveCohort,
   saveFaculty,
+  saveFacultyEmail,
+  saveFacultyLens,
+  saveFacultyPreview,
   saveRole,
   saveSetup,
   saveStudentBatch,
@@ -112,8 +117,11 @@ export function Setup({
             setAuthError(null);
             const result = await loginWithGoogleCredential(response.credential);
             setAuthEmail(result.email);
+            saveFacultyEmail(result.email);
             saveCanSeeAllFaculty(Boolean(result.canSeeAllFaculty));
-            pickFaculty(result.faculty);
+            saveFacultyPreview(false);
+            saveFacultyLens(signInFacultyLens(result.email, result.faculty, Boolean(result.canSeeAllFaculty)));
+            enterFaculty(result.faculty);
           } catch (err: any) {
             setAuthError(err.message || "Failed to sign in. Only authorized faculty are permitted.");
           } finally {
@@ -158,7 +166,7 @@ export function Setup({
   };
   const [title, note] = copy[step];
 
-  function pickFaculty(f: string) {
+  function enterFaculty(f: string) {
     setName(f);
     saveFaculty(f);
     saveRole("faculty");
@@ -166,6 +174,14 @@ export function Setup({
     saveSetup({ ...choice, theme });
     onPickFaculty?.(f);
     onDone(choice);
+  }
+
+  function pickFaculty(f: string) {
+    saveFacultyEmail("");
+    saveCanSeeAllFaculty(false);
+    saveFacultyPreview(false);
+    saveFacultyLens(signInFacultyLens("", f, false));
+    enterFaculty(f);
   }
 
   function goBack() {
@@ -446,6 +462,22 @@ export function Setup({
                   <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-left text-xs text-red-500 max-w-sm">
                     <AlertCircle className="size-4 shrink-0 mt-0.5" />
                     <span>{authError}</span>
+                  </div>
+                )}
+                {import.meta.env.DEV && (
+                  <div className="w-full max-w-md rounded-lg border border-border bg-card/60 p-3 text-left">
+                    <p className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Preview a coordinator</p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {coordinatorPreviews().map((person) => (
+                        <a
+                          key={person.id}
+                          href={`/?preview=${person.id}&menu=1`}
+                          className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-muted"
+                        >
+                          {person.name}
+                        </a>
+                      ))}
+                    </div>
                   </div>
                 )}
                 {!clientId && (
