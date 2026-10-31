@@ -6,7 +6,7 @@ import express from "express";
 import { calendarFile } from "../../shared/calendar.ts";
 import { batchYear, cohortChoices, cohortLabel, DEFAULT_COHORT_CHOICES, lectureInCohort } from "../../shared/cohort.ts";
 import { changeMatchesFaculty, DEFAULT_FACULTY_NAMES, lectureMatchesFaculty, listFacultyNames } from "../../shared/faculty.ts";
-import type { BootstrapResponse, PublicLecture, SavedWeek, SheetLink } from "../../shared/types.ts";
+import type { BootstrapResponse, ChangeEvent, PublicLecture, SavedWeek, SheetLink } from "../../shared/types.ts";
 import { sheetForScope, spreadsheetUrl, type AppConfig, type SheetSource } from "./config.ts";
 import { readSyncState, readWeekBackups, type AppDatabase } from "./db.ts";
 import { authenticateFacultyWithNeon, clearSessionCookie, getClientIp, getSessionFromRequest, loginRateLimiter, pinRateLimiter, setSessionCookie, signSession, verifyBatchPinWithNeon, verifyGoogleCredential } from "./auth.ts";
@@ -143,15 +143,62 @@ function buildBootstrap(
   }
 
   const dates = lectures.map((lecture) => lecture.date).filter((date): date is string => Boolean(date)).sort();
+  const liveKeys = new Set<string>();
+  const liveDates = new Map<string, string[]>();
+  for (const lecture of allLectures) {
+    if (!lecture.date) continue;
+    const key = `${lecture.course}\0${lecture.batch}`;
+    const list = liveDates.get(key) ?? [];
+    list.push(lecture.date);
+    liveDates.set(key, list);
+  }
+  for (const [key, list] of liveDates) {
+    list.sort();
+    liveKeys.add(`${key}\0${list[0]}\0${list[list.length - 1]}`);
+  }
   const savedWeeks: SavedWeek[] = readWeekBackups(db)
-    .map((week) => ({
-      id: week.id,
-      course: week.course,
-      batch: week.batch,
-      start: week.start,
-      end: week.end,
-      lectures: scopeOf(week.lectures.map((lecture) => presentLecture(lecture, now, config.highlightHours)).sort(byLecture)),
-    }))
+    .filter((week) => !liveKeys.has(`${week.course}\0${week.batch}\0${week.start}\0${week.end}`))
+    .map((week) => {
+      const weekLectures = scopeOf(week.lectures.map((lecture) => presentLecture(lecture, now, config.highlightHours)).sort(byLecture));
+      const lectureIds = new Set(weekLectures.map((lecture) => lecture.id));
+      const divisions = new Set(weekLectures.map((lecture) => lecture.division));
+      const weekChanges = (week.changes ?? [])
+        .filter((change) => {
+          if (weekLectures.length === 0) return false;
+          if (change.lectureId && lectureIds.has(change.lectureId)) return true;
+          if (change.division) return divisions.has(change.division);
+          return true;
+        })
+        .map((change): ChangeEvent => {
+          const cancelled = Boolean(change.lectureId && restored.restoredIds.has(change.lectureId) && change.type === "removed");
+          const subject = change.previous?.subject || "A lecture";
+          return {
+            id: change.id,
+            detectedAt: change.detectedAt,
+            type: cancelled ? "cancelled" : change.type,
+            lectureId: change.lectureId,
+            division: change.division,
+            course: change.course,
+            semester: change.semester,
+            tabName: change.tabName,
+            date: change.date,
+            weekday: change.weekday,
+            summary: cancelled ? `${subject} lecture cancelled.` : change.summary,
+            previous: change.previous,
+            next: change.next,
+            fields: change.fields ?? [],
+          };
+        });
+      return {
+        id: week.id,
+        course: week.course,
+        batch: week.batch,
+        start: week.start,
+        end: week.end,
+        lectures: weekLectures,
+        changes: weekChanges,
+      };
+    })
     .filter((week) => week.lectures.length > 0)
     .sort((a, b) => b.end.localeCompare(a.end) || b.start.localeCompare(a.start));
   return {

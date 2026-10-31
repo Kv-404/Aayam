@@ -96,6 +96,8 @@ export interface SavedWeek {
   start: string;
   end: string;
   lectures: PublicLecture[];
+  /** Updates recorded while this week was the live sheet. */
+  changes: ChangeEvent[];
 }
 
 export interface BootstrapResponse {

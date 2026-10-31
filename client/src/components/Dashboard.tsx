@@ -1,4 +1,4 @@
-import type { BootstrapResponse, PublicLecture, SheetLink } from "@shared/types";
+import type { BootstrapResponse, ChangeEvent, PublicLecture, SavedWeek, SheetLink } from "@shared/types";
 import { cohortChoices, cohortLabel, cohortPrograms, cohortYears, cohortsInYear, lectureInCohort, type CohortChoice } from "@shared/cohort";
 import { findCoordinator } from "@shared/coordinators";
 import { changeMatchesFaculty, listFacultyNames } from "@shared/faculty";
@@ -21,7 +21,7 @@ import { useChangeNotifications } from "@/hooks/useNotifications";
 import { useLectureReminders } from "@/hooks/useLectureReminders";
 import { appleWeekCalendarUrl, calendarFeedUrl, googleWeekCalendarUrl, outlookWeekCalendarUrl } from "@/lib/calendar";
 import { lensFromScopeId, resolveFacultyView, signInFacultyLens } from "@/lib/facultyView";
-import { clearFacultyBrowse, clearStudentAuth, hasChosenRole, isBatchUnlocked, readCanSeeAllFaculty, readFacultyEmail, readFacultyLens, readFacultyPreview, readRole, readSetup, readStoredCohort, readStoredFaculty, readStudentBatch, saveCanSeeAllFaculty, saveCohort, saveFaculty, saveFacultyEmail, saveFacultyLens, saveFacultyPreview, saveSetup, saveUnlockedBatch, themes, type FacultyLens, type MeetAction, type ThemeId, type ViewerRole } from "@/lib/prefs";
+import { clearFacultyBrowse, clearStudentAuth, hasChosenRole, isBatchUnlocked, readCanSeeAllFaculty, readFacultyEmail, readFacultyLens, readFacultyPreview, readRole, readSavedWeek, readSetup, readStoredCohort, readStoredFaculty, readStudentBatch, saveCanSeeAllFaculty, saveCohort, saveFaculty, saveFacultyEmail, saveFacultyLens, saveFacultyPreview, saveSavedWeek, saveSetup, saveUnlockedBatch, themes, type FacultyLens, type MeetAction, type ThemeId, type ViewerRole } from "@/lib/prefs";
 import { ColorEditor } from "@/components/ColorEditor";
 import { ColorSwitch } from "@/components/ColorSwitch";
 import { formatClockTime, formatCompactRange, zonedNow } from "@/lib/time";
@@ -100,7 +100,7 @@ export function Dashboard({
     };
   });
   const [view, setView] = useState("week");
-  const [weekId, setWeekId] = useState("live");
+  const [weekId, setWeekId] = useState(readSavedWeek);
   const zone = zonedNow(now, data.timezone);
   const choices = data.choices && data.choices.length > 0 ? data.choices : cohortChoices(data.lectures);
   const facultyNames = data.faculties && data.faculties.length > 0 ? data.faculties : listFacultyNames(data.lectures.filter((lecture) => lecture.kind !== "break").map((lecture) => lecture.faculty));
@@ -114,6 +114,12 @@ export function Dashboard({
 
   const savedWeeks = data.savedWeeks ?? [];
   const selectedWeek = savedWeeks.find((week) => week.id === weekId);
+  useEffect(() => {
+    if (weekId !== "live" && !savedWeeks.some((week) => week.id === weekId)) {
+      setWeekId("live");
+      saveSavedWeek("live");
+    }
+  }, [savedWeeks, weekId]);
   const lectureFeed = selectedWeek?.lectures ?? data.lectures;
   const board = resolveFacultyView({
     lectures: lectureFeed,
@@ -213,14 +219,17 @@ export function Dashboard({
   const facultyIds = new Set(facultyPool.map((lecture) => lecture.id));
   const facultyFilter = board.facultyFilter;
   const facultyDivisions = board.watchedDivisions;
-  const cohortChanges = role === "faculty"
-    ? (facultyFilter
-        ? data.changes.filter((change) => changeMatchesFaculty(change, facultyFilter, facultyIds))
+  const visibleChanges = (list: ChangeEvent[]) =>
+    role === "faculty"
+      ? facultyFilter
+        ? list.filter((change) => changeMatchesFaculty(change, facultyFilter, facultyIds))
         : facultyDivisions
-          ? data.changes.filter((change) => !change.division || facultyDivisions.has(change.division))
-          : data.changes)
-    : data.changes.filter((change) => watchedDivisions.size === 0 || !change.division || watchedDivisions.has(change.division));
-  const notifications = useChangeNotifications(cohortChanges);
+          ? list.filter((change) => !change.division || facultyDivisions.has(change.division))
+          : list
+      : list.filter((change) => watchedDivisions.size === 0 || !change.division || watchedDivisions.has(change.division));
+  const liveChanges = visibleChanges(data.changes);
+  const shownChanges = selectedWeek ? visibleChanges(selectedWeek.changes ?? []) : liveChanges;
+  const notifications = useChangeNotifications(liveChanges);
 
   const courses = [...new Set(choices.map((item) => item.course))];
   const batches = [...new Set(choices.filter((item) => item.course === filters.course).map((item) => item.batch))];
@@ -238,7 +247,11 @@ export function Dashboard({
   const weekLectures = collapseFullOffDays(applyFilters(pool, effective, { ignoreDay: true }));
   const todayPack = useMemo(() => resolveToday(dayLectures, zone.iso, filters.day), [dayLectures, zone.iso, filters.day]);
   const upcoming = nextClass(scope, zone.iso, zone.minutes);
-  const changes = cohortChanges;
+  const changes = shownChanges;
+  function chooseWeek(id: string) {
+    setWeekId(id);
+    saveSavedWeek(id);
+  }
   const failing = Boolean(data.sync.lastError);
   const activeSheet = role === "student" ? choice : facultyChoice;
   const sheetUrl = sheetUrlFor(data.sheets, activeSheet, data.spreadsheetUrl);
@@ -579,7 +592,7 @@ export function Dashboard({
       <select
         aria-label="Choose a week"
         value={selectedWeek ? selectedWeek.id : "live"}
-        onChange={(event) => setWeekId(event.target.value)}
+        onChange={(event) => chooseWeek(event.target.value)}
         className="min-w-0 max-w-full rounded-md border border-border bg-background px-2 py-1 text-xs font-medium text-foreground"
       >
         <option value="live">{weekLabel}</option>
@@ -708,7 +721,7 @@ export function Dashboard({
                 <IconButton label={pending ? "Refreshing" : "Refresh"} onClick={onRefresh} disabled={pending} testId="refresh-button">
                   <RefreshCw className={`size-4 ${pending ? "animate-spin" : ""}`} aria-hidden="true" />
                 </IconButton>
-                <AppearanceMenu theme={theme} colors={colors} bold={bold} meet={meet} subjects={subjects} notifications={notifications.optedIn} onTheme={onTheme} onColors={onColors} onBold={onBold} onMeet={onMeet} onDisable={notifications.disable} role={role} onStudentLogout={handleStudentLogout} />
+                <AppearanceMenu theme={theme} colors={colors} bold={bold} meet={meet} subjects={subjects} notifications={notifications.optedIn} onTheme={onTheme} onColors={onColors} onBold={onBold} onMeet={onMeet} onDisable={notifications.disable} role={role} onStudentLogout={handleStudentLogout} savedWeeks={savedWeeks} weekId={selectedWeek ? selectedWeek.id : "live"} onWeek={chooseWeek} />
               </div>
             </div>
           </div>
@@ -745,6 +758,17 @@ export function Dashboard({
           {failing ? data.sync.lastError || "Could not refresh. The last timetable is still shown." : syncedLabel(data.sync.lastSuccessAt, now)}
         </p>
 
+        {selectedWeek && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm">
+            <p>
+              Viewing {formatShort(selectedWeek.start)} – {formatShort(selectedWeek.end)}
+              {selectedWeek.batch ? ` · ${selectedWeek.batch}` : ""}.
+            </p>
+            <button type="button" className="text-xs font-medium text-foreground underline-offset-4 hover:underline" onClick={() => chooseWeek("live")}>
+              Back to this week
+            </button>
+          </div>
+        )}
         <div className="flex-1">
           <TabsContent value="today" className="rise mt-0">
             <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd} className="min-h-[40vh]">
@@ -765,11 +789,11 @@ export function Dashboard({
             <WeeklyView lectures={weekLectures} showDivision={role === "faculty" && board.showDivision} today={zone.iso} minutes={zone.minutes} meet={meet} />
           </TabsContent>
           <TabsContent value="updates" className="rise mt-0">
-            {selectedWeek ? (
-              <p className="py-8 text-sm text-muted-foreground">Updates are for the current sheet, not this older week.</p>
-            ) : (
-              <RecentChanges changes={changes} timeZone={data.timezone} />
-            )}
+            <RecentChanges
+              changes={changes}
+              timeZone={data.timezone}
+              empty={selectedWeek ? "No updates were recorded for this week." : undefined}
+            />
           </TabsContent>
         </div>
         <footer className="mt-auto pt-10 pb-6 border-t border-border/40 text-center text-xs text-muted-foreground flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
@@ -994,6 +1018,9 @@ function AppearanceMenu({
   onMeet,
   onDisable,
   onStudentLogout,
+  savedWeeks,
+  weekId,
+  onWeek,
 }: {
   theme: ThemeId;
   colors: boolean;
@@ -1008,6 +1035,9 @@ function AppearanceMenu({
   onMeet: (action: MeetAction) => void;
   onDisable: () => void;
   onStudentLogout?: () => void;
+  savedWeeks: SavedWeek[];
+  weekId: string;
+  onWeek: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -1082,6 +1112,44 @@ function AppearanceMenu({
           {colors && (
             <div className="mt-2.5 border-t border-border pt-2.5">
               <ColorEditor theme={theme} subjects={subjects} />
+            </div>
+          )}
+          {savedWeeks.length > 0 && (
+            <div className="mt-3 border-t border-border pt-2.5">
+              <p className="text-muted-foreground font-mono text-[11px] tracking-[0.22em] uppercase">Past weeks</p>
+              <div className="mt-2 space-y-1">
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={weekId === "live"}
+                  onClick={() => onWeek("live")}
+                  className={`flex w-full items-center justify-between rounded-md border px-2.5 py-1.5 text-left text-xs ${
+                    weekId === "live" ? "border-transparent bg-foreground text-background font-medium" : "border-border text-foreground hover:bg-muted"
+                  }`}
+                >
+                  <span>This week</span>
+                  {weekId === "live" && <Check className="size-3 shrink-0" aria-hidden="true" />}
+                </button>
+                {savedWeeks.map((week) => {
+                  const selected = weekId === week.id;
+                  const label = `${formatShort(week.start)} – ${formatShort(week.end)}${week.batch ? ` · ${week.batch}` : ""}`;
+                  return (
+                    <button
+                      key={week.id}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={selected}
+                      onClick={() => onWeek(week.id)}
+                      className={`flex w-full items-center justify-between rounded-md border px-2.5 py-1.5 text-left text-xs ${
+                        selected ? "border-transparent bg-foreground text-background font-medium" : "border-border text-foreground hover:bg-muted"
+                      }`}
+                    >
+                      <span className="min-w-0 truncate">{label}</span>
+                      {selected && <Check className="size-3 shrink-0" aria-hidden="true" />}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
           {role === "student" && (

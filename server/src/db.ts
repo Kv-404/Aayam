@@ -57,7 +57,8 @@ export function openDatabase(file: string) {
       batch TEXT NOT NULL,
       start_date TEXT NOT NULL,
       end_date TEXT NOT NULL,
-      lectures_json TEXT NOT NULL
+      lectures_json TEXT NOT NULL,
+      changes_json TEXT NOT NULL DEFAULT '[]'
     );
 
     CREATE TABLE IF NOT EXISTS sync_state (
@@ -75,6 +76,10 @@ export function openDatabase(file: string) {
   const existing = db.prepare("SELECT id FROM sync_state WHERE id = 1").get();
   if (!existing) {
     db.prepare("INSERT INTO sync_state (id, bootstrapped) VALUES (1, 0)").run();
+  }
+  const weekColumns = db.prepare("PRAGMA table_info(week_backups)").all() as { name: string }[];
+  if (!weekColumns.some((column) => column.name === "changes_json")) {
+    db.exec("ALTER TABLE week_backups ADD COLUMN changes_json TEXT NOT NULL DEFAULT '[]'");
   }
   return db;
 }
@@ -137,14 +142,16 @@ export interface WeekBackupRecord {
   start: string;
   end: string;
   lectures: StoredLecture[];
+  /** Updates that belonged to this week when it left the live sheet. */
+  changes: StoredChange[];
 }
 
 export function readWeekBackups(db: AppDatabase): WeekBackupRecord[] {
   const rows = db.prepare(`
-    SELECT id, course, batch, start_date, end_date, lectures_json
+    SELECT id, course, batch, start_date, end_date, lectures_json, changes_json
     FROM week_backups
     ORDER BY end_date DESC, start_date DESC
-  `).all() as Array<{ id: string; course: string; batch: string; start_date: string; end_date: string; lectures_json: string }>;
+  `).all() as Array<{ id: string; course: string; batch: string; start_date: string; end_date: string; lectures_json: string; changes_json: string | null }>;
   return rows.map((row) => ({
     id: row.id,
     course: row.course,
@@ -152,17 +159,26 @@ export function readWeekBackups(db: AppDatabase): WeekBackupRecord[] {
     start: row.start_date,
     end: row.end_date,
     lectures: JSON.parse(row.lectures_json) as StoredLecture[],
+    changes: row.changes_json ? (JSON.parse(row.changes_json) as StoredChange[]) : [],
   }));
 }
 
 export function replaceWeekBackups(db: AppDatabase, weeks: WeekBackupRecord[]) {
   db.exec("DELETE FROM week_backups");
   const insert = db.prepare(`
-    INSERT INTO week_backups (id, course, batch, start_date, end_date, lectures_json)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO week_backups (id, course, batch, start_date, end_date, lectures_json, changes_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
   for (const week of weeks) {
-    insert.run(week.id, week.course, week.batch, week.start, week.end, JSON.stringify(week.lectures));
+    insert.run(
+      week.id,
+      week.course,
+      week.batch,
+      week.start,
+      week.end,
+      JSON.stringify(week.lectures),
+      JSON.stringify(week.changes ?? []),
+    );
   }
 }
 

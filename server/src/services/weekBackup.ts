@@ -1,4 +1,4 @@
-import type { WeekBackupRecord, AppDatabase } from "../db.ts";
+import type { StoredChange, WeekBackupRecord, AppDatabase } from "../db.ts";
 import { readWeekBackups, replaceWeekBackups } from "../db.ts";
 import type { StoredLecture } from "../model.ts";
 import { programKey } from "../program.ts";
@@ -46,22 +46,60 @@ export function replacedWeeks(
       start,
       end,
       lectures,
+      changes: [],
     });
   }
   return backups;
 }
 
-export function rememberReplacedWeeks(
-  db: AppDatabase,
-  previous: StoredLecture[],
-  next: Array<{ course: string; batch: string; date: string | null }>,
-) {
-  const fresh = replacedWeeks(previous, next);
-  if (fresh.length === 0) return;
-  const merged = new Map(readWeekBackups(db).map((week) => [week.id, week]));
-  for (const week of fresh) merged.set(week.id, week);
+/** One saved timetable per course and batch, using the dates those lectures actually span. */
+export function weeksFromLectures(lectures: StoredLecture[]): WeekBackupRecord[] {
+  const groups = new Map<string, StoredLecture[]>();
+  for (const lecture of lectures) {
+    const key = programKey(lecture.course, lecture.batch);
+    const group = groups.get(key) ?? [];
+    group.push(lecture);
+    groups.set(key, group);
+  }
+  const weeks: WeekBackupRecord[] = [];
+  for (const group of groups.values()) {
+    const dates = dated(group);
+    const sample = group[0];
+    if (!sample || dates.length === 0) continue;
+    const start = dates[0]!;
+    const end = dates[dates.length - 1]!;
+    weeks.push({
+      id: `${sample.course}|${sample.batch}|${start}|${end}`,
+      course: sample.course,
+      batch: sample.batch,
+      start,
+      end,
+      lectures: group,
+      changes: [],
+    });
+  }
+  return weeks;
+}
+
+/** Keep the updates that happened on this week's dates, matched to its cohorts. */
+export function changesForWeek(week: WeekBackupRecord, changes: StoredChange[], weeks: WeekBackupRecord[]) {
+  const divisions = new Set(week.lectures.map((lecture) => lecture.division));
+  const dates = new Set(dated(week.lectures));
+  return changes.filter((change) => {
+    if (change.date) {
+      if (!dates.has(change.date)) return false;
+      return !change.division || divisions.has(change.division);
+    }
+    if (change.division) return divisions.has(change.division);
+    if (change.course && change.course.toLowerCase() !== week.course.toLowerCase()) return false;
+    const siblings = weeks.filter((item) => programKey(item.course, item.batch) === programKey(week.course, week.batch));
+    return siblings.length <= 1 || siblings[0]?.id === week.id;
+  });
+}
+
+function capWeeks(weeks: WeekBackupRecord[], currentIds: Set<string>) {
   const byProgram = new Map<string, WeekBackupRecord[]>();
-  for (const week of merged.values()) {
+  for (const week of weeks) {
     const key = programKey(week.course, week.batch);
     const list = byProgram.get(key) ?? [];
     list.push(week);
@@ -69,8 +107,36 @@ export function rememberReplacedWeeks(
   }
   const kept: WeekBackupRecord[] = [];
   for (const list of byProgram.values()) {
-    list.sort((a, b) => b.end.localeCompare(a.end) || b.start.localeCompare(a.start));
-    kept.push(...list.slice(0, CAP));
+    const current = list.filter((week) => currentIds.has(week.id));
+    const past = list.filter((week) => !currentIds.has(week.id));
+    past.sort((a, b) => b.end.localeCompare(a.end) || b.start.localeCompare(a.start));
+    kept.push(...current, ...past.slice(0, CAP));
   }
-  replaceWeekBackups(db, kept);
+  return kept;
+}
+
+export function rememberReplacedWeeks(
+  db: AppDatabase,
+  previous: StoredLecture[],
+  next: Array<{ course: string; batch: string; date: string | null }>,
+  changes: StoredChange[] = [],
+) {
+  const fresh = replacedWeeks(previous, next);
+  if (fresh.length === 0) return;
+  for (const week of fresh) week.changes = changesForWeek(week, changes, fresh);
+  const merged = new Map(readWeekBackups(db).map((week) => [week.id, week]));
+  for (const week of fresh) merged.set(week.id, week);
+  replaceWeekBackups(db, capWeeks([...merged.values()], new Set()));
+}
+
+/** Store the published week in its current form. Same dates update that week. A later week does not erase it. */
+export function rememberPublishedWeeks(db: AppDatabase, lectures: StoredLecture[]) {
+  const current = weeksFromLectures(lectures);
+  if (current.length === 0) return;
+  const merged = new Map(readWeekBackups(db).map((week) => [week.id, week]));
+  for (const week of current) {
+    const existing = merged.get(week.id);
+    merged.set(week.id, existing ? { ...week, changes: existing.changes } : week);
+  }
+  replaceWeekBackups(db, capWeeks([...merged.values()], new Set(current.map((week) => week.id))));
 }
