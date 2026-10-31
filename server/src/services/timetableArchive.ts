@@ -1,4 +1,4 @@
-import type { StoredChange, SyncState } from "../db.ts";
+import type { StoredChange, SyncState, WeekBackupRecord } from "../db.ts";
 import type { StoredLecture } from "../model.ts";
 
 /** Saved timetable, change log, and sync cursor. This is what survives a server restart. */
@@ -8,6 +8,8 @@ export interface TimetableArchive {
   lectures: StoredLecture[];
   changes: StoredChange[];
   sync: SyncState;
+  /** Past weeks kept after a sheet moved to a new set of dates. Missing on older blobs. */
+  weeks?: WeekBackupRecord[];
 }
 
 export function archiveSignature(archive: TimetableArchive) {
@@ -16,7 +18,27 @@ export function archiveSignature(archive: TimetableArchive) {
     .sort()
     .join("\n");
   const changes = archive.changes.map((change) => `${change.dedupeKey}\t${change.type}\t${change.summary}`).sort().join("\n");
-  return `${archive.sync.contentHash ?? ""}\n${lectures}\n${changes}`;
+  const weeks = (archive.weeks ?? []).map((week) => week.id).sort().join("\n");
+  return `${archive.sync.contentHash ?? ""}\n${lectures}\n${changes}\n${weeks}`;
+}
+
+function mergeWeeks(newer: TimetableArchive, older: TimetableArchive): WeekBackupRecord[] {
+  const byId = new Map<string, WeekBackupRecord>();
+  for (const week of older.weeks ?? []) byId.set(week.id, week);
+  for (const week of newer.weeks ?? []) byId.set(week.id, week);
+  const byProgram = new Map<string, WeekBackupRecord[]>();
+  for (const week of byId.values()) {
+    const key = `${week.course}\0${week.batch}`;
+    const list = byProgram.get(key) ?? [];
+    list.push(week);
+    byProgram.set(key, list);
+  }
+  const kept: WeekBackupRecord[] = [];
+  for (const list of byProgram.values()) {
+    list.sort((a, b) => b.end.localeCompare(a.end) || b.start.localeCompare(a.start));
+    kept.push(...list.slice(0, 8));
+  }
+  return kept;
 }
 
 function dayKey(lecture: StoredLecture) {
@@ -44,6 +66,7 @@ export function mergeArchives(left: TimetableArchive, right: TimetableArchive): 
     return {
       ...newer,
       changes: newer.changes.filter((change) => !change.date || newerDates.has(change.date)),
+      weeks: mergeWeeks(newer, older),
     };
   }
   const ids = new Set(newer.lectures.map((lecture) => lecture.id));
@@ -77,6 +100,7 @@ export function mergeArchives(left: TimetableArchive, right: TimetableArchive): 
     lectures: [...newer.lectures, ...kept],
     changes: uniqueChangeIds([...changes.values()]),
     sync: newer.sync,
+    weeks: mergeWeeks(newer, older),
   };
 }
 

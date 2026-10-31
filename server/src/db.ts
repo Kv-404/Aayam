@@ -51,6 +51,15 @@ export function openDatabase(file: string) {
       fields_json TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS week_backups (
+      id TEXT PRIMARY KEY,
+      course TEXT NOT NULL,
+      batch TEXT NOT NULL,
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      lectures_json TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS sync_state (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       last_success_at TEXT,
@@ -119,6 +128,42 @@ export function writeSyncState(db: AppDatabase, state: SyncState) {
     JSON.stringify(state.parseIssues),
     state.spreadsheetTitle,
   );
+}
+
+export interface WeekBackupRecord {
+  id: string;
+  course: string;
+  batch: string;
+  start: string;
+  end: string;
+  lectures: StoredLecture[];
+}
+
+export function readWeekBackups(db: AppDatabase): WeekBackupRecord[] {
+  const rows = db.prepare(`
+    SELECT id, course, batch, start_date, end_date, lectures_json
+    FROM week_backups
+    ORDER BY end_date DESC, start_date DESC
+  `).all() as Array<{ id: string; course: string; batch: string; start_date: string; end_date: string; lectures_json: string }>;
+  return rows.map((row) => ({
+    id: row.id,
+    course: row.course,
+    batch: row.batch,
+    start: row.start_date,
+    end: row.end_date,
+    lectures: JSON.parse(row.lectures_json) as StoredLecture[],
+  }));
+}
+
+export function replaceWeekBackups(db: AppDatabase, weeks: WeekBackupRecord[]) {
+  db.exec("DELETE FROM week_backups");
+  const insert = db.prepare(`
+    INSERT INTO week_backups (id, course, batch, start_date, end_date, lectures_json)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  for (const week of weeks) {
+    insert.run(week.id, week.course, week.batch, week.start, week.end, JSON.stringify(week.lectures));
+  }
 }
 
 export function readLectures(db: AppDatabase): StoredLecture[] {

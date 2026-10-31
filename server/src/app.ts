@@ -6,9 +6,9 @@ import express from "express";
 import { calendarFile } from "../../shared/calendar.ts";
 import { batchYear, cohortChoices, cohortLabel, DEFAULT_COHORT_CHOICES, lectureInCohort } from "../../shared/cohort.ts";
 import { changeMatchesFaculty, DEFAULT_FACULTY_NAMES, lectureMatchesFaculty, listFacultyNames } from "../../shared/faculty.ts";
-import type { BootstrapResponse, SheetLink } from "../../shared/types.ts";
+import type { BootstrapResponse, PublicLecture, SavedWeek, SheetLink } from "../../shared/types.ts";
 import { sheetForScope, spreadsheetUrl, type AppConfig, type SheetSource } from "./config.ts";
-import { readSyncState, type AppDatabase } from "./db.ts";
+import { readSyncState, readWeekBackups, type AppDatabase } from "./db.ts";
 import { authenticateFacultyWithNeon, clearSessionCookie, getClientIp, getSessionFromRequest, loginRateLimiter, pinRateLimiter, setSessionCookie, signSession, verifyBatchPinWithNeon, verifyGoogleCredential } from "./auth.ts";
 import { listChanges } from "./services/changeHistoryService.ts";
 import { presentLecture } from "./services/presentLecture.ts";
@@ -53,6 +53,15 @@ function sheetLinks(
   return [...seen.values()];
 }
 
+function byLecture(a: PublicLecture, b: PublicLecture) {
+  const date = (a.date ?? "").localeCompare(b.date ?? "");
+  if (date !== 0) return date;
+  if (a.startMinutes !== b.startMinutes) return a.startMinutes - b.startMinutes;
+  const division = a.division.localeCompare(b.division);
+  if (division !== 0) return division;
+  return a.subject.localeCompare(b.subject);
+}
+
 function buildBootstrap(
   db: AppDatabase,
   config: AppConfig,
@@ -66,14 +75,7 @@ function buildBootstrap(
   const restored = restoreRemovedLectures(loadSnapshot(db), changes);
   const allLectures = restored.lectures
     .map((lecture) => presentLecture(lecture, now, config.highlightHours))
-    .sort((a, b) => {
-      const date = (a.date ?? "").localeCompare(b.date ?? "");
-      if (date !== 0) return date;
-      if (a.startMinutes !== b.startMinutes) return a.startMinutes - b.startMinutes;
-      const division = a.division.localeCompare(b.division);
-      if (division !== 0) return division;
-      return a.subject.localeCompare(b.subject);
-    });
+    .sort(byLecture);
 
   const parsedChoices = cohortChoices(allLectures);
   const seenDivisions = new Set(parsedChoices.map((c) => c.division));
@@ -97,34 +99,61 @@ function buildBootstrap(
     ...DEFAULT_FACULTY_NAMES.filter((f) => !seenFaculties.has(f.toLowerCase())),
   ].sort((a, b) => a.localeCompare(b));
 
+  const scopeOf = (rows: PublicLecture[]) => {
+    if (filter?.faculty) {
+      const faculty = filter.faculty;
+      return rows.filter((lecture) => lecture.kind !== "break" && lectureMatchesFaculty(lecture.faculty, faculty));
+    }
+    if (filter?.division) {
+      const division = filter.division;
+      const choice = choices.find((item) => item.division === division);
+      return choice
+        ? rows.filter((lecture) => lectureInCohort(lecture, choice))
+        : rows.filter((lecture) => lecture.division === division);
+    }
+    if (filter?.course || filter?.batch) {
+      return rows.filter((lecture) =>
+        (!filter.course || lecture.course.toLowerCase() === filter.course.toLowerCase()) &&
+        (!filter.batch || lecture.batch.toLowerCase() === filter.batch.toLowerCase()),
+      );
+    }
+    return rows;
+  };
+
   let lectures = allLectures;
   let relevantChanges = changes;
 
   if (filter?.faculty) {
     const targetFaculty = filter.faculty;
-    const facultyPool = allLectures.filter((lecture) => lecture.kind !== "break" && lectureMatchesFaculty(lecture.faculty, targetFaculty));
+    const facultyPool = scopeOf(allLectures);
     lectures = facultyPool;
     const facultyIds = new Set(facultyPool.map((l) => l.id));
     relevantChanges = changes.filter((change) => changeMatchesFaculty(change, targetFaculty, facultyIds));
   } else if (filter?.division) {
     const targetDivision = filter.division;
     const choice = choices.find((item) => item.division === targetDivision);
-    lectures = choice
-      ? allLectures.filter((lecture) => lectureInCohort(lecture, choice))
-      : allLectures.filter((lecture) => lecture.division === targetDivision);
+    lectures = scopeOf(allLectures);
     const watchedDivisions = new Set(choice ? [choice.division, ...choice.also] : [targetDivision]);
     relevantChanges = changes.filter((change) => !change.division || watchedDivisions.has(change.division));
   } else if (filter?.course || filter?.batch) {
-    lectures = allLectures.filter((lecture) =>
-      (!filter.course || lecture.course.toLowerCase() === filter.course.toLowerCase()) &&
-      (!filter.batch || lecture.batch.toLowerCase() === filter.batch.toLowerCase())
-    );
+    lectures = scopeOf(allLectures);
     relevantChanges = changes.filter((change) =>
       (!filter.course || change.course?.toLowerCase() === filter.course.toLowerCase())
     );
   }
 
   const dates = lectures.map((lecture) => lecture.date).filter((date): date is string => Boolean(date)).sort();
+  const savedWeeks: SavedWeek[] = readWeekBackups(db)
+    .map((week) => ({
+      id: week.id,
+      course: week.course,
+      batch: week.batch,
+      start: week.start,
+      end: week.end,
+      lectures: scopeOf(week.lectures.map((lecture) => presentLecture(lecture, now, config.highlightHours)).sort(byLecture)),
+    }))
+    .filter((week) => week.lectures.length > 0)
+    .sort((a, b) => b.end.localeCompare(a.end) || b.start.localeCompare(a.start));
   return {
     collegeName: config.collegeName,
     schoolName: config.schoolName,
@@ -138,6 +167,7 @@ function buildBootstrap(
     now: now.toISOString(),
     weekStart: dates[0] ?? null,
     weekEnd: dates[dates.length - 1] ?? null,
+    savedWeeks,
     sync: {
       lastSuccessAt: state.lastSuccessAt,
       lastAttemptAt: state.lastAttemptAt,

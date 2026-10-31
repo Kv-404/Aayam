@@ -4,7 +4,6 @@ import { findCoordinator } from "@shared/coordinators";
 import { changeMatchesFaculty, listFacultyNames } from "@shared/faculty";
 import { CalendarPlus, Check, ChevronDown, ChevronLeft, Download, FileSpreadsheet, LogOut, RefreshCw, Settings } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { motion } from "motion/react";
 import { FacultyLoginModal } from "@/components/FacultyLoginModal";
 import { FacultyScopeMenu } from "@/components/FacultyScopeMenu";
 import CodeSlots from "@/components/CodeSlots";
@@ -101,6 +100,7 @@ export function Dashboard({
     };
   });
   const [view, setView] = useState("week");
+  const [weekId, setWeekId] = useState("live");
   const zone = zonedNow(now, data.timezone);
   const choices = data.choices && data.choices.length > 0 ? data.choices : cohortChoices(data.lectures);
   const facultyNames = data.faculties && data.faculties.length > 0 ? data.faculties : listFacultyNames(data.lectures.filter((lecture) => lecture.kind !== "break").map((lecture) => lecture.faculty));
@@ -112,8 +112,11 @@ export function Dashboard({
   );
   const selected = choice ? choice.division : cohort;
 
+  const savedWeeks = data.savedWeeks ?? [];
+  const selectedWeek = savedWeeks.find((week) => week.id === weekId);
+  const lectureFeed = selectedWeek?.lectures ?? data.lectures;
   const board = resolveFacultyView({
-    lectures: data.lectures,
+    lectures: lectureFeed,
     choices,
     facultyNames,
     signedInName: faculty,
@@ -205,7 +208,7 @@ export function Dashboard({
         return picked ? lectureInCohort(lecture, picked) : lecture.division === filters.division;
       })
     : facultyPool;
-  const studentPool = choice ? data.lectures.filter((lecture) => lectureInCohort(lecture, choice)) : [];
+  const studentPool = choice ? lectureFeed.filter((lecture) => lectureInCohort(lecture, choice)) : [];
   const watchedDivisions = new Set(choice ? [choice.division, ...choice.also] : selected ? [selected] : []);
   const facultyIds = new Set(facultyPool.map((lecture) => lecture.id));
   const facultyFilter = board.facultyFilter;
@@ -224,6 +227,8 @@ export function Dashboard({
   const semesters = [...new Set(choices.filter((item) => item.course === filters.course && item.batch === filters.batch).map((item) => item.semester))];
   const scope = role === "faculty" ? facultyVisible : studentPool.filter((lecture) => lecture.kind !== "break");
   const days = dayOrder.filter((day) => scope.some((lecture) => lecture.weekday === day));
+  const requestedDay = filters.day || zone.weekday;
+  const activeDay = days.includes(requestedDay) ? requestedDay : days[0] ?? "";
   const subjects = unique(scope.map((lecture) => lecture.subject));
   const faculties = unique(scope.map((lecture) => lecture.faculty));
   const rooms = unique(scope.map((lecture) => lecture.room));
@@ -267,6 +272,7 @@ export function Dashboard({
       if (e.key === "w" || e.key === "W") {
         setView("week");
       } else if (e.key === "d" || e.key === "D" || e.key === "t" || e.key === "T") {
+        patch({ day: "" });
         setView("today");
       } else if (e.key === "u" || e.key === "U") {
         setView("updates");
@@ -508,6 +514,84 @@ export function Dashboard({
   }
 
   const weekLabel = data.weekStart && data.weekEnd ? `${formatShort(data.weekStart)} – ${formatShort(data.weekEnd)}` : "This week";
+  const severalBatches = new Set(savedWeeks.map((week) => week.batch).filter(Boolean)).size > 1;
+  const segmentProps = {
+    trackColor: "var(--muted)",
+    thumbColor: "var(--foreground)",
+    textColor: "var(--foreground)",
+    activeTextColor: "var(--background)",
+    size: "sm" as const,
+    radius: 8,
+  };
+  const viewControl = (className: string) => (
+    <RubberSegment
+      items={[
+        { value: "today", label: "Day" },
+        { value: "week", label: "Week" },
+        { value: "updates", label: "Updates" },
+      ]}
+      value={view}
+      onChange={(next) => {
+        if (next === "today" && view !== "today") {
+          patch({ day: "" });
+        }
+        setView(next);
+      }}
+      aria-label="Timetable views"
+      className={className}
+      {...segmentProps}
+    />
+  );
+  const dayControl = (className: string) => days.length > 0 && activeDay ? (
+    <RubberSegment
+      items={days.map((day) => {
+        const isToday = day === zone.weekday;
+        return {
+          value: day,
+          label: (
+            <span className="relative inline-flex items-center justify-center gap-1">
+              <span className={isToday ? "font-bold tracking-tight" : undefined}>{day.slice(0, 3)}</span>
+              {isToday && (
+                <span
+                  className="size-1.5 rounded-full bg-current opacity-90"
+                  aria-label="Today"
+                  title="Today"
+                />
+              )}
+            </span>
+          ),
+        };
+      })}
+      value={activeDay}
+      onChange={(day) => {
+        patch({ day });
+        setView("today");
+      }}
+      aria-label="Days"
+      equalSlots
+      className={className}
+      {...segmentProps}
+    />
+  ) : null;
+  const weekControl = savedWeeks.length > 0 ? (
+    <label className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+      <span className="sr-only">Week</span>
+      <select
+        aria-label="Choose a week"
+        value={selectedWeek ? selectedWeek.id : "live"}
+        onChange={(event) => setWeekId(event.target.value)}
+        className="min-w-0 max-w-full rounded-md border border-border bg-background px-2 py-1 text-xs font-medium text-foreground"
+      >
+        <option value="live">{weekLabel}</option>
+        {savedWeeks.map((week) => (
+          <option key={week.id} value={week.id}>
+            {formatShort(week.start)} – {formatShort(week.end)}
+            {severalBatches && week.batch ? ` · ${week.batch}` : ""}
+          </option>
+        ))}
+      </select>
+    </label>
+  ) : null;
   const notice = reminders.notice ?? notifications.notice;
   const dismissNotice = () => {
     if (reminders.notice) reminders.dismiss();
@@ -632,58 +716,24 @@ export function Dashboard({
             />
           </div>
 
-          {/* Row 3: View Controls (RubberSegment + Notify) and Day Navigation Chips */}
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4">
-            {/* View switcher + Notify: on mobile sits above day chips, on desktop sits on the right */}
-            <div className="order-1 sm:order-2 flex items-center justify-between sm:justify-end gap-2 shrink-0">
-              <RubberSegment
-                items={[
-                  { value: "today", label: "Day" },
-                  { value: "week", label: "Week" },
-                  { value: "updates", label: "Updates" },
-                ]}
-                value={view}
-                onChange={(next) => setView(next)}
-                trackColor="var(--muted)"
-                thumbColor="var(--foreground)"
-                textColor="var(--foreground)"
-                activeTextColor="var(--background)"
-                size="sm"
-                radius={8}
-                aria-label="Timetable views"
-                className="flex-1 sm:flex-initial max-w-[240px] sm:max-w-none shrink-0"
-              />
+          {/* Row 3, desktop: day switch, week history, then Day / Week / Updates. Phones use the bottom bar. */}
+          <div className="hidden sm:flex sm:items-center sm:justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-3">
+              {view === "today" && dayControl("max-w-xl")}
+              {weekControl}
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {viewControl("shrink-0")}
               <NotifyControl optedIn={notifications.optedIn} pulse={reminders.pulse} onEnable={() => void notifications.enable()} />
             </div>
-
-            {/* Day Chips: on mobile displays as 6-col grid in Day view, on desktop displays as horizontal flex list */}
-            {days.length > 0 && (
-              <div
-                className={`order-2 sm:order-1 min-w-0 ${
-                  view === "today" ? "grid sm:flex" : "hidden sm:flex"
-                } gap-1 sm:overflow-x-auto rounded-lg bg-muted/40 p-1 sm:bg-transparent sm:p-0`}
-                style={view === "today" ? { gridTemplateColumns: `repeat(${days.length}, minmax(0, 1fr))` } : undefined}
-              >
-                {days.map((day) => (
-                  <DayChip
-                    key={day}
-                    today={day === zone.weekday}
-                    selected={view === "today" && (filters.day === day || (filters.day === "" && day === zone.weekday))}
-                    onClick={() => {
-                      patch({ day });
-                      setView("today");
-                    }}
-                  >
-                    {day.slice(0, 3)}
-                  </DayChip>
-                ))}
-              </div>
-            )}
+          </div>
+          <div className="flex justify-end sm:hidden">
+            <NotifyControl optedIn={notifications.optedIn} pulse={reminders.pulse} onEnable={() => void notifications.enable()} />
           </div>
         </div>
       </header>
 
-      <main id="timetable" className="flex-1 flex flex-col px-4 py-4 sm:px-6 sm:py-5">
+      <main id="timetable" className={`flex-1 flex flex-col px-4 py-4 ${view === "today" ? "pb-44" : "pb-28"} sm:px-6 sm:py-5 sm:pb-5`}>
         <h1 className="sr-only">{role === "faculty" ? board.label : cohortLabel(selected)} timetable</h1>
         <p data-testid="sync-status" role={failing ? "alert" : "status"} className={`text-sm ${failing ? "mb-3 text-warning" : "sr-only"}`}>
           {failing ? data.sync.lastError || "Could not refresh. The last timetable is still shown." : syncedLabel(data.sync.lastSuccessAt, now)}
@@ -709,7 +759,11 @@ export function Dashboard({
             <WeeklyView lectures={weekLectures} showDivision={role === "faculty" && board.showDivision} today={zone.iso} minutes={zone.minutes} meet={meet} />
           </TabsContent>
           <TabsContent value="updates" className="rise mt-0">
-            <RecentChanges changes={changes} timeZone={data.timezone} />
+            {selectedWeek ? (
+              <p className="py-8 text-sm text-muted-foreground">Updates are for the current sheet, not this older week.</p>
+            ) : (
+              <RecentChanges changes={changes} timeZone={data.timezone} />
+            )}
           </TabsContent>
         </div>
         <footer className="mt-auto pt-10 pb-6 border-t border-border/40 text-center text-xs text-muted-foreground flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
@@ -740,11 +794,18 @@ export function Dashboard({
           </a>
         </footer>
       </main>
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur-md sm:hidden pb-[env(safe-area-inset-bottom)]">
+        <div className="flex flex-col gap-2 px-3 py-2">
+          {weekControl}
+          {view === "today" && dayControl("w-full")}
+          {viewControl("w-full")}
+        </div>
+      </div>
       {notice && (
         <div
           role="status"
           data-testid="notify-notice"
-          className="fixed inset-x-3 bottom-3 z-50 flex items-start gap-3 rounded-xl border border-border bg-background px-3 py-3 text-sm shadow-lg sm:inset-x-auto sm:right-6 sm:bottom-6 sm:max-w-sm"
+          className={`fixed inset-x-3 ${view === "today" ? "bottom-44" : "bottom-28"} z-50 flex items-start gap-3 rounded-xl border border-border bg-background px-3 py-3 text-sm shadow-lg sm:inset-x-auto sm:right-6 sm:bottom-6 sm:max-w-sm`}
         >
           <p className="min-w-0 flex-1 leading-snug">{notice}</p>
           <button type="button" className="shrink-0 text-xs text-muted-foreground hover:text-foreground" onClick={dismissNotice}>
@@ -1243,50 +1304,6 @@ function IconButton({
       className="inline-flex size-8 sm:size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
     >
       {children}
-    </button>
-  );
-}
-
-function DayChip({
-  selected,
-  today,
-  children,
-  onClick,
-}: {
-  selected: boolean;
-  today: boolean;
-  children: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      aria-current={today ? "date" : undefined}
-      onClick={onClick}
-      className="relative day-chip shrink-0 flex flex-col items-center justify-center rounded-md px-2 py-1.5 text-xs sm:text-[13px] sm:px-2.5 transition-colors"
-    >
-      {selected && (
-        <motion.span
-          layoutId="active-day-chip"
-          transition={{ type: "spring", stiffness: 450, damping: 35 }}
-          className="absolute inset-0 rounded-md bg-foreground shadow-xs"
-        />
-      )}
-      <span
-        className={`relative z-10 transition-colors ${
-          selected
-            ? "text-background font-semibold"
-            : today
-              ? "text-foreground font-semibold"
-              : "text-muted-foreground hover:text-foreground"
-        }`}
-      >
-        {children}
-      </span>
-      {today && !selected && (
-        <span className="relative z-10 size-1 rounded-full bg-primary mt-0.5 sm:hidden" />
-      )}
     </button>
   );
 }
