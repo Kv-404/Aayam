@@ -648,7 +648,7 @@ export function Dashboard({
             </div>
 
             {/* Center on Desktop: HeaderStatus */}
-            <div className="hidden sm:flex flex-1 items-center justify-center min-w-0 px-2 max-w-lg mx-auto">
+            <div className="hidden md:flex flex-1 items-center justify-center min-w-0 px-2 max-w-lg mx-auto">
               <HeaderStatus
                 lecture={upcoming}
                 today={zone.iso}
@@ -659,53 +659,62 @@ export function Dashboard({
               />
             </div>
 
-            {/* Right: Actions Toolbar */}
-            <div className="relative z-30 flex shrink-0 items-center gap-0.5 sm:gap-1">
-              <SearchPanel
-                query={filters.query}
-                placeholder={searchPlaceholder}
-                filters={effective}
-                courses={role === "student" ? [] : courses}
-                batches={role === "student" ? [] : batches}
-                semesters={role === "student" ? [] : semesters}
-                days={days}
-                subjects={subjects}
-                faculties={faculties}
-                rooms={rooms}
-                cohorts={role === "faculty" ? unique(facultyPool.map((lecture) => lecture.division)) : undefined}
-                cohortFormat={(division: string) => {
-                  const item = choices.find((entry) => entry.division === division);
-                  const name = cohortLabel(division);
-                  return item ? `${name} · ${item.course} ${item.batch}` : name;
-                }}
-                onQuery={(query: string) => patch({ query })}
-                onChange={patch}
-                onClear={() => patch({ division: "", day: "", subject: "", faculty: "", room: "", status: "all", query: "" })}
-              />
-              {role !== "faculty" || board.calendar ? (
-                <CalendarMenu
-                  scope={role === "faculty" ? board.calendar ?? { faculty: selectedFaculty } : { division: selected }}
-                  label={role === "faculty" ? board.label : cohortLabel(selected)}
+            {/* Right: View Switcher (Desktop) + Actions Toolbar */}
+            <div className="relative z-30 flex shrink-0 items-center gap-1 sm:gap-2">
+              <div className="hidden sm:flex sm:items-center sm:gap-2">
+                {weekControl}
+                {viewControl("shrink-0")}
+                <NotifyControl optedIn={notifications.optedIn} pulse={reminders.pulse} onEnable={() => void notifications.enable()} />
+                <div className="h-4 w-px bg-border/60 mx-0.5" aria-hidden="true" />
+              </div>
+
+              <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+                <SearchPanel
+                  query={filters.query}
+                  placeholder={searchPlaceholder}
+                  filters={effective}
+                  courses={role === "student" ? [] : courses}
+                  batches={role === "student" ? [] : batches}
+                  semesters={role === "student" ? [] : semesters}
+                  days={days}
+                  subjects={subjects}
+                  faculties={faculties}
+                  rooms={rooms}
+                  cohorts={role === "faculty" ? unique(facultyPool.map((lecture) => lecture.division)) : undefined}
+                  cohortFormat={(division: string) => {
+                    const item = choices.find((entry) => entry.division === division);
+                    const name = cohortLabel(division);
+                    return item ? `${name} · ${item.course} ${item.batch}` : name;
+                  }}
+                  onQuery={(query: string) => patch({ query })}
+                  onChange={patch}
+                  onClear={() => patch({ division: "", day: "", subject: "", faculty: "", room: "", status: "all", query: "" })}
                 />
-              ) : null}
-              <a
-                href={sheetUrl}
-                target="_blank"
-                rel="noreferrer"
-                aria-label="Open the sheet"
-                className="inline-flex size-7.5 sm:size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-              >
-                <FileSpreadsheet className="size-4" aria-hidden="true" />
-              </a>
-              <IconButton label={pending ? "Refreshing" : "Refresh"} onClick={onRefresh} disabled={pending} testId="refresh-button">
-                <RefreshCw className={`size-4 ${pending ? "animate-spin" : ""}`} aria-hidden="true" />
-              </IconButton>
-              <AppearanceMenu theme={theme} colors={colors} bold={bold} meet={meet} subjects={subjects} notifications={notifications.optedIn} onTheme={onTheme} onColors={onColors} onBold={onBold} onMeet={onMeet} onDisable={notifications.disable} role={role} onStudentLogout={handleStudentLogout} />
+                {role !== "faculty" || board.calendar ? (
+                  <CalendarMenu
+                    scope={role === "faculty" ? board.calendar ?? { faculty: selectedFaculty } : { division: selected }}
+                    label={role === "faculty" ? board.label : cohortLabel(selected)}
+                  />
+                ) : null}
+                <a
+                  href={sheetUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label="Open the sheet"
+                  className="inline-flex size-7.5 sm:size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                >
+                  <FileSpreadsheet className="size-4" aria-hidden="true" />
+                </a>
+                <IconButton label={pending ? "Refreshing" : "Refresh"} onClick={onRefresh} disabled={pending} testId="refresh-button">
+                  <RefreshCw className={`size-4 ${pending ? "animate-spin" : ""}`} aria-hidden="true" />
+                </IconButton>
+                <AppearanceMenu theme={theme} colors={colors} bold={bold} meet={meet} subjects={subjects} notifications={notifications.optedIn} onTheme={onTheme} onColors={onColors} onBold={onBold} onMeet={onMeet} onDisable={notifications.disable} role={role} onStudentLogout={handleStudentLogout} />
+              </div>
             </div>
           </div>
 
           {/* Row 2 on Mobile: HeaderStatus Pill */}
-          <div className="sm:hidden w-full">
+          <div className="md:hidden w-full">
             <HeaderStatus
               lecture={upcoming}
               today={zone.iso}
@@ -716,17 +725,14 @@ export function Dashboard({
             />
           </div>
 
-          {/* Row 3, desktop: day switch, week history, then Day / Week / Updates. Phones use the bottom bar. */}
-          <div className="hidden sm:flex sm:items-center sm:justify-between gap-4">
-            <div className="flex min-w-0 items-center gap-3">
-              {view === "today" && dayControl("max-w-xl")}
-              {weekControl}
+          {/* Row 2 on Desktop for Day View: day selector */}
+          {view === "today" && days.length > 0 && activeDay && (
+            <div className="hidden sm:flex sm:items-center sm:justify-start pt-2 border-t border-border/30">
+              <div className="flex min-w-0 items-center gap-3">
+                {dayControl("max-w-xl")}
+              </div>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
-              {viewControl("shrink-0")}
-              <NotifyControl optedIn={notifications.optedIn} pulse={reminders.pulse} onEnable={() => void notifications.enable()} />
-            </div>
-          </div>
+          )}
           <div className="flex justify-end sm:hidden">
             <NotifyControl optedIn={notifications.optedIn} pulse={reminders.pulse} onEnable={() => void notifications.enable()} />
           </div>
