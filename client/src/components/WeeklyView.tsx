@@ -74,10 +74,10 @@ export function WeeklyView({
         const off = offDay(date);
         return (
           <section key={date} ref={date === today ? todayBlock : undefined} className={`mb-6 ${date === today ? "scroll-mt-36" : ""}`}>
-            <h2 className="flex items-baseline gap-2 border-b border-border bg-background py-2">
-              <span className={`text-base font-semibold tracking-tight ${off ? "text-danger" : ""}`}>{off ? `${weekday} Off` : weekday.slice(0, 3)}</span>
-              {!off && <span className="text-sm text-muted-foreground">{formatCalendarDate(date).replace(/^[A-Za-z]{3},?\s*/, "")}</span>}
-              {date === today && !off && <span className="text-xs font-medium text-muted-foreground">Today</span>}
+            <h2 className="flex items-center gap-2 border-b border-border bg-background py-2">
+              <span className={`text-base tracking-tight ${date === today ? "font-bold" : "font-semibold"} ${off ? "text-danger" : ""}`}>{off ? `${weekday} Off` : weekday.slice(0, 3)}</span>
+              {!off && <span className={`text-sm ${date === today ? "font-semibold text-foreground" : "text-muted-foreground"}`}>{formatCalendarDate(date).replace(/^[A-Za-z]{3},?\s*/, "")}</span>}
+              {date === today && <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">Today</span>}
             </h2>
             {off ? null : (
               <ol>
@@ -102,9 +102,16 @@ export function WeeklyView({
               const weekday = dayLectures[0]?.weekday ?? "";
               const off = offDay(date);
               return (
-                <th key={date} className={`min-w-40 px-3 py-3 align-bottom font-medium ${date === today ? "cal-today" : ""} ${off ? "text-danger" : ""}`}>
-                  <span className="block">{weekday || dayOrder.find((day) => dayLectures.some((lecture) => lecture.weekday === day))}</span>
-                  <span className={`block text-xs font-normal ${off ? "text-danger" : "text-muted-foreground"}`}>{formatCalendarDate(date)}</span>
+                <th key={date} className={`min-w-40 px-3 py-3 align-bottom ${date === today ? "font-bold cal-today" : "font-medium"} ${off ? "text-danger" : ""}`}>
+                  <div className="flex items-center gap-1.5">
+                    <span className="block">{weekday || dayOrder.find((day) => dayLectures.some((lecture) => lecture.weekday === day))}</span>
+                    {date === today && (
+                      <span className="inline-flex items-center rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                        Today
+                      </span>
+                    )}
+                  </div>
+                  <span className={`block text-xs ${date === today ? "font-semibold" : "font-normal"} ${off ? "text-danger" : "text-muted-foreground"}`}>{formatCalendarDate(date)}</span>
                 </th>
               );
             })}

@@ -320,6 +320,15 @@ function openDatabase(file) {
       fields_json TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS week_backups (
+      id TEXT PRIMARY KEY,
+      course TEXT NOT NULL,
+      batch TEXT NOT NULL,
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      lectures_json TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS sync_state (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       last_success_at TEXT,
@@ -377,6 +386,31 @@ function writeSyncState(db2, state) {
     JSON.stringify(state.parseIssues),
     state.spreadsheetTitle
   );
+}
+function readWeekBackups(db2) {
+  const rows = db2.prepare(`
+    SELECT id, course, batch, start_date, end_date, lectures_json
+    FROM week_backups
+    ORDER BY end_date DESC, start_date DESC
+  `).all();
+  return rows.map((row) => ({
+    id: row.id,
+    course: row.course,
+    batch: row.batch,
+    start: row.start_date,
+    end: row.end_date,
+    lectures: JSON.parse(row.lectures_json)
+  }));
+}
+function replaceWeekBackups(db2, weeks) {
+  db2.exec("DELETE FROM week_backups");
+  const insert = db2.prepare(`
+    INSERT INTO week_backups (id, course, batch, start_date, end_date, lectures_json)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  for (const week of weeks) {
+    insert.run(week.id, week.course, week.batch, week.start, week.end, JSON.stringify(week.lectures));
+  }
 }
 function readLectures(db2) {
   const rows = db2.prepare("SELECT json FROM lectures").all();
@@ -2374,9 +2408,29 @@ var import_serverless2 = require("@neondatabase/serverless");
 function archiveSignature(archive) {
   const lectures = archive.lectures.map((lecture) => `${lecture.id}	${lecture.sourceStatus}	${lecture.subject}	${lecture.faculty}	${lecture.room}	${lecture.startMinutes}`).sort().join("\n");
   const changes = archive.changes.map((change) => `${change.dedupeKey}	${change.type}	${change.summary}`).sort().join("\n");
+  const weeks = (archive.weeks ?? []).map((week) => week.id).sort().join("\n");
   return `${archive.sync.contentHash ?? ""}
 ${lectures}
-${changes}`;
+${changes}
+${weeks}`;
+}
+function mergeWeeks(newer, older) {
+  const byId = /* @__PURE__ */ new Map();
+  for (const week of older.weeks ?? []) byId.set(week.id, week);
+  for (const week of newer.weeks ?? []) byId.set(week.id, week);
+  const byProgram = /* @__PURE__ */ new Map();
+  for (const week of byId.values()) {
+    const key = `${week.course}\0${week.batch}`;
+    const list = byProgram.get(key) ?? [];
+    list.push(week);
+    byProgram.set(key, list);
+  }
+  const kept = [];
+  for (const list of byProgram.values()) {
+    list.sort((a, b) => b.end.localeCompare(a.end) || b.start.localeCompare(a.start));
+    kept.push(...list.slice(0, 8));
+  }
+  return kept;
 }
 function dayKey(lecture) {
   return `${lecture.tabName}|${lecture.date ?? ""}`;
@@ -2395,7 +2449,8 @@ function mergeArchives(left, right) {
   if (!sameWeek) {
     return {
       ...newer,
-      changes: newer.changes.filter((change) => !change.date || newerDates.has(change.date))
+      changes: newer.changes.filter((change) => !change.date || newerDates.has(change.date)),
+      weeks: mergeWeeks(newer, older)
     };
   }
   const ids = new Set(newer.lectures.map((lecture) => lecture.id));
@@ -2424,7 +2479,8 @@ function mergeArchives(left, right) {
     savedAt: newer.savedAt >= older.savedAt ? newer.savedAt : older.savedAt,
     lectures: [...newer.lectures, ...kept],
     changes: uniqueChangeIds([...changes.values()]),
-    sync: newer.sync
+    sync: newer.sync,
+    weeks: mergeWeeks(newer, older)
   };
 }
 function uniqueChangeIds(changes) {
@@ -2452,7 +2508,8 @@ function exportArchive(db2) {
     savedAt: (/* @__PURE__ */ new Date()).toISOString(),
     lectures: readLectures(db2),
     changes: readAllChanges(db2),
-    sync: readSyncState(db2)
+    sync: readSyncState(db2),
+    weeks: readWeekBackups(db2)
   };
 }
 function importArchive(db2, archive) {
@@ -2460,6 +2517,7 @@ function importArchive(db2, archive) {
   try {
     replaceLectures(db2, archive.lectures);
     replaceChangeRows(db2, archive.changes);
+    replaceWeekBackups(db2, archive.weeks ?? []);
     writeSyncState(db2, { ...archive.sync, bootstrapped: true });
     db2.exec("COMMIT");
   } catch (error) {
@@ -2532,6 +2590,68 @@ async function publishArchive(db2) {
   }
   lastSignature = signature;
   return true;
+}
+
+// server/src/services/weekBackup.ts
+var CAP = 8;
+function dated(lectures) {
+  return lectures.map((lecture) => lecture.date).filter((date) => Boolean(date)).sort();
+}
+function replacedWeeks(previous, next) {
+  const previousGroups = /* @__PURE__ */ new Map();
+  for (const lecture of previous) {
+    const key = programKey(lecture.course, lecture.batch);
+    const group = previousGroups.get(key) ?? [];
+    group.push(lecture);
+    previousGroups.set(key, group);
+  }
+  const nextDates = /* @__PURE__ */ new Map();
+  for (const lecture of next) {
+    if (!lecture.date) continue;
+    const key = programKey(lecture.course, lecture.batch);
+    const dates = nextDates.get(key) ?? /* @__PURE__ */ new Set();
+    dates.add(lecture.date);
+    nextDates.set(key, dates);
+  }
+  const backups = [];
+  for (const [key, lectures] of previousGroups) {
+    const previousDates = dated(lectures);
+    const incoming = nextDates.get(key);
+    if (previousDates.length === 0 || !incoming || incoming.size === 0) continue;
+    if (previousDates.some((date) => incoming.has(date))) continue;
+    const sample = lectures[0];
+    if (!sample) continue;
+    const start = previousDates[0];
+    const end = previousDates[previousDates.length - 1];
+    backups.push({
+      id: `${sample.course}|${sample.batch}|${start}|${end}`,
+      course: sample.course,
+      batch: sample.batch,
+      start,
+      end,
+      lectures
+    });
+  }
+  return backups;
+}
+function rememberReplacedWeeks(db2, previous, next) {
+  const fresh = replacedWeeks(previous, next);
+  if (fresh.length === 0) return;
+  const merged = new Map(readWeekBackups(db2).map((week) => [week.id, week]));
+  for (const week of fresh) merged.set(week.id, week);
+  const byProgram = /* @__PURE__ */ new Map();
+  for (const week of merged.values()) {
+    const key = programKey(week.course, week.batch);
+    const list = byProgram.get(key) ?? [];
+    list.push(week);
+    byProgram.set(key, list);
+  }
+  const kept = [];
+  for (const list of byProgram.values()) {
+    list.sort((a, b) => b.end.localeCompare(a.end) || b.start.localeCompare(a.start));
+    kept.push(...list.slice(0, CAP));
+  }
+  replaceWeekBackups(db2, kept);
 }
 
 // server/src/services/syncScheduler.ts
@@ -2649,6 +2769,7 @@ async function performSync(ctx) {
     const events = dropFreshProgramAdditions(previous, stored.lectures, stored.events);
     ctx.db.exec("BEGIN");
     try {
+      rememberReplacedWeeks(ctx.db, previous, retained.lectures);
       if (freshWeek) replaceChangeRows(ctx.db, []);
       saveSnapshot(ctx.db, stored.lectures);
       recordChanges(ctx.db, events);
@@ -2761,20 +2882,21 @@ function sheetLinks(lectures, sources) {
   }
   return [...seen.values()];
 }
+function byLecture(a, b) {
+  const date = (a.date ?? "").localeCompare(b.date ?? "");
+  if (date !== 0) return date;
+  if (a.startMinutes !== b.startMinutes) return a.startMinutes - b.startMinutes;
+  const division = a.division.localeCompare(b.division);
+  if (division !== 0) return division;
+  return a.subject.localeCompare(b.subject);
+}
 function buildBootstrap(db2, config2, now = /* @__PURE__ */ new Date(), filter) {
   const state = readSyncState(db2);
   const zone = zonedParts(now, config2.timezone);
   persistCancelledRemovals(db2);
   const changes = listChanges(db2, 80);
   const restored = restoreRemovedLectures(loadSnapshot(db2), changes);
-  const allLectures = restored.lectures.map((lecture) => presentLecture(lecture, now, config2.highlightHours)).sort((a, b) => {
-    const date = (a.date ?? "").localeCompare(b.date ?? "");
-    if (date !== 0) return date;
-    if (a.startMinutes !== b.startMinutes) return a.startMinutes - b.startMinutes;
-    const division = a.division.localeCompare(b.division);
-    if (division !== 0) return division;
-    return a.subject.localeCompare(b.subject);
-  });
+  const allLectures = restored.lectures.map((lecture) => presentLecture(lecture, now, config2.highlightHours)).sort(byLecture);
   const parsedChoices = cohortChoices(allLectures);
   const seenDivisions = new Set(parsedChoices.map((c) => c.division));
   const choices = [
@@ -2795,29 +2917,52 @@ function buildBootstrap(db2, config2, now = /* @__PURE__ */ new Date(), filter) 
     ...parsedFaculties,
     ...DEFAULT_FACULTY_NAMES.filter((f) => !seenFaculties.has(f.toLowerCase()))
   ].sort((a, b) => a.localeCompare(b));
+  const scopeOf = (rows) => {
+    if (filter?.faculty) {
+      const faculty = filter.faculty;
+      return rows.filter((lecture) => lecture.kind !== "break" && lectureMatchesFaculty(lecture.faculty, faculty));
+    }
+    if (filter?.division) {
+      const division = filter.division;
+      const choice = choices.find((item) => item.division === division);
+      return choice ? rows.filter((lecture) => lectureInCohort(lecture, choice)) : rows.filter((lecture) => lecture.division === division);
+    }
+    if (filter?.course || filter?.batch) {
+      return rows.filter(
+        (lecture) => (!filter.course || lecture.course.toLowerCase() === filter.course.toLowerCase()) && (!filter.batch || lecture.batch.toLowerCase() === filter.batch.toLowerCase())
+      );
+    }
+    return rows;
+  };
   let lectures = allLectures;
   let relevantChanges = changes;
   if (filter?.faculty) {
     const targetFaculty = filter.faculty;
-    const facultyPool = allLectures.filter((lecture) => lecture.kind !== "break" && lectureMatchesFaculty(lecture.faculty, targetFaculty));
+    const facultyPool = scopeOf(allLectures);
     lectures = facultyPool;
     const facultyIds = new Set(facultyPool.map((l) => l.id));
     relevantChanges = changes.filter((change) => changeMatchesFaculty(change, targetFaculty, facultyIds));
   } else if (filter?.division) {
     const targetDivision = filter.division;
     const choice = choices.find((item) => item.division === targetDivision);
-    lectures = choice ? allLectures.filter((lecture) => lectureInCohort(lecture, choice)) : allLectures.filter((lecture) => lecture.division === targetDivision);
+    lectures = scopeOf(allLectures);
     const watchedDivisions = new Set(choice ? [choice.division, ...choice.also] : [targetDivision]);
     relevantChanges = changes.filter((change) => !change.division || watchedDivisions.has(change.division));
   } else if (filter?.course || filter?.batch) {
-    lectures = allLectures.filter(
-      (lecture) => (!filter.course || lecture.course.toLowerCase() === filter.course.toLowerCase()) && (!filter.batch || lecture.batch.toLowerCase() === filter.batch.toLowerCase())
-    );
+    lectures = scopeOf(allLectures);
     relevantChanges = changes.filter(
       (change) => !filter.course || change.course?.toLowerCase() === filter.course.toLowerCase()
     );
   }
   const dates = lectures.map((lecture) => lecture.date).filter((date) => Boolean(date)).sort();
+  const savedWeeks = readWeekBackups(db2).map((week) => ({
+    id: week.id,
+    course: week.course,
+    batch: week.batch,
+    start: week.start,
+    end: week.end,
+    lectures: scopeOf(week.lectures.map((lecture) => presentLecture(lecture, now, config2.highlightHours)).sort(byLecture))
+  })).filter((week) => week.lectures.length > 0).sort((a, b) => b.end.localeCompare(a.end) || b.start.localeCompare(a.start));
   return {
     collegeName: config2.collegeName,
     schoolName: config2.schoolName,
@@ -2831,6 +2976,7 @@ function buildBootstrap(db2, config2, now = /* @__PURE__ */ new Date(), filter) 
     now: now.toISOString(),
     weekStart: dates[0] ?? null,
     weekEnd: dates[dates.length - 1] ?? null,
+    savedWeeks,
     sync: {
       lastSuccessAt: state.lastSuccessAt,
       lastAttemptAt: state.lastAttemptAt,

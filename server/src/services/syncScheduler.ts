@@ -11,6 +11,7 @@ import { parseTimetableSource } from "./timetableParser.ts";
 import { hydrateArchive, publishArchive } from "./durableState.ts";
 import { persistCancelledRemovals } from "./persistCancelled.ts";
 import { loadSnapshot, saveSnapshot, toNormalized } from "./timetableSnapshotService.ts";
+import { rememberReplacedWeeks } from "./weekBackup.ts";
 
 export interface WorkbookFile {
   buffer: Buffer;
@@ -167,6 +168,7 @@ async function performSync(ctx: SyncContext): Promise<SyncOutcome> {
 
     ctx.db.exec("BEGIN");
     try {
+      rememberReplacedWeeks(ctx.db, previous, retained.lectures);
       if (freshWeek) replaceChangeRows(ctx.db, []);
       saveSnapshot(ctx.db, stored.lectures);
       recordChanges(ctx.db, events);

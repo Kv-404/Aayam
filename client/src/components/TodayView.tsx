@@ -44,7 +44,10 @@ export function TodayView({
             {formatCalendarDate(date)}
             {todayHeading && <span className="ml-2 inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">Today</span>}
           </span>
-          <span className="hidden font-mono text-[11px] font-medium tracking-[0.22em] uppercase sm:inline">{formatLongDate(date)}</span>
+          <span className="hidden font-mono text-[11px] font-medium tracking-[0.22em] uppercase sm:inline">
+            {formatLongDate(date)}
+            {todayHeading && <span className="ml-2 inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 font-sans text-[11px] font-medium normal-case tracking-normal text-primary">Today</span>}
+          </span>
         </h2>
         {(onPrevDay || onNextDay) && (
           <div className="flex items-center gap-1 sm:hidden">

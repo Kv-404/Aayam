@@ -174,10 +174,14 @@ export default function RubberSegment({
 
   const commit = (i: number) => {
     committed.current = i;
-    if (i === index) return;
-    if (value === undefined) setInner(list[i]?.value);
     const next = list[i];
-    if (next) onChange?.(next.value, i);
+    if (!next) return;
+    if (i === index) {
+      onChange?.(next.value, i);
+      return;
+    }
+    if (value === undefined) setInner(next.value);
+    onChange?.(next.value, i);
   };
 
   const land = (to: number, v: number | null, flick: boolean, withSquash: boolean) => {
@@ -293,10 +297,14 @@ export default function RubberSegment({
     release();
     const x = localX(event);
     if (!d.live) {
-      if (Math.abs(x - d.x0) <= SLOP && d.slot !== committed.current) {
-        const from = committed.current;
-        commit(d.slot);
-        travel(from, d.slot);
+      if (Math.abs(x - d.x0) <= SLOP) {
+        if (d.slot !== committed.current) {
+          const from = committed.current;
+          commit(d.slot);
+          travel(from, d.slot);
+        } else {
+          commit(d.slot);
+        }
       }
       return;
     }

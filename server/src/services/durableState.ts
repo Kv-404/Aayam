@@ -3,8 +3,10 @@ import {
   readAllChanges,
   readLectures,
   readSyncState,
+  readWeekBackups,
   replaceChangeRows,
   replaceLectures,
+  replaceWeekBackups,
   writeSyncState,
   type AppDatabase,
 } from "../db.ts";
@@ -23,6 +25,7 @@ export function exportArchive(db: AppDatabase): TimetableArchive {
     lectures: readLectures(db),
     changes: readAllChanges(db),
     sync: readSyncState(db),
+    weeks: readWeekBackups(db),
   };
 }
 
@@ -31,6 +34,7 @@ export function importArchive(db: AppDatabase, archive: TimetableArchive) {
   try {
     replaceLectures(db, archive.lectures);
     replaceChangeRows(db, archive.changes);
+    replaceWeekBackups(db, archive.weeks ?? []);
     writeSyncState(db, { ...archive.sync, bootstrapped: true });
     db.exec("COMMIT");
   } catch (error) {

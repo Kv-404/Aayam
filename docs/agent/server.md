@@ -51,7 +51,7 @@ Change types the client may alert: `cancelled`, `restored`, `rescheduled`, `room
 
 ## Archive
 
-`durableState.ts` reads and writes state in Neon PostgreSQL (`timetable_archive` table). `timetableArchive.ts` merges two archives. A non-overlapping saved week is replaced; its change log is not reattached. Same-week removals stay cancelled. `server/test/archive.test.ts` and `sync.test.ts` cover this. Extend those tests when the rule changes.
+`durableState.ts` reads and writes state in Neon PostgreSQL (`timetable_archive` table). `timetableArchive.ts` merges two archives. A non-overlapping saved week is replaced; its change log is not reattached. The outgoing week is kept in `week_backups` and on `BootstrapResponse.savedWeeks`, up to 8 weeks per course and batch, so the client can still open it. Same-week removals stay cancelled. `server/test/archive.test.ts` and `sync.test.ts` cover this. Extend those tests when the rule changes.
 
 SQLite is `server/src/db.ts`. Local file defaults to `server/data/timetable.sqlite` (gitignored). Vercel uses `/tmp/timetable.sqlite`, wiped on cold start, then refilled from Neon.
 
