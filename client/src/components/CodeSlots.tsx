@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { animate, motion, motionValue, useMotionValue, useReducedMotion, useTransform, type MotionValue } from 'motion/react';
-import { HugeiconsIcon } from '@hugeicons/react';
-import { Tick02Icon } from '@hugeicons/core-free-icons';
 
 import './CodeSlots.css';
 
@@ -443,7 +441,7 @@ export default function CodeSlots({
         ))}
         <motion.span className="code-slots__wash" aria-hidden="true" style={{ clipPath: washClip }}>
           <motion.span className="code-slots__check" style={{ transform: checkTransform, opacity: checkOpacity }}>
-            <HugeiconsIcon icon={Tick02Icon} size={Math.round(slotSize * 0.6)} strokeWidth={2.2} />
+            <SuccessTick size={Math.round(slotSize * 0.6)} strokeWidth={2.2} />
           </motion.span>
         </motion.span>
         <motion.span
@@ -459,6 +457,24 @@ export default function CodeSlots({
         {status === 'success' ? 'Code accepted' : `${view.filter(Boolean).length} of ${length} digits entered`}
       </span>
     </div>
+  );
+}
+
+function SuccessTick({ size, strokeWidth = 2.2 }: { size: number; strokeWidth?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M5 14L8.5 17.5L19 6.5" />
+    </svg>
   );
 }
 

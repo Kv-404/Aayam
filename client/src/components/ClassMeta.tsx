@@ -6,7 +6,7 @@ export function ClassMeta({ faculty, room, meet }: { faculty: string; room: stri
   return (
     <div className="shrink-0 text-right leading-tight">
       {faculty && (
-        <p className="max-w-24 truncate text-[11px] text-muted-foreground" title={faculty}>
+        <p className="max-w-28 sm:max-w-48 truncate text-[11px] text-muted-foreground" title={faculty}>
           {faculty}
         </p>
       )}

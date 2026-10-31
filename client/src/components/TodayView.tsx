@@ -1,5 +1,6 @@
 import type { PublicLecture } from "@shared/types";
 import { cohortLabel } from "@shared/cohort";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ClassMeta } from "@/components/ClassMeta";
 import { StatusBadge, badgeText } from "@/components/StatusBadge";
 import { ClockLabel } from "@/components/ClockLabel";
@@ -15,6 +16,8 @@ export function TodayView({
   showDivision,
   note,
   meet,
+  onPrevDay,
+  onNextDay,
 }: {
   lectures: PublicLecture[];
   today: string;
@@ -22,6 +25,8 @@ export function TodayView({
   showDivision: boolean;
   note?: string;
   meet: MeetAction;
+  onPrevDay?: () => void;
+  onNextDay?: () => void;
 }) {
   const { classNameFor } = useColors();
   const visible = collapseFullOffDays(lectures);
@@ -32,21 +37,53 @@ export function TodayView({
   }
   const todayHeading = date === today;
   return (
-    <div>
-      <h2 className={todayHeading ? "text-foreground" : "text-muted-foreground"}>
-        <span className="font-sans text-sm font-semibold tracking-normal sm:hidden">
-          {formatCalendarDate(date)}
-          {todayHeading && <span className="ml-2 text-xs font-medium text-muted-foreground">Today</span>}
-        </span>
-        <span className="hidden font-mono text-[11px] font-medium tracking-[0.22em] uppercase sm:inline">{formatLongDate(date)}</span>
-      </h2>
+    <div className="rise">
+      <div className="flex items-center justify-between mb-2 sm:mb-4">
+        <h2 className={todayHeading ? "text-foreground" : "text-muted-foreground"}>
+          <span className="font-sans text-sm font-semibold tracking-normal sm:hidden">
+            {formatCalendarDate(date)}
+            {todayHeading && <span className="ml-2 inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">Today</span>}
+          </span>
+          <span className="hidden font-mono text-[11px] font-medium tracking-[0.22em] uppercase sm:inline">{formatLongDate(date)}</span>
+        </h2>
+        {(onPrevDay || onNextDay) && (
+          <div className="flex items-center gap-1 sm:hidden">
+            <button
+              type="button"
+              onClick={onPrevDay}
+              aria-label="Previous day"
+              className="inline-flex size-7 items-center justify-center rounded-md border border-border/40 bg-muted/30 text-muted-foreground hover:bg-muted hover:text-foreground active:scale-95 transition-all"
+            >
+              <ChevronLeft className="size-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={onNextDay}
+              aria-label="Next day"
+              className="inline-flex size-7 items-center justify-center rounded-md border border-border/40 bg-muted/30 text-muted-foreground hover:bg-muted hover:text-foreground active:scale-95 transition-all"
+            >
+              <ChevronRight className="size-3.5" />
+            </button>
+          </div>
+        )}
+      </div>
       {note && <p className="mt-1 text-sm text-muted-foreground">{note}</p>}
       <ol className="mt-2 flex flex-col gap-1.5 sm:mt-4 sm:grid sm:grid-cols-[max-content_minmax(0,1fr)] sm:gap-x-4 sm:gap-y-0 sm:border-t sm:border-border">
         {timeline(visible).map((item, index) => {
           if (item.kind === "break") {
             return (
-              <li key={item.key} className="rise-row py-1 text-xs text-muted-foreground sm:col-span-2 sm:border-b sm:border-border sm:py-3 sm:text-sm" style={{ animationDelay: `${Math.min(index, 12) * 35}ms` }}>
-                <span className="sm:hidden">{item.lecture.subject.replace(/ break$/i, "")} · {formatCompactRange(item.lecture.startLabel, item.lecture.endLabel)}</span>
+              <li
+                key={item.key}
+                className="rise-row py-2 text-xs text-muted-foreground sm:col-span-2 sm:border-b sm:border-border sm:py-3 sm:text-sm"
+                style={{ animationDelay: `${Math.min(index, 12) * 35}ms` }}
+              >
+                <div className="flex items-center gap-2 sm:hidden">
+                  <div className="h-px flex-1 bg-border/60" />
+                  <span className="rounded-full border border-border/40 bg-muted/50 px-2.5 py-0.5 font-mono text-[11px] font-medium text-muted-foreground">
+                    {item.lecture.subject.replace(/ break$/i, "")} · {formatCompactRange(item.lecture.startLabel, item.lecture.endLabel)}
+                  </span>
+                  <div className="h-px flex-1 bg-border/60" />
+                </div>
                 <span className="hidden sm:inline">
                   {item.lecture.subject} · {item.lecture.startLabel} – {item.lecture.endLabel}
                 </span>

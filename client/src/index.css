@@ -533,3 +533,40 @@ select {
     transition: none !important;
   }
 }
+
+/* Safe area padding for mobile PWA standalone */
+body {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Print / PDF Optimized Styles */
+@media print {
+  header,
+  footer,
+  [data-testid="refresh-button"],
+  [data-testid="search-button"],
+  [data-testid="appearance-button"],
+  [data-testid="calendar-week"],
+  .day-chip,
+  nav {
+    display: none !important;
+  }
+
+  body, #root, main {
+    background: #ffffff !important;
+    color: #000000 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    min-height: auto !important;
+  }
+
+  table {
+    border-collapse: collapse !important;
+    width: 100% !important;
+  }
+
+  th, td {
+    border: 1px solid #d4d4d8 !important;
+    color: #000000 !important;
+  }
+}

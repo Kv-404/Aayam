@@ -269,7 +269,10 @@ export function App() {
         return readRole() === "faculty" && stored ? { faculty: stored } : {};
       }
       if (urlScope.scope.division) {
-        saveCohort(urlScope.scope.division);
+        const matched = urlScope.matchedCohort ?? slugToCohort(urlScope.scope.division, DEFAULT_COHORT_CHOICES);
+        if (matched && isBatchUnlocked(matched.course, matched.batch)) {
+          saveCohort(urlScope.scope.division);
+        }
       }
       return urlScope.scope;
     }
@@ -356,7 +359,10 @@ export function App() {
             setConfigured(true);
           }
         } else if (parsed.scope.division) {
-          saveCohort(parsed.scope.division);
+          const matched = parsed.matchedCohort ?? slugToCohort(parsed.scope.division, activeChoices);
+          if (matched && isBatchUnlocked(matched.course, matched.batch)) {
+            saveCohort(parsed.scope.division);
+          }
           setScope(parsed.scope);
           setConfigured(true);
         } else {
