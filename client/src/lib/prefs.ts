@@ -28,6 +28,7 @@ const facultyPreviewKey = "timetable-faculty-preview";
 const facultySessionKey = "timetable-faculty-session";
 const unlockedBatchesKey = "timetable-unlocked-batches";
 const studentBatchKey = "timetable-student-batch";
+const savedWeekKey = "timetable-week";
 
 export type MeetAction = "open" | "copy";
 
@@ -64,6 +65,23 @@ export function readRole(): ViewerRole {
 
 export function readStoredCohort() {
   return storageGet(cohortKey) ?? "";
+}
+
+export function readSavedWeek() {
+  const value = storageGet(savedWeekKey);
+  return value && value !== "live" ? value : "live";
+}
+
+export function saveSavedWeek(id: string) {
+  if (!id || id === "live") {
+    try {
+      localStorage.removeItem(savedWeekKey);
+    } catch {
+      // The visit still returns to the live week.
+    }
+    return;
+  }
+  storageSet(savedWeekKey, id);
 }
 
 export function readStoredFaculty() {

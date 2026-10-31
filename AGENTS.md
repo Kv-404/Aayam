@@ -19,7 +19,7 @@ Shared types and faculty-name matching are in `docs/agent/server.md`. Read a sec
 
 - Do not add Supabase, another database, or a write path to Google Sheets.
 - The sheet stays shared so anyone with the link can view. The browser never gets a Google key.
-- A lecture removed from a day that is still published stays on the grid as cancelled. It keeps its subject colour, with strikethrough and a Cancelled label. It must survive a process restart through the blob archive.
+- A lecture removed from a day that is still published stays on the grid as cancelled. It keeps its subject colour, with strikethrough and a Cancelled label. It must survive a process restart through the Neon archive.
 - A new sheet whose dates do not overlap the saved week is a fresh baseline: no added, removed, or cancelled events, and change rows from other weeks are dropped.
 - A slot is cancelled by the text `OFF`, `cancelled`, or `holiday`, or by a red fill on the subject cell. A red lecture keeps its subject. A full-day merged label such as Dussehra is that subject on every slot, including lunch, unless that cell is red.
 - Monday and Saturday off days are white cells in the sheet. The word `OFF` cancels them. Orange, amber, gold, yellow, and white fills do not.

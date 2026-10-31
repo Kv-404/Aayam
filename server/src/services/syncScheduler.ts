@@ -11,7 +11,7 @@ import { parseTimetableSource } from "./timetableParser.ts";
 import { hydrateArchive, publishArchive } from "./durableState.ts";
 import { persistCancelledRemovals } from "./persistCancelled.ts";
 import { loadSnapshot, saveSnapshot, toNormalized } from "./timetableSnapshotService.ts";
-import { rememberReplacedWeeks } from "./weekBackup.ts";
+import { rememberPublishedWeeks, rememberReplacedWeeks } from "./weekBackup.ts";
 
 export interface WorkbookFile {
   buffer: Buffer;
@@ -147,9 +147,11 @@ async function performSync(ctx: SyncContext): Promise<SyncOutcome> {
     }
     const retained = { lectures: retainedLectures, issues: retainedIssues };
     const contentHash = contentFingerprint(retained.lectures, tabNames, retained.issues);
+    const changesBeforeTrim = readAllChanges(ctx.db);
     dropChangesFromOtherWeeks(ctx.db, retained.lectures);
 
     if (current.bootstrapped && current.contentHash === contentHash) {
+      rememberPublishedWeeks(ctx.db, previous);
       writeSyncState(ctx.db, successState(current, attemptAt, contentHash, tabNames, retained.issues, ctx.config.spreadsheetTitle));
       await publishArchive(ctx.db);
       return { ok: true, unchanged: true, changeCount: 0, error: null };
@@ -168,10 +170,11 @@ async function performSync(ctx: SyncContext): Promise<SyncOutcome> {
 
     ctx.db.exec("BEGIN");
     try {
-      rememberReplacedWeeks(ctx.db, previous, retained.lectures);
+      rememberReplacedWeeks(ctx.db, previous, retained.lectures, changesBeforeTrim);
       if (freshWeek) replaceChangeRows(ctx.db, []);
       saveSnapshot(ctx.db, stored.lectures);
       recordChanges(ctx.db, events);
+      rememberPublishedWeeks(ctx.db, stored.lectures);
       writeSyncState(ctx.db, {
         ...successState(current, attemptAt, contentHash, tabNames, retained.issues, ctx.config.spreadsheetTitle),
         bootstrapped: true,

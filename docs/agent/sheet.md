@@ -38,9 +38,9 @@ Monday and Saturday OFF cells are white. The word `OFF` cancels the slot. The wh
 
 ## Week change
 
-When someone publishes next week's sheet, its dates do not overlap this week's dates. Sync treats that as a new baseline: the old change log is dropped, nothing is marked cancelled, and the new grid is the starting point. Same-week edits still diff.
+When someone publishes next week's sheet, its dates do not overlap this week's dates. Sync treats that as a new baseline: the old change log leaves the live Updates list, nothing on the new grid is marked cancelled, and the new grid is the starting point. The previous week stays saved, lectures and updates included, and can be opened from the week menu. Same-week edits still diff. The current batch workbooks are the fallbacks in `server/src/config.ts`.
 
-Deleting `server/data/timetable.sqlite` and restarting local dev also starts clean, but the blob still has the old week if `BLOB_READ_WRITE_TOKEN` is set. Overlap rules in `mergeArchives` then decide whether that history reattaches. See `docs/agent/server.md`.
+Deleting `server/data/timetable.sqlite` and restarting local dev also starts clean. Neon still has the saved weeks and the live timetable, and `mergeArchives` decides whether that history reattaches. See `docs/agent/server.md`.
 
 ## People
 

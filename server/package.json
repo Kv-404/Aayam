@@ -10,7 +10,6 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",
-    "@vercel/blob": "^2.3.1",
     "cors": "^2.8.5",
     "exceljs": "^4.4.0",
     "express": "^4.21.2"

@@ -133,10 +133,13 @@ describe("sync", () => {
     assert.equal(lectures[0]?.subject, "Machine Learning Fundamentals");
     assert.equal(lectures[0]?.room, "Classroom - 4");
     const backups = readWeekBackups(db);
-    assert.equal(backups.length, 1);
-    assert.equal(backups[0]?.start, "2026-10-13");
-    assert.equal(backups[0]?.end, "2026-10-13");
-    assert.equal(backups[0]?.lectures[0]?.subject, "Data Structures and Algorithm - II");
+    const past = backups.find((week) => week.start === "2026-10-13");
+    const current = backups.find((week) => week.start === "2026-10-20");
+    assert.equal(backups.length, 2);
+    assert.equal(past?.end, "2026-10-13");
+    assert.equal(past?.lectures[0]?.subject, "Data Structures and Algorithm - II");
+    assert.equal(past?.changes.some((change) => change.type === "room_change"), true);
+    assert.equal(current?.lectures[0]?.subject, "Machine Learning Fundamentals");
     assert.equal(readLectures(db).some((lecture) => lecture.date === "2026-10-13"), false);
 
     const tweak = await workbookBuffer((sheet) => {
@@ -148,7 +151,7 @@ describe("sync", () => {
     assert.equal(next.changeCount, 1);
     assert.equal(readChanges(db)[0]?.type, "room_change");
     assert.equal(readLectures(db)[0]?.date, "2026-10-20");
-    assert.equal(readWeekBackups(db).length, 1);
+    assert.equal(readWeekBackups(db).length, 2);
   });
 
   it("removes change history from a week the sheet no longer publishes", async () => {
