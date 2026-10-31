@@ -73,7 +73,7 @@ Sticky and left-aligned. There is no "Timetable" title and no max-width column. 
 
 Search is an icon button (`search-button`). It slides open a panel from that button: the field (aria-label "Search the timetable"), past searches, and `TimetableFilters`. History is `timetable-search-history` (most recent 8). Each entry can be removed. Clear all empties the list. The filters button is gone. The panel's Clear still resets filters.
 
-On a wide screen the second row has the weekday `RubberSegment` when on Day view, then Day, Week, and Updates in the same kind of segment. On Week view, the weekday segment is omitted. On a phone those controls sit in a fixed bar at the bottom, and the bell stays in the header. The current weekday is bold with an indicator dot. When `savedWeeks` is present, a week menu lists the live sheet and each backed-up week. The tabs root stays, without a tabs list.
+On a wide screen, the top bar is a single straight line: logo and cohort or faculty menu on the left, Now or Next pill in the center, and the Day/Week/Updates segment alongside the actions toolbar on the right. In Day view, a sleek second row displays the weekday `RubberSegment`. On a phone, Day/Week/Updates sits in the fixed bottom bar (along with the day selector when in Day view), and the bell stays in the header. The current weekday is bold with an indicator dot. When `savedWeeks` is present, a week menu lists the live sheet and each backed-up week. The tabs root stays, without a tabs list.
 
 Add week uses `client/src/lib/calendar.ts`. Student feed is `/api/calendar.ics?division=`. Faculty feed is `?faculty=`. Outlook, Google, Apple, Proton, and a downloaded `.ics`. Proton copies the feed URL and opens Proton Calendar.
 
