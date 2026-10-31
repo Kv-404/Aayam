@@ -48,7 +48,7 @@ var COHORT_TEMPLATES = [
     course: "BTech",
     batch: "2026-30",
     divisions: ["Andrew NG", "Jerry Sanders", "Tim Cook"],
-    fallbackId: "1p3Rjmg-PTjxl-XgWfLbKVzItXq1waoEFvIWo3DpAvpw",
+    fallbackId: "1cG7UflUTUPVpVL3BliSYFqDkOs-QzsGyo3azE1qd3js",
     envKeys: [
       "SPREADSHEET_BTECH_2026_30",
       "SPREADSHEET_ID_BTECH_2026_30",
@@ -64,7 +64,7 @@ var COHORT_TEMPLATES = [
     course: "BTech",
     batch: "2025-29",
     divisions: ["Demis Hassabis 2025", "Jeff Bezos 2025", "Larry Page 2025", "Sam Altman 2025"],
-    fallbackId: "1Fzv6FWD0EAWWZFcByFkEYTyIu3eMS4tM3BEkW2Gl1j8",
+    fallbackId: "1qInzB5I0deY7jAKgFFFgBsd4fkSFLGqg-Fyh7Q3nXUM",
     envKeys: [
       "SPREADSHEET_BTECH_2025_29",
       "SPREADSHEET_ID_BTECH_2025_29",
@@ -80,7 +80,7 @@ var COHORT_TEMPLATES = [
     course: "BTech",
     batch: "2024-28",
     divisions: ["Elon Musk 2024", "Jensen Huang 2024", "Mark Zuckerberg"],
-    fallbackId: "1J8MbPOqIRVeHQYmc1ukK9tx_1ZL1jmcYLpHmrjYtPAQ",
+    fallbackId: "1Z8WWsv0yhiMmfZQqzzYBYrYgxq-FcDd_kbQeGcF5eDI",
     envKeys: [
       "SPREADSHEET_BTECH_2024_28",
       "SPREADSHEET_ID_BTECH_2024_28",
@@ -96,7 +96,7 @@ var COHORT_TEMPLATES = [
     course: "BTech",
     batch: "2023-27",
     divisions: ["Steve Jobs (AI/DS)", "Steve Jobs (Cyber-Sec)", "Steve Jobs"],
-    fallbackId: "15v70vR-WThtqWvdA84HwtddenAPKnF-s1mU3xl1RHCM",
+    fallbackId: "1nbdHdLvtlcrhClzfcKA7bBuNXQI1q61qs-sg2RK0ra4",
     envKeys: [
       "SPREADSHEET_BTECH_2023_27",
       "SPREADSHEET_ID_BTECH_2023_27",
@@ -112,7 +112,7 @@ var COHORT_TEMPLATES = [
     course: "MCA",
     batch: "2026-28",
     divisions: ["Geoffrey Hinton"],
-    fallbackId: "1v0P53F1BdRqGfhO6UE9VUq7A8p4vmmbDcN4PiX37e8w",
+    fallbackId: "15mPKkE6CWnHRTEH2RCg1HDAwL0cTgC9AqECpv_GRt1o",
     envKeys: [
       "SPREADSHEET_MCA_2026_28",
       "SPREADSHEET_ID_MCA_2026_28",
@@ -128,7 +128,7 @@ var WEEK_SHEETS = COHORT_TEMPLATES.map((tmpl) => ({
   batch: tmpl.batch,
   divisions: tmpl.divisions
 }));
-var PRIMARY_SHEET = "1Fzv6FWD0EAWWZFcByFkEYTyIu3eMS4tM3BEkW2Gl1j8";
+var PRIMARY_SHEET = "1qInzB5I0deY7jAKgFFFgBsd4fkSFLGqg-Fyh7Q3nXUM";
 function sheetForScope(scope, sources = sheetSources()) {
   const division = scope.division?.trim().toLowerCase();
   const batch = scope.batch?.trim().toLowerCase();
@@ -264,7 +264,7 @@ function getConfig() {
     // The sheet link falls back to the 2025-29 workbook. Sync reads every source.
     spreadsheets,
     spreadsheetId: process.env.SPREADSHEET_ID ? cleanSpreadsheetId(process.env.SPREADSHEET_ID) : spreadsheets.find((sheet) => sheet.batch === "2025-29")?.id ?? spreadsheets[0]?.id ?? PRIMARY_SHEET,
-    spreadsheetTitle: process.env.SPREADSHEET_TITLE?.trim() || "BTech Cohort Planning weekly | 2025-29 - 26th Oct to 31st Oct 2026",
+    spreadsheetTitle: process.env.SPREADSHEET_TITLE?.trim() || "BTech Cohort Planning weekly | 2nd Nov to 7th Nov 2026",
     collegeName: process.env.COLLEGE_NAME?.trim() || "ITM Skills University",
     schoolName: process.env.SCHOOL_NAME?.trim() || "School of FutureTech, Kharghar",
     courseName: process.env.COURSE_NAME?.trim() || "BTech",
@@ -326,7 +326,8 @@ function openDatabase(file) {
       batch TEXT NOT NULL,
       start_date TEXT NOT NULL,
       end_date TEXT NOT NULL,
-      lectures_json TEXT NOT NULL
+      lectures_json TEXT NOT NULL,
+      changes_json TEXT NOT NULL DEFAULT '[]'
     );
 
     CREATE TABLE IF NOT EXISTS sync_state (
@@ -344,6 +345,10 @@ function openDatabase(file) {
   const existing = db2.prepare("SELECT id FROM sync_state WHERE id = 1").get();
   if (!existing) {
     db2.prepare("INSERT INTO sync_state (id, bootstrapped) VALUES (1, 0)").run();
+  }
+  const weekColumns = db2.prepare("PRAGMA table_info(week_backups)").all();
+  if (!weekColumns.some((column) => column.name === "changes_json")) {
+    db2.exec("ALTER TABLE week_backups ADD COLUMN changes_json TEXT NOT NULL DEFAULT '[]'");
   }
   return db2;
 }
@@ -389,7 +394,7 @@ function writeSyncState(db2, state) {
 }
 function readWeekBackups(db2) {
   const rows = db2.prepare(`
-    SELECT id, course, batch, start_date, end_date, lectures_json
+    SELECT id, course, batch, start_date, end_date, lectures_json, changes_json
     FROM week_backups
     ORDER BY end_date DESC, start_date DESC
   `).all();
@@ -399,17 +404,26 @@ function readWeekBackups(db2) {
     batch: row.batch,
     start: row.start_date,
     end: row.end_date,
-    lectures: JSON.parse(row.lectures_json)
+    lectures: JSON.parse(row.lectures_json),
+    changes: row.changes_json ? JSON.parse(row.changes_json) : []
   }));
 }
 function replaceWeekBackups(db2, weeks) {
   db2.exec("DELETE FROM week_backups");
   const insert = db2.prepare(`
-    INSERT INTO week_backups (id, course, batch, start_date, end_date, lectures_json)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO week_backups (id, course, batch, start_date, end_date, lectures_json, changes_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
   for (const week of weeks) {
-    insert.run(week.id, week.course, week.batch, week.start, week.end, JSON.stringify(week.lectures));
+    insert.run(
+      week.id,
+      week.course,
+      week.batch,
+      week.start,
+      week.end,
+      JSON.stringify(week.lectures),
+      JSON.stringify(week.changes ?? [])
+    );
   }
 }
 function readLectures(db2) {
@@ -549,8 +563,8 @@ var import_node_url = require("node:url");
 var import_meta = {};
 function applyEnvFile(file) {
   if (!import_node_fs2.default.existsSync(file)) return;
-  const text = import_node_fs2.default.readFileSync(file, "utf8");
-  for (const line of text.split("\n")) {
+  const text2 = import_node_fs2.default.readFileSync(file, "utf8");
+  for (const line of text2.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
     const eq = trimmed.indexOf("=");
@@ -1229,8 +1243,8 @@ function parseTimeToken(token) {
   return hour * 60 + minute;
 }
 function parseTimeRange(label) {
-  const text = canon(label);
-  const match = text.match(/^(.+?)\s*(?:-|–|—|\bto\b)\s*(.+)$/i);
+  const text2 = canon(label);
+  const match = text2.match(/^(.+?)\s*(?:-|–|—|\bto\b)\s*(.+)$/i);
   if (!match) return null;
   const start = parseTimeToken(match[1] ?? "");
   const end = parseTimeToken(match[2] ?? "");
@@ -1238,8 +1252,8 @@ function parseTimeRange(label) {
   return { start, end };
 }
 function parseDateLabel(input, order = "DMY") {
-  const text = canon(input);
-  const match = text.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);
+  const text2 = canon(input);
+  const match = text2.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);
   if (!match) return null;
   const first = Number(match[1]);
   const second = Number(match[2]);
@@ -1252,14 +1266,14 @@ function parseDateLabel(input, order = "DMY") {
     return null;
   }
   const iso = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-  const named = text.match(/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i);
+  const named = text2.match(/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i);
   const computed = WEEKDAYS[date.getUTCDay()] ?? "Monday";
   const weekday = named ? named[1].charAt(0).toUpperCase() + named[1].slice(1).toLowerCase() : computed;
   return { iso, weekday, computedWeekday: computed };
 }
 function weekdayFromName(name) {
-  const text = canon(name).toLowerCase();
-  const found = WEEKDAYS.find((day) => text === day.toLowerCase() || text.startsWith(`${day.toLowerCase()} `));
+  const text2 = canon(name).toLowerCase();
+  const found = WEEKDAYS.find((day) => text2 === day.toLowerCase() || text2.startsWith(`${day.toLowerCase()} `));
   return found ?? null;
 }
 function zonedParts(date, timeZone) {
@@ -1809,12 +1823,12 @@ function normalizeMark(word) {
   return "changed";
 }
 function parseStatusToken(status) {
-  const text = canon(status).toLowerCase();
-  if (!text || text === "scheduled" || text === "confirmed") return null;
-  if (/^(cancelled|canceled|holiday)$/.test(text)) return "cancelled";
-  if (text === "off") return "off";
-  if (text === "rescheduled") return "rescheduled";
-  if (text === "changed") return "changed";
+  const text2 = canon(status).toLowerCase();
+  if (!text2 || text2 === "scheduled" || text2 === "confirmed") return null;
+  if (/^(cancelled|canceled|holiday)$/.test(text2)) return "cancelled";
+  if (text2 === "off") return "off";
+  if (text2 === "rescheduled") return "rescheduled";
+  if (text2 === "changed") return "changed";
   return null;
 }
 function parseMarkedSubject(subject) {
@@ -2035,9 +2049,9 @@ function loadMatrix(worksheet) {
     masterOf(row, col) {
       const cell = worksheet.getCell(row, col);
       const master = cell.master ?? cell;
-      const text = cellText(master.value);
-      if (!text) return null;
-      return { row: Number(master.row), col: columnIndex(master), text };
+      const text2 = cellText(master.value);
+      if (!text2) return null;
+      return { row: Number(master.row), col: columnIndex(master), text: text2 };
     },
     isYellow(row, col) {
       return isYellowCell(worksheet.getCell(row, col));
@@ -2055,15 +2069,15 @@ function labelAt(matrix, row) {
   return "";
 }
 function classify(label) {
-  const text = canon(label).toLowerCase();
-  if (!text) return "empty";
+  const text2 = canon(label).toLowerCase();
+  if (!text2) return "empty";
   if (parseTimeRange(label)) return "time";
-  if (text === "timing" || text === "time") return "header";
-  if (text === "faculty" || text === "teacher" || text === "professor" || text === "faculty name") return "faculty";
-  if (/^(classroom no\.?|classroom|class room|room no\.?|room|venue|lab|laboratory)$/.test(text)) return "room";
-  if (text === "status") return "status";
-  if (/^(reason|remarks|remark|note|notes)$/.test(text)) return "reason";
-  if (/^(semester|sem)\b/.test(text) || /\bbatch\b/.test(text) || parseDateLabel(label)) return "meta";
+  if (text2 === "timing" || text2 === "time") return "header";
+  if (text2 === "faculty" || text2 === "teacher" || text2 === "professor" || text2 === "faculty name") return "faculty";
+  if (/^(classroom no\.?|classroom|class room|room no\.?|room|venue|lab|laboratory)$/.test(text2)) return "room";
+  if (text2 === "status") return "status";
+  if (/^(reason|remarks|remark|note|notes)$/.test(text2)) return "reason";
+  if (/^(semester|sem)\b/.test(text2) || /\bbatch\b/.test(text2) || parseDateLabel(label)) return "meta";
   return "other";
 }
 function valueAt(matrix, row, col, allowTimeMerge) {
@@ -2086,14 +2100,14 @@ function canonCourse(raw) {
   return canon(raw);
 }
 function canonBatch(raw) {
-  const text = canon(raw).replace(/[–—]/g, "-").replace(/\s*-\s*/g, "-");
-  const match = text.match(/^(\d{4})-(\d{2}|\d{4})$/);
-  if (!match?.[1] || !match[2]) return text;
+  const text2 = canon(raw).replace(/[–—]/g, "-").replace(/\s*-\s*/g, "-");
+  const match = text2.match(/^(\d{4})-(\d{2}|\d{4})$/);
+  if (!match?.[1] || !match[2]) return text2;
   const end = match[2].length === 4 ? match[2].slice(-2) : match[2];
   return `${match[1]}-${end}`;
 }
-function readProgramBatch(text) {
-  const match = canon(text).match(/^(?:(b\.?\s*tech|m\.?\s*c\.?\s*a)\s+)?batch\b(?:\s*[-–:]?\s*(.+))?$/i);
+function readProgramBatch(text2) {
+  const match = canon(text2).match(/^(?:(b\.?\s*tech|m\.?\s*c\.?\s*a)\s+)?batch\b(?:\s*[-–:]?\s*(.+))?$/i);
   if (!match) return null;
   const course = match[1] ? canonCourse(match[1]) : null;
   const batch = match[2] ? canonBatch(match[2]) : null;
@@ -2109,11 +2123,11 @@ function readMeta(matrix, headerRow, dateOrder) {
   let weekday = null;
   const notes = [];
   for (let row = 1; row < headerRow; row += 1) {
-    const text = labelAt(matrix, row);
-    if (!text) continue;
-    const semesterMatch = text.match(/^(?:semester|sem)\s*[-–:]?\s*([0-9]+)/i);
-    const named = readProgramBatch(text);
-    const parsedDate = parseDateLabel(text, dateOrder);
+    const text2 = labelAt(matrix, row);
+    if (!text2) continue;
+    const semesterMatch = text2.match(/^(?:semester|sem)\s*[-–:]?\s*([0-9]+)/i);
+    const named = readProgramBatch(text2);
+    const parsedDate = parseDateLabel(text2, dateOrder);
     if (semesterMatch) semester = semesterMatch[1] ?? semester;
     else if (named) {
       if (named.course) course = named.course;
@@ -2122,9 +2136,9 @@ function readMeta(matrix, headerRow, dateOrder) {
       date = parsedDate.iso;
       weekday = parsedDate.computedWeekday;
       if (parsedDate.weekday !== parsedDate.computedWeekday) {
-        notes.push(`Date ${text} says ${parsedDate.weekday}, which does not match ${parsedDate.computedWeekday}. The calendar date was used.`);
+        notes.push(`Date ${text2} says ${parsedDate.weekday}, which does not match ${parsedDate.computedWeekday}. The calendar date was used.`);
       }
-    } else if (!collegeName && text.length > 3) collegeName = canon(text);
+    } else if (!collegeName && text2.length > 3) collegeName = canon(text2);
   }
   return { collegeName, course, semester, batch, date, weekday, notes };
 }
@@ -2252,10 +2266,10 @@ function parseGrid(matrix, tabName, dateOrder) {
 function headerMap(matrix, row) {
   const map = /* @__PURE__ */ new Map();
   for (let col = 1; col <= matrix.colCount; col += 1) {
-    const text = canon(matrix.own(row, col) || matrix.masterOf(row, col)?.text || "").toLowerCase();
-    if (!text) continue;
+    const text2 = canon(matrix.own(row, col) || matrix.masterOf(row, col)?.text || "").toLowerCase();
+    if (!text2) continue;
     for (const [field, aliases] of Object.entries(HEADER_ALIASES)) {
-      if (aliases.includes(text) && !map.has(field)) map.set(field, col);
+      if (aliases.includes(text2) && !map.has(field)) map.set(field, col);
     }
   }
   return map;
@@ -2402,7 +2416,414 @@ async function parseTimetableSource(source, options = {}) {
 }
 
 // server/src/services/durableState.ts
+var import_serverless3 = require("@neondatabase/serverless");
+
+// server/src/services/neonRows.ts
 var import_serverless2 = require("@neondatabase/serverless");
+var LIVE = "live";
+var schemaReady = false;
+function neonUrl() {
+  return process.env.DATABASE_URL?.trim() || "";
+}
+function chunks(rows, size) {
+  const groups = [];
+  for (let index = 0; index < rows.length; index += size) groups.push(rows.slice(index, index + size));
+  return groups;
+}
+function lectureRow(lecture, weekId) {
+  return {
+    week_id: weekId,
+    id: lecture.id,
+    slot_key: lecture.slotKey,
+    tab_name: lecture.tabName,
+    course: lecture.course,
+    semester: lecture.semester,
+    batch: lecture.batch,
+    division: lecture.division,
+    date: lecture.date,
+    weekday: lecture.weekday,
+    start_minutes: lecture.startMinutes,
+    end_minutes: lecture.endMinutes,
+    start_label: lecture.startLabel,
+    end_label: lecture.endLabel,
+    subject: lecture.subject,
+    faculty: lecture.faculty,
+    room: lecture.room,
+    kind: lecture.kind,
+    source_status: lecture.sourceStatus,
+    reason: lecture.reason,
+    explicit_mark: lecture.explicitMark,
+    recurring: lecture.recurring,
+    spreadsheet_id: lecture.spreadsheetId ?? null,
+    anchor: lecture.anchor,
+    highlight: lecture.highlight
+  };
+}
+function changeRow(change, weekId) {
+  return {
+    id: change.id,
+    week_id: weekId,
+    dedupe_key: change.dedupeKey,
+    detected_at: change.detectedAt,
+    type: change.type,
+    lecture_id: change.lectureId,
+    division: change.division,
+    course: change.course,
+    semester: change.semester,
+    tab_name: change.tabName,
+    date: change.date,
+    weekday: change.weekday,
+    summary: change.summary,
+    previous: change.previous,
+    next: change.next,
+    fields: change.fields ?? []
+  };
+}
+function uniqueChangeRows(rows) {
+  const seenKeys = /* @__PURE__ */ new Set();
+  const seenIds = /* @__PURE__ */ new Set();
+  let nextId = rows.reduce((highest, row) => Math.max(highest, row.id || 0), 0);
+  const unique = [];
+  for (const row of rows) {
+    const key = `${row.week_id}\0${row.dedupe_key}`;
+    if (seenKeys.has(key)) continue;
+    let id = row.id;
+    if (id <= 0 || seenIds.has(`${row.week_id}\0${id}`)) {
+      nextId += 1;
+      id = nextId;
+    }
+    seenKeys.add(key);
+    seenIds.add(`${row.week_id}\0${id}`);
+    unique.push({ ...row, id });
+  }
+  return unique;
+}
+function uniqueLectureRows(rows) {
+  const seen = /* @__PURE__ */ new Set();
+  const unique = [];
+  for (const row of rows) {
+    const key = `${row.week_id}\0${row.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(row);
+  }
+  return unique;
+}
+function archiveToRows(archive) {
+  const lectures = archive.lectures.map((lecture) => lectureRow(lecture, LIVE));
+  const changes = archive.changes.map((change) => changeRow(change, LIVE));
+  const weeks = [];
+  for (const week of archive.weeks ?? []) {
+    weeks.push({ id: week.id, course: week.course, batch: week.batch, start_date: week.start, end_date: week.end });
+    for (const lecture of week.lectures) lectures.push(lectureRow(lecture, week.id));
+    for (const change of week.changes ?? []) changes.push(changeRow(change, week.id));
+  }
+  return {
+    lectures: uniqueLectureRows(lectures),
+    changes: uniqueChangeRows(changes),
+    weeks
+  };
+}
+function text(value) {
+  if (value == null) return null;
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  const raw = String(value);
+  return raw ? raw.slice(0, 10) : null;
+}
+function json(value, fallback) {
+  if (value == null) return fallback;
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return fallback;
+    }
+  }
+  return value;
+}
+function lectureFromRow(row) {
+  return {
+    id: row.id,
+    slotKey: row.slot_key,
+    tabName: row.tab_name,
+    course: row.course,
+    semester: row.semester,
+    batch: row.batch,
+    division: row.division,
+    date: text(row.date),
+    weekday: row.weekday,
+    startMinutes: Number(row.start_minutes),
+    endMinutes: Number(row.end_minutes),
+    startLabel: row.start_label,
+    endLabel: row.end_label,
+    subject: row.subject,
+    faculty: row.faculty,
+    room: row.room,
+    kind: row.kind,
+    sourceStatus: row.source_status === "cancelled" ? "cancelled" : "scheduled",
+    reason: row.reason,
+    explicitMark: row.explicit_mark ?? null,
+    recurring: Boolean(row.recurring),
+    spreadsheetId: row.spreadsheet_id ?? void 0,
+    anchor: json(row.anchor, {
+      subject: row.subject,
+      faculty: row.faculty,
+      room: row.room,
+      startMinutes: Number(row.start_minutes),
+      endMinutes: Number(row.end_minutes),
+      startLabel: row.start_label,
+      endLabel: row.end_label,
+      sourceStatus: row.source_status === "cancelled" ? "cancelled" : "scheduled",
+      reason: row.reason ?? "",
+      kind: row.kind,
+      explicitMark: null
+    }),
+    highlight: row.highlight ? json(row.highlight, null) : null
+  };
+}
+function changeFromRow(row) {
+  return {
+    id: Number(row.id),
+    dedupeKey: row.dedupe_key,
+    detectedAt: row.detected_at,
+    type: row.type,
+    lectureId: row.lecture_id,
+    division: row.division,
+    course: row.course,
+    semester: row.semester,
+    tabName: row.tab_name,
+    date: text(row.date),
+    weekday: row.weekday,
+    summary: row.summary,
+    previous: row.previous ? json(row.previous, null) : null,
+    next: row.next ? json(row.next, null) : null,
+    fields: json(row.fields, [])
+  };
+}
+function rowsToArchive(savedAt, sync, rows) {
+  const weeks = new Map(rows.weeks.map((week) => [week.id, {
+    id: week.id,
+    course: week.course,
+    batch: week.batch,
+    start: text(week.start_date) ?? week.start_date,
+    end: text(week.end_date) ?? week.end_date,
+    lectures: [],
+    changes: []
+  }]));
+  const liveLectures = [];
+  for (const row of rows.lectures) {
+    const lecture = lectureFromRow(row);
+    if (row.week_id === LIVE) {
+      liveLectures.push(lecture);
+      continue;
+    }
+    weeks.get(row.week_id)?.lectures.push(lecture);
+  }
+  const liveChanges = [];
+  for (const row of rows.changes) {
+    const change = changeFromRow(row);
+    if (row.week_id === LIVE) {
+      liveChanges.push(change);
+      continue;
+    }
+    weeks.get(row.week_id)?.changes.push(change);
+  }
+  return {
+    version: 1,
+    savedAt,
+    lectures: liveLectures,
+    changes: liveChanges.sort((a, b) => a.id - b.id),
+    sync,
+    weeks: [...weeks.values()]
+  };
+}
+async function ensureSchema(sql) {
+  if (schemaReady) return;
+  await sql`
+    CREATE TABLE IF NOT EXISTS timetable_sync (
+      id SMALLINT PRIMARY KEY CHECK (id = 1),
+      saved_at TEXT NOT NULL,
+      last_success_at TEXT,
+      last_attempt_at TEXT,
+      last_error TEXT,
+      bootstrapped BOOLEAN NOT NULL,
+      content_hash TEXT,
+      tab_names JSONB NOT NULL,
+      parse_issues JSONB NOT NULL,
+      spreadsheet_title TEXT
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS timetable_changes (
+      id INTEGER NOT NULL,
+      week_id TEXT NOT NULL DEFAULT 'live',
+      dedupe_key TEXT NOT NULL,
+      detected_at TEXT NOT NULL,
+      type TEXT NOT NULL,
+      lecture_id TEXT,
+      division TEXT,
+      course TEXT,
+      semester TEXT,
+      tab_name TEXT,
+      date TEXT,
+      weekday TEXT,
+      summary TEXT NOT NULL,
+      previous JSONB,
+      next JSONB,
+      fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+      PRIMARY KEY (week_id, id),
+      UNIQUE (week_id, dedupe_key)
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS timetable_weeks (
+      id TEXT PRIMARY KEY,
+      course TEXT NOT NULL,
+      batch TEXT NOT NULL,
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS timetable_lectures (
+      week_id TEXT NOT NULL,
+      id TEXT NOT NULL,
+      slot_key TEXT NOT NULL,
+      tab_name TEXT NOT NULL,
+      course TEXT NOT NULL,
+      semester TEXT NOT NULL,
+      batch TEXT NOT NULL,
+      division TEXT NOT NULL,
+      date TEXT,
+      weekday TEXT NOT NULL,
+      start_minutes INTEGER NOT NULL,
+      end_minutes INTEGER NOT NULL,
+      start_label TEXT NOT NULL,
+      end_label TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      faculty TEXT NOT NULL,
+      room TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      source_status TEXT NOT NULL,
+      reason TEXT,
+      explicit_mark TEXT,
+      recurring BOOLEAN NOT NULL,
+      spreadsheet_id TEXT,
+      anchor JSONB NOT NULL,
+      highlight JSONB,
+      PRIMARY KEY (week_id, id)
+    )
+  `;
+  schemaReady = true;
+}
+function insertLectures(sql, rows) {
+  const payload = JSON.stringify(rows);
+  return sql`
+    INSERT INTO timetable_lectures (
+      week_id, id, slot_key, tab_name, course, semester, batch, division, date, weekday,
+      start_minutes, end_minutes, start_label, end_label, subject, faculty, room, kind,
+      source_status, reason, explicit_mark, recurring, spreadsheet_id, anchor, highlight
+    )
+    SELECT
+      week_id, id, slot_key, tab_name, course, semester, batch, division, date, weekday,
+      start_minutes, end_minutes, start_label, end_label, subject, faculty, room, kind,
+      source_status, reason, explicit_mark, recurring, spreadsheet_id, anchor, highlight
+    FROM jsonb_to_recordset(${payload}::jsonb) AS x(
+      week_id text, id text, slot_key text, tab_name text, course text, semester text, batch text,
+      division text, date text, weekday text, start_minutes int, end_minutes int, start_label text,
+      end_label text, subject text, faculty text, room text, kind text, source_status text,
+      reason text, explicit_mark text, recurring boolean, spreadsheet_id text, anchor jsonb, highlight jsonb
+    )
+  `;
+}
+function insertChanges2(sql, rows) {
+  const payload = JSON.stringify(rows);
+  return sql`
+    INSERT INTO timetable_changes (
+      id, week_id, dedupe_key, detected_at, type, lecture_id, division, course, semester,
+      tab_name, date, weekday, summary, previous, next, fields
+    )
+    SELECT
+      id, week_id, dedupe_key, detected_at, type, lecture_id, division, course, semester,
+      tab_name, date, weekday, summary, previous, next, fields
+    FROM jsonb_to_recordset(${payload}::jsonb) AS x(
+      id int, week_id text, dedupe_key text, detected_at text, type text, lecture_id text,
+      division text, course text, semester text, tab_name text, date text, weekday text,
+      summary text, previous jsonb, next jsonb, fields jsonb
+    )
+  `;
+}
+async function readNeonRows() {
+  const url = neonUrl();
+  if (!url) return null;
+  try {
+    const sql = (0, import_serverless2.neon)(url);
+    await ensureSchema(sql);
+    const syncRows = await sql`
+      SELECT saved_at, last_success_at, last_attempt_at, last_error, bootstrapped, content_hash,
+             tab_names, parse_issues, spreadsheet_title
+      FROM timetable_sync WHERE id = 1
+    `;
+    const sync = syncRows[0];
+    if (!sync?.bootstrapped) return null;
+    const lectures = await sql`SELECT * FROM timetable_lectures`;
+    const changes = await sql`SELECT * FROM timetable_changes ORDER BY id`;
+    const weeks = await sql`SELECT id, course, batch, start_date, end_date FROM timetable_weeks`;
+    return rowsToArchive(
+      sync.saved_at,
+      {
+        lastSuccessAt: sync.last_success_at,
+        lastAttemptAt: sync.last_attempt_at,
+        lastError: sync.last_error,
+        bootstrapped: true,
+        contentHash: sync.content_hash,
+        tabNames: json(sync.tab_names, []),
+        parseIssues: json(sync.parse_issues, []),
+        spreadsheetTitle: sync.spreadsheet_title
+      },
+      { lectures, changes, weeks }
+    );
+  } catch (error) {
+    console.error("[archive] Neon row read error:", error);
+    return null;
+  }
+}
+async function writeNeonRows(archive) {
+  const url = neonUrl();
+  if (!url) return false;
+  const sql = (0, import_serverless2.neon)(url);
+  await ensureSchema(sql);
+  const rows = archiveToRows(archive);
+  const weekPayload = JSON.stringify(rows.weeks);
+  const tabNames = JSON.stringify(archive.sync.tabNames);
+  const parseIssues = JSON.stringify(archive.sync.parseIssues);
+  await sql.transaction([
+    sql`DELETE FROM timetable_lectures`,
+    sql`DELETE FROM timetable_changes`,
+    sql`DELETE FROM timetable_weeks`,
+    sql`DELETE FROM timetable_sync`,
+    ...chunks(rows.lectures, 200).map((chunk) => insertLectures(sql, chunk)),
+    ...chunks(rows.changes, 200).map((chunk) => insertChanges2(sql, chunk)),
+    sql`
+      INSERT INTO timetable_weeks (id, course, batch, start_date, end_date)
+      SELECT id, course, batch, start_date, end_date
+      FROM jsonb_to_recordset(${weekPayload}::jsonb) AS x(
+        id text, course text, batch text, start_date text, end_date text
+      )
+    `,
+    sql`
+      INSERT INTO timetable_sync (
+        id, saved_at, last_success_at, last_attempt_at, last_error, bootstrapped,
+        content_hash, tab_names, parse_issues, spreadsheet_title
+      ) VALUES (
+        1, ${archive.savedAt}, ${archive.sync.lastSuccessAt}, ${archive.sync.lastAttemptAt},
+        ${archive.sync.lastError}, ${archive.sync.bootstrapped}, ${archive.sync.contentHash},
+        ${tabNames}::jsonb, ${parseIssues}::jsonb, ${archive.sync.spreadsheetTitle}
+      )
+    `
+  ]);
+  return true;
+}
 
 // server/src/services/timetableArchive.ts
 function archiveSignature(archive) {
@@ -2499,7 +2920,7 @@ function uniqueChangeIds(changes) {
 
 // server/src/services/durableState.ts
 var lastSignature = "";
-function neonUrl() {
+function neonUrl2() {
   return process.env.DATABASE_URL?.trim() || "";
 }
 function exportArchive(db2) {
@@ -2530,28 +2951,50 @@ function isArchive(value) {
   const archive = value;
   return archive.version === 1 && Array.isArray(archive.lectures) && Array.isArray(archive.changes) && Boolean(archive.sync);
 }
-async function readRemote() {
-  const dbUrl = neonUrl();
+function withWeekChanges(archive) {
+  return {
+    ...archive,
+    weeks: (archive.weeks ?? []).map((week) => ({ ...week, changes: week.changes ?? [] }))
+  };
+}
+async function readBlob() {
+  const dbUrl = neonUrl2();
   if (!dbUrl) return null;
   try {
-    const sql = (0, import_serverless2.neon)(dbUrl);
+    const sql = (0, import_serverless3.neon)(dbUrl);
     const rows = await sql`
       SELECT archive FROM timetable_archive WHERE id = 'latest' LIMIT 1
     `;
     if (rows && rows.length > 0 && rows[0]?.archive) {
       const raw = rows[0].archive;
       const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-      if (isArchive(parsed)) {
-        return parsed;
-      }
+      if (isArchive(parsed)) return withWeekChanges(parsed);
     }
   } catch (err) {
     console.error("[archive] Neon read error:", err);
   }
   return null;
 }
+async function readRemote() {
+  const [blob, rows] = await Promise.all([readBlob(), readNeonRows()]);
+  if (!blob) return rows;
+  if (!rows) return blob;
+  return mergeArchives(blob, rows);
+}
+async function writeBlob(archive) {
+  const dbUrl = neonUrl2();
+  if (!dbUrl) return;
+  const sql = (0, import_serverless3.neon)(dbUrl);
+  const payload = JSON.stringify(archive);
+  await sql`
+    INSERT INTO timetable_archive (id, archive, updated_at)
+    VALUES ('latest', ${payload}::jsonb, NOW())
+    ON CONFLICT (id) DO UPDATE
+    SET archive = EXCLUDED.archive, updated_at = NOW()
+  `;
+}
 async function hydrateArchive(db2) {
-  if (!neonUrl() || readSyncState(db2).bootstrapped) return false;
+  if (!neonUrl2() || readSyncState(db2).bootstrapped) return false;
   const archive = await readRemote();
   if (!archive?.sync.bootstrapped) return false;
   importArchive(db2, archive);
@@ -2560,7 +3003,7 @@ async function hydrateArchive(db2) {
   return true;
 }
 async function publishArchive(db2) {
-  if (!neonUrl() || !readSyncState(db2).bootstrapped) return false;
+  if (!neonUrl2() || !readSyncState(db2).bootstrapped) return false;
   const local = exportArchive(db2);
   if (archiveSignature(local) === lastSignature) return false;
   const remote = await readRemote();
@@ -2572,21 +3015,16 @@ async function publishArchive(db2) {
     return false;
   }
   merged.savedAt = (/* @__PURE__ */ new Date()).toISOString();
-  const dbUrl = neonUrl();
-  if (dbUrl) {
-    try {
-      const sql = (0, import_serverless2.neon)(dbUrl);
-      const payload = JSON.stringify(merged);
-      await sql`
-        INSERT INTO timetable_archive (id, archive, updated_at)
-        VALUES ('latest', ${payload}::jsonb, NOW())
-        ON CONFLICT (id) DO UPDATE 
-        SET archive = EXCLUDED.archive, updated_at = NOW()
-      `;
-      console.log("[sync] saved timetable history to Neon");
-    } catch (err) {
-      console.error("[archive] Neon write error:", err);
-    }
+  try {
+    await writeNeonRows(merged);
+  } catch (err) {
+    console.error("[archive] Neon row write error:", err);
+  }
+  try {
+    await writeBlob(merged);
+    console.log("[sync] saved timetable history to Neon");
+  } catch (err) {
+    console.error("[archive] Neon write error:", err);
   }
   lastSignature = signature;
   return true;
@@ -2629,18 +3067,56 @@ function replacedWeeks(previous, next) {
       batch: sample.batch,
       start,
       end,
-      lectures
+      lectures,
+      changes: []
     });
   }
   return backups;
 }
-function rememberReplacedWeeks(db2, previous, next) {
-  const fresh = replacedWeeks(previous, next);
-  if (fresh.length === 0) return;
-  const merged = new Map(readWeekBackups(db2).map((week) => [week.id, week]));
-  for (const week of fresh) merged.set(week.id, week);
+function weeksFromLectures(lectures) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const lecture of lectures) {
+    const key = programKey(lecture.course, lecture.batch);
+    const group = groups.get(key) ?? [];
+    group.push(lecture);
+    groups.set(key, group);
+  }
+  const weeks = [];
+  for (const group of groups.values()) {
+    const dates = dated(group);
+    const sample = group[0];
+    if (!sample || dates.length === 0) continue;
+    const start = dates[0];
+    const end = dates[dates.length - 1];
+    weeks.push({
+      id: `${sample.course}|${sample.batch}|${start}|${end}`,
+      course: sample.course,
+      batch: sample.batch,
+      start,
+      end,
+      lectures: group,
+      changes: []
+    });
+  }
+  return weeks;
+}
+function changesForWeek(week, changes, weeks) {
+  const divisions = new Set(week.lectures.map((lecture) => lecture.division));
+  const dates = new Set(dated(week.lectures));
+  return changes.filter((change) => {
+    if (change.date) {
+      if (!dates.has(change.date)) return false;
+      return !change.division || divisions.has(change.division);
+    }
+    if (change.division) return divisions.has(change.division);
+    if (change.course && change.course.toLowerCase() !== week.course.toLowerCase()) return false;
+    const siblings = weeks.filter((item) => programKey(item.course, item.batch) === programKey(week.course, week.batch));
+    return siblings.length <= 1 || siblings[0]?.id === week.id;
+  });
+}
+function capWeeks(weeks, currentIds) {
   const byProgram = /* @__PURE__ */ new Map();
-  for (const week of merged.values()) {
+  for (const week of weeks) {
     const key = programKey(week.course, week.batch);
     const list = byProgram.get(key) ?? [];
     list.push(week);
@@ -2648,10 +3124,30 @@ function rememberReplacedWeeks(db2, previous, next) {
   }
   const kept = [];
   for (const list of byProgram.values()) {
-    list.sort((a, b) => b.end.localeCompare(a.end) || b.start.localeCompare(a.start));
-    kept.push(...list.slice(0, CAP));
+    const current = list.filter((week) => currentIds.has(week.id));
+    const past = list.filter((week) => !currentIds.has(week.id));
+    past.sort((a, b) => b.end.localeCompare(a.end) || b.start.localeCompare(a.start));
+    kept.push(...current, ...past.slice(0, CAP));
   }
-  replaceWeekBackups(db2, kept);
+  return kept;
+}
+function rememberReplacedWeeks(db2, previous, next, changes = []) {
+  const fresh = replacedWeeks(previous, next);
+  if (fresh.length === 0) return;
+  for (const week of fresh) week.changes = changesForWeek(week, changes, fresh);
+  const merged = new Map(readWeekBackups(db2).map((week) => [week.id, week]));
+  for (const week of fresh) merged.set(week.id, week);
+  replaceWeekBackups(db2, capWeeks([...merged.values()], /* @__PURE__ */ new Set()));
+}
+function rememberPublishedWeeks(db2, lectures) {
+  const current = weeksFromLectures(lectures);
+  if (current.length === 0) return;
+  const merged = new Map(readWeekBackups(db2).map((week) => [week.id, week]));
+  for (const week of current) {
+    const existing = merged.get(week.id);
+    merged.set(week.id, existing ? { ...week, changes: existing.changes } : week);
+  }
+  replaceWeekBackups(db2, capWeeks([...merged.values()], new Set(current.map((week) => week.id))));
 }
 
 // server/src/services/syncScheduler.ts
@@ -2753,8 +3249,10 @@ async function performSync(ctx) {
     }
     const retained = { lectures: retainedLectures, issues: retainedIssues };
     const contentHash = contentFingerprint(retained.lectures, tabNames, retained.issues);
+    const changesBeforeTrim = readAllChanges(ctx.db);
     dropChangesFromOtherWeeks(ctx.db, retained.lectures);
     if (current.bootstrapped && current.contentHash === contentHash) {
+      rememberPublishedWeeks(ctx.db, previous);
       writeSyncState(ctx.db, successState(current, attemptAt, contentHash, tabNames, retained.issues, ctx.config.spreadsheetTitle));
       await publishArchive(ctx.db);
       return { ok: true, unchanged: true, changeCount: 0, error: null };
@@ -2769,10 +3267,11 @@ async function performSync(ctx) {
     const events = dropFreshProgramAdditions(previous, stored.lectures, stored.events);
     ctx.db.exec("BEGIN");
     try {
-      rememberReplacedWeeks(ctx.db, previous, retained.lectures);
+      rememberReplacedWeeks(ctx.db, previous, retained.lectures, changesBeforeTrim);
       if (freshWeek) replaceChangeRows(ctx.db, []);
       saveSnapshot(ctx.db, stored.lectures);
       recordChanges(ctx.db, events);
+      rememberPublishedWeeks(ctx.db, stored.lectures);
       writeSyncState(ctx.db, {
         ...successState(current, attemptAt, contentHash, tabNames, retained.issues, ctx.config.spreadsheetTitle),
         bootstrapped: true
@@ -2955,14 +3454,58 @@ function buildBootstrap(db2, config2, now = /* @__PURE__ */ new Date(), filter) 
     );
   }
   const dates = lectures.map((lecture) => lecture.date).filter((date) => Boolean(date)).sort();
-  const savedWeeks = readWeekBackups(db2).map((week) => ({
-    id: week.id,
-    course: week.course,
-    batch: week.batch,
-    start: week.start,
-    end: week.end,
-    lectures: scopeOf(week.lectures.map((lecture) => presentLecture(lecture, now, config2.highlightHours)).sort(byLecture))
-  })).filter((week) => week.lectures.length > 0).sort((a, b) => b.end.localeCompare(a.end) || b.start.localeCompare(a.start));
+  const liveKeys = /* @__PURE__ */ new Set();
+  const liveDates = /* @__PURE__ */ new Map();
+  for (const lecture of allLectures) {
+    if (!lecture.date) continue;
+    const key = `${lecture.course}\0${lecture.batch}`;
+    const list = liveDates.get(key) ?? [];
+    list.push(lecture.date);
+    liveDates.set(key, list);
+  }
+  for (const [key, list] of liveDates) {
+    list.sort();
+    liveKeys.add(`${key}\0${list[0]}\0${list[list.length - 1]}`);
+  }
+  const savedWeeks = readWeekBackups(db2).filter((week) => !liveKeys.has(`${week.course}\0${week.batch}\0${week.start}\0${week.end}`)).map((week) => {
+    const weekLectures = scopeOf(week.lectures.map((lecture) => presentLecture(lecture, now, config2.highlightHours)).sort(byLecture));
+    const lectureIds = new Set(weekLectures.map((lecture) => lecture.id));
+    const divisions = new Set(weekLectures.map((lecture) => lecture.division));
+    const weekChanges = (week.changes ?? []).filter((change) => {
+      if (weekLectures.length === 0) return false;
+      if (change.lectureId && lectureIds.has(change.lectureId)) return true;
+      if (change.division) return divisions.has(change.division);
+      return true;
+    }).map((change) => {
+      const cancelled = Boolean(change.lectureId && restored.restoredIds.has(change.lectureId) && change.type === "removed");
+      const subject = change.previous?.subject || "A lecture";
+      return {
+        id: change.id,
+        detectedAt: change.detectedAt,
+        type: cancelled ? "cancelled" : change.type,
+        lectureId: change.lectureId,
+        division: change.division,
+        course: change.course,
+        semester: change.semester,
+        tabName: change.tabName,
+        date: change.date,
+        weekday: change.weekday,
+        summary: cancelled ? `${subject} lecture cancelled.` : change.summary,
+        previous: change.previous,
+        next: change.next,
+        fields: change.fields ?? []
+      };
+    });
+    return {
+      id: week.id,
+      course: week.course,
+      batch: week.batch,
+      start: week.start,
+      end: week.end,
+      lectures: weekLectures,
+      changes: weekChanges
+    };
+  }).filter((week) => week.lectures.length > 0).sort((a, b) => b.end.localeCompare(a.end) || b.start.localeCompare(a.start));
   return {
     collegeName: config2.collegeName,
     schoolName: config2.schoolName,
