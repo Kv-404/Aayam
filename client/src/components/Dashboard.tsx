@@ -20,6 +20,7 @@ import { useChangeNotifications } from "@/hooks/useNotifications";
 import { useLectureReminders } from "@/hooks/useLectureReminders";
 import { appleWeekCalendarUrl, calendarFeedUrl, googleWeekCalendarUrl, outlookWeekCalendarUrl } from "@/lib/calendar";
 import { lensFromScopeId, resolveFacultyView, signInFacultyLens } from "@/lib/facultyView";
+import { useAnyMenuOpen, useMenuBackdrop } from "@/lib/menuBackdrop";
 import { clearFacultyBrowse, clearStudentAuth, closeNotifyHint, hasChosenRole, readCanSeeAllFaculty, readFacultyEmail, readFacultyLens, readFacultyPreview, readNotifyHintClosed, readRole, readSetup, readStoredCohort, readStoredFaculty, readStudentBatch, saveCanSeeAllFaculty, saveCohort, saveFaculty, saveFacultyEmail, saveFacultyLens, saveFacultyPreview, saveSetup, themes, type FacultyLens, type MeetAction, type ThemeId, type ViewerRole } from "@/lib/prefs";
 import { ColorEditor } from "@/components/ColorEditor";
 import { ColorSwitch } from "@/components/ColorSwitch";
@@ -102,6 +103,8 @@ export function Dashboard({
   const [view, setView] = useState("today");
   const [weekId, setWeekId] = useState("live");
   const [notifyHintClosed, setNotifyHintClosed] = useState(readNotifyHintClosed);
+  const [barMenuOpen, setBarMenuOpen] = useState(false);
+  const menuOpen = useAnyMenuOpen();
   const zone = zonedNow(now, data.timezone);
   const choices = data.choices && data.choices.length > 0 ? data.choices : cohortChoices(data.lectures);
   const facultyNames = data.faculties && data.faculties.length > 0 ? data.faculties : listFacultyNames(data.lectures.filter((lecture) => lecture.kind !== "break").map((lecture) => lecture.faculty));
@@ -260,7 +263,9 @@ export function Dashboard({
       : choice
         ? data.lectures.filter((lecture) => lectureInCohort(lecture, choice) && lecture.kind !== "break")
         : [];
-  const upcoming = nextClass(liveScope, zone.iso, zone.minutes);
+  // All classes has many lectures at once, so "the current class" means nothing there until one cohort is filtered.
+  const liveMarks = role !== "faculty" || board.showLive || Boolean(filters.division);
+  const upcoming = liveMarks ? nextClass(liveScope, zone.iso, zone.minutes) : undefined;
   const filtersOn = Boolean(filters.subject || filters.faculty || filters.room || filters.status !== "all" || (role === "faculty" && filters.division));
   const changes = shownChanges;
   function chooseWeek(id: string) {
@@ -507,7 +512,7 @@ export function Dashboard({
     lectures: liveScope,
     today: zone.iso,
     minutes: zone.minutes,
-    enabled: ready && !missingIdentity && notifications.optedIn,
+    enabled: ready && !missingIdentity && notifications.optedIn && liveMarks,
     showCohort: role === "faculty" && board.showDivision,
   });
   if (!ready || missingIdentity) {
@@ -600,14 +605,13 @@ export function Dashboard({
   ) : null;
   const weekControl = (opensUp = false) =>
     savedWeeks.length > 0 ? (
-      <WeekMenu liveLabel={weekLabel} weeks={savedWeeks} value={selectedWeek ? selectedWeek.id : "live"} onChange={chooseWeek} opensUp={opensUp} />
+      <WeekMenu liveLabel={weekLabel} weeks={savedWeeks} value={selectedWeek ? selectedWeek.id : "live"} onChange={chooseWeek} opensUp={opensUp} onOpenChange={opensUp ? setBarMenuOpen : undefined} />
     ) : null;
   const notice = reminders.notice ?? notifications.notice;
   const dismissNotice = () => {
     if (reminders.notice) reminders.dismiss();
     else notifications.dismiss();
   };
-  const liveMarks = role !== "faculty" || board.showLive || Boolean(filters.division);
   const floatBottom = view === "today" ? "bottom-44" : "bottom-28";
   const dismissNotifyHint = () => {
     closeNotifyHint();
@@ -622,6 +626,7 @@ export function Dashboard({
       showCohort={role === "faculty" && board.showDivision}
       meet={meet}
       clockLabel={formatClockTime(now, data.timezone)}
+      emptyNote={liveMarks ? "No upcoming classes" : ""}
     />
   );
   const headerControls = (
@@ -634,6 +639,13 @@ export function Dashboard({
 
   return (
     <Tabs value={view} onValueChange={setView} className="min-h-dvh flex flex-col">
+      {/* Under the header, whose menus stay sharp. A click here closes them through their outside-click listeners. */}
+      <div
+        aria-hidden="true"
+        data-testid="menu-backdrop"
+        data-open={menuOpen ? "true" : undefined}
+        className={`fixed inset-0 z-25 bg-background/40 backdrop-blur-sm transition-[opacity,visibility] duration-200 ${menuOpen ? "visible opacity-100" : "invisible opacity-0"}`}
+      />
       <header className="sticky top-0 z-30 border-b border-border bg-background/90 backdrop-blur-md">
         <div className="flex flex-col gap-2 px-3 py-2.5 sm:gap-3 sm:px-6 sm:py-3.5">
           {/* Row 1: Brand (left), Desktop Status (center), Toolbar (right) - NEVER wraps on mobile */}
@@ -835,7 +847,7 @@ export function Dashboard({
           </a>
         </footer>
       </main>
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background/95 backdrop-blur-md sm:hidden pb-[env(safe-area-inset-bottom)]">
+      <div className={`fixed inset-x-0 bottom-0 ${barMenuOpen ? "z-40" : "z-20"} border-t border-border bg-background/95 backdrop-blur-md sm:hidden pb-[env(safe-area-inset-bottom)]`}>
         <div className="flex flex-col gap-2 px-3 py-2">
           {weekControl(true)}
           {view === "today" && dayControl("w-full")}
@@ -932,13 +944,19 @@ function CalendarMenu({ scope, label }: { scope: { division?: string; faculty?: 
   const menuRef = useRef<HTMLDivElement>(null);
   const feed = calendarFeedUrl(scope, false, true);
   const file = `${label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "timetable"}.ics`;
+  const showing = open || Boolean(calendarNotice);
+  useMenuBackdrop(showing);
   useEffect(() => {
-    if (!open) return;
+    if (!showing) return;
+    function close() {
+      setOpen(false);
+      setCalendarNotice(null);
+    }
     function onPointer(event: MouseEvent) {
-      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
+      if (!menuRef.current?.contains(event.target as Node)) close();
     }
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") close();
     }
     window.addEventListener("mousedown", onPointer);
     window.addEventListener("keydown", onKey);
@@ -946,7 +964,7 @@ function CalendarMenu({ scope, label }: { scope: { division?: string; faculty?: 
       window.removeEventListener("mousedown", onPointer);
       window.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [showing]);
 
   async function copyFeed() {
     try {
@@ -1075,6 +1093,7 @@ function AppearanceMenu({
 }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  useMenuBackdrop(open);
   useEffect(() => {
     if (!open) return;
     function onPointer(event: MouseEvent) {
@@ -1229,15 +1248,22 @@ function WeekMenu({
   value,
   onChange,
   opensUp,
+  onOpenChange,
 }: {
   liveLabel: string;
   weeks: WeekGroup[];
   value: string;
   onChange: (id: string) => void;
   opensUp: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  useMenuBackdrop(open);
+  useEffect(() => {
+    onOpenChange?.(open);
+    return () => onOpenChange?.(false);
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     function onPointer(event: MouseEvent) {
@@ -1315,6 +1341,7 @@ function StudentCohortMenu({
   const selected = choices.find((choice) => choice.division === value || choice.division.toLowerCase() === value.toLowerCase());
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  useMenuBackdrop(open);
   useEffect(() => {
     if (!open) return;
     function onPointer(event: MouseEvent) {
@@ -1431,6 +1458,7 @@ function HeaderStatus({
   showCohort,
   meet,
   clockLabel,
+  emptyNote,
 }: {
   lecture: PublicLecture | undefined;
   today: string;
@@ -1438,12 +1466,13 @@ function HeaderStatus({
   showCohort: boolean;
   meet: MeetAction;
   clockLabel: string;
+  emptyNote: string;
 }) {
   if (!lecture) {
     return (
       <div className="flex items-center justify-between rounded-lg border border-border/40 bg-muted/20 px-2.5 py-1 text-xs text-muted-foreground w-full">
         <span className="truncate">{clockLabel}</span>
-        <span className="text-[11px] text-muted-foreground/75 font-mono">No upcoming classes</span>
+        {emptyNote && <span className="text-[11px] text-muted-foreground/75 font-mono">{emptyNote}</span>}
       </div>
     );
   }

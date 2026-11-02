@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Search, X } from "lucide-react";
 import { TimetableFilters } from "@/components/TimetableFilters";
 import { Input } from "@/components/ui/input";
+import { useMenuBackdrop } from "@/lib/menuBackdrop";
 import { clearSearchHistory, forgetSearch, readSearchHistory, rememberSearch } from "@/lib/prefs";
 import { cn } from "@/lib/utils";
 import type { Filters } from "@/lib/view";
@@ -48,6 +49,8 @@ export function SearchPanel({
   const buttonRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const pressed = open || filtersOn || query.trim() !== "";
+  // Results update as you type, so the blur lifts once there is something to look at.
+  useMenuBackdrop(open && !filtersOn && query.trim() === "");
 
   function place() {
     const bottom = buttonRef.current?.getBoundingClientRect().bottom;

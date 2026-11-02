@@ -61,7 +61,7 @@ Empty faculty on OFF and breaks means those rows do not appear on a faculty time
 ## Lecture cards
 
 - Class name comes from `useColors` / `calendarTone.ts`. `toneFor` returns graphite only for OFF.
-- Live lecture: `is-now`, a Now mark, and a glow. All classes shows none of this unless one cohort is filtered, because many run at once. `slotPhase` in `client/src/lib/view.ts`.
+- Live lecture: `is-now`, a Now mark, and a glow. All classes shows none of this unless one cohort is filtered, because many run at once. The same rule turns off its lecture reminders and the Now or Next pill, which is just the clock there. Change alerts still run. `slotPhase` in `client/src/lib/view.ts`.
 - Cancelled, and not OFF: subject colour, strikethrough, Cancelled label. No solid danger chip.
 - Full-day OFF: phone week is one red line, `Monday Off` or `Saturday Off`, with no per-slot list. Desktop week says Off in red on each row, weekday and date in `text-danger`. `TodayView` hides the clock when the id ends with `-off`.
 - `collapseFullOffDays` folds a day that is entirely OFF into one row. It runs before the filters, so a filter that leaves one OFF slot cannot make a day look off. Use `isFoldedOff` to recognise that row. Do not paint that as a cancelled strikethrough of every slot.
@@ -71,6 +71,8 @@ Empty faculty on OFF and breaks means those rows do not appear on a faculty time
 ## Header
 
 Sticky and left-aligned. There is no "Timetable" title and no max-width column. The cohort or faculty menu is on the left. Now or Next is one truncated line beside it on a wide screen (word, subject, time, room). On a phone that line is full width under the cohort, not squeezed between the icons. Tools on the right are search, add week, sheet link, refresh, and settings.
+
+Open menus blur the page through `useMenuBackdrop` (`lib/menuBackdrop.ts`) and one backdrop in `Dashboard.tsx`, under the header. The search panel lifts the blur once a search or filter is active, so results stay readable.
 
 Search is an icon button (`search-button`). It slides open a panel from that button: the field (aria-label "Search the timetable"), past searches, and `TimetableFilters`. History is `timetable-search-history` (most recent 8). Each entry can be removed. Clear all empties the list. The filters button is gone. The panel's Clear still resets filters.
 

@@ -1,6 +1,7 @@
 import { coordinatorPreviews } from "@shared/coordinators";
 import { ChevronDown, LogOut } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useMenuBackdrop } from "@/lib/menuBackdrop";
 
 export interface ScopeItem {
   id: string;
@@ -38,6 +39,7 @@ export function FacultyScopeMenu({
   });
   const [filterQuery, setFilterQuery] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
+  useMenuBackdrop(open);
   const badgeClass = badge === "All access"
     ? "bg-purple-500/15 text-purple-600 dark:text-purple-400"
     : "bg-sky-500/15 text-sky-700 dark:text-sky-300";
