@@ -315,17 +315,10 @@ export async function verifyBatchPinWithNeon(pin: string): Promise<{
 
   if (isProduction()) return null;
 
-  // Fallback defaults only when no database is configured, for local dev.
-  const fallbackBatches = [
-    { course: "BTech", batch: "2026-30", pin: "481920" },
-    { course: "BTech", batch: "2025-29", pin: "739154" },
-    { course: "BTech", batch: "2024-28", pin: "628401" },
-    { course: "BTech", batch: "2023-27", pin: "315972" },
-    { course: "MCA", batch: "2026-28", pin: "852039" },
-  ];
-  const found = fallbackBatches.find((b) => b.pin === cleanPin);
-  if (found) {
-    return { ok: true, course: found.course, batch: found.batch };
+  // Local dev without a database reads DEV_BATCH_PINS, as course:batch:pin separated by commas.
+  for (const entry of (process.env.DEV_BATCH_PINS ?? "").split(",")) {
+    const [course, batch, code] = entry.split(":").map((part) => part.trim());
+    if (course && batch && code === cleanPin) return { ok: true, course, batch };
   }
 
   return null;

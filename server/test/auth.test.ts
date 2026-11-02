@@ -15,6 +15,8 @@ import {
 import type { AppConfig } from "../src/config.ts";
 import { openDatabase } from "../src/db.ts";
 
+process.env.DEV_BATCH_PINS = "BTech:2026-30:111111,BTech:2025-29:222222,BTech:2024-28:333333,BTech:2023-27:444444,MCA:2026-28:555555";
+
 const dummyConfig: AppConfig = {
   spreadsheetId: "test-sheet",
   spreadsheets: [{ id: "test-sheet", course: "BTech", batch: "2025-29" }],
@@ -166,7 +168,7 @@ describe("PIN verification and rate limiting", () => {
     });
 
     it("accepts known 6-digit fallback PINs", async () => {
-      const result = await verifyBatchPinWithNeon("481920");
+      const result = await verifyBatchPinWithNeon("111111");
       assert.ok(result);
       assert.equal(result.ok, true);
       assert.equal(result.course, "BTech");
@@ -247,7 +249,7 @@ describe("PIN verification and rate limiting", () => {
       const res = await fetch(`${baseUrl}/api/auth/pin-verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin: "481920" }),
+        body: JSON.stringify({ pin: "111111" }),
       });
       assert.equal(res.status, 200);
       const data = await res.json();
@@ -280,7 +282,7 @@ describe("PIN verification and rate limiting", () => {
           "Content-Type": "application/json",
           "x-forwarded-for": testIp,
         },
-        body: JSON.stringify({ pin: "481920" }), // Even correct PIN is blocked
+        body: JSON.stringify({ pin: "111111" }), // Even correct PIN is blocked
       });
       assert.equal(resBlocked.status, 429);
       assert.ok(resBlocked.headers.get("retry-after"));
@@ -312,7 +314,7 @@ describe("PIN verification and rate limiting", () => {
           "Content-Type": "application/json",
           "x-forwarded-for": testIp,
         },
-        body: JSON.stringify({ pin: "481920" }),
+        body: JSON.stringify({ pin: "111111" }),
       });
       assert.equal(resSuccess.status, 200);
 

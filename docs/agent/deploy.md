@@ -15,12 +15,13 @@ Env files, first existing wins for each key: repo `.env`, then `.env.local`, the
 | `DATE_ORDER` | `DMY` | Numeric dates in the sheet |
 | `DATABASE_PATH` | `./data/timetable.sqlite` | Local SQLite |
 | `DATABASE_URL` | Neon connection string | Neon PostgreSQL database for faculty auth directory and timetable state archive across cold starts |
+| `DEV_BATCH_PINS` | unset | Local PIN checks when there is no database: `course:batch:pin`, comma separated. Ignored in production |
 | `COLLEGE_NAME` | ITM Skills University | Shown in bootstrap |
 | `CLIENT_ORIGIN` | unset | CORS when the client is on another origin |
 
 ## Production
 
-Vercel project `time-table` (`prj_0cuPp3TGh4uyEVqCZzDZ13U8c3g5`), team `team_Ue3RQTiJ5uTaebnHUYaE6r15`. `vercel.json` builds with `npm run build`, output `client/dist`, function `api/**/*.js` max 30s. Pushes to `main` deploy https://timetable.kv404.dev. https://clg-timetable.vercel.app also served this app; https://clg-timetable-kv-404.vercel.app returned 404. Do not assume the `*.vercel.app` alias.
+Vercel project `time-table`. `vercel.json` builds with `npm run build`, output `client/dist`, function `api/**/*.js` max 30s. Pushes to `main` deploy https://timetable.kv404.dev. https://clg-timetable.vercel.app also served this app; https://clg-timetable-kv-404.vercel.app returned 404. Do not assume the `*.vercel.app` alias.
 
 `npm run build` is `vite build` plus `npm run build:api`:
 
@@ -31,6 +32,8 @@ esbuild server/src/vercel.ts --bundle --platform=node --format=cjs --outfile=api
 Commit that outfile. Vercel resolves the function before the build runs, so a source-only push does not update the API. Do not edit the bundle by hand.
 
 On Vercel, SQLite is `/tmp/timetable.sqlite` and dies on cold start. `syncOnRead` is on. `GET /api/bootstrap` loads Neon with `hydrateArchive`, answers from that saved copy, and syncs in the background under `waitUntil` (`@vercel/functions`). It sets `sync.refreshing`, and the client polls again after 4 seconds. A request waits for the sheet only when there is no saved copy for its scope. Before compare, `hydrateArchive` loads Neon. Rows in `timetable_lectures`, `timetable_changes`, `timetable_weeks`, and `timetable_sync` are the stored timetable. `timetable_archive` remains so a build that still reads the single JSON document keeps working. `publishArchive` writes both after a successful sync. `DATABASE_URL` is set on Production, Preview, and Development. A removed lecture stays cancelled across cold starts because of that Neon archive.
+
+Do not commit PINs, staff emails, Vercel ids, or real Meet links. The repo is public.
 
 ## Changing the sheet
 

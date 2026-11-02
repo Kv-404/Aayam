@@ -169,7 +169,7 @@ describe("messy and alternate tabs", () => {
     sheet.getCell("B8").value = "Prof. Harshal";
     sheet.getCell("B8").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF0000" } };
     sheet.getCell("A9").value = "Classroom No";
-    sheet.getCell("B9").value = "meet.google.com/mzz-byaf-nnk";
+    sheet.getCell("B9").value = "meet.google.com/abc-defg-hij";
     sheet.getCell("B9").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF0000" } };
 
     sheet.getCell("C7").value = "Data Structures and Algorithm - II";
@@ -197,7 +197,7 @@ describe("messy and alternate tabs", () => {
 
     assert.equal(sam?.subject, "Machine Learning Fundamentals");
     assert.equal(sam?.faculty, "Prof. Harshal");
-    assert.equal(sam?.room, "meet.google.com/mzz-byaf-nnk");
+    assert.equal(sam?.room, "meet.google.com/abc-defg-hij");
     assert.equal(sam?.kind, "lecture");
     assert.equal(sam?.sourceStatus, "cancelled");
     assert.equal(sam?.explicitMark, "cancelled");

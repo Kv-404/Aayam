@@ -13,3 +13,4 @@ server/data
 .vercel
 .env*
 !.env.example
+.claude/
