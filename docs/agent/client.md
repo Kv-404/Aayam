@@ -21,6 +21,10 @@ The header cohort menu for students lists cohorts restricted to their authentica
 
 `saveSetup` writes `timetable-role`, and the cohort or faculty name, then `timetable-setup=1`. It does not clear the theme, colours, or Meet choice. Student logout in the settings menu clears `timetable-student-batch`, `timetable-unlocked-batches`, `timetable-cohort`, `timetable-role`, `timetable-setup`, and cleans the URL to `/`.
 
+## Page transitions
+
+`renderPage` in `App.tsx` names each screen (home, loading, timetable, privacy, terms, access-denied, not-found, unavailable). `AnimatePresence` fades between names and returns to the top of the page. Use opacity only here: a transform on the wrapper breaks the fixed bottom bar and sticky header. A scope change keeps the name `timetable`, so `Dashboard` keeps its state. Finishing setup fades in with `page-fade`.
+
 ## localStorage
 
 | Key | Values |

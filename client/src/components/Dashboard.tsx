@@ -104,6 +104,7 @@ export function Dashboard({
   const [weekId, setWeekId] = useState("live");
   const [notifyHintClosed, setNotifyHintClosed] = useState(readNotifyHintClosed);
   const [barMenuOpen, setBarMenuOpen] = useState(false);
+  const [fadeIn, setFadeIn] = useState(false);
   const menuOpen = useAnyMenuOpen();
   const zone = zonedNow(now, data.timezone);
   const choices = data.choices && data.choices.length > 0 ? data.choices : cohortChoices(data.lectures);
@@ -466,6 +467,7 @@ export function Dashboard({
       status: "all",
     }));
     setReady(true);
+    setFadeIn(true);
     setView("today");
   }
 
@@ -638,7 +640,7 @@ export function Dashboard({
   );
 
   return (
-    <Tabs value={view} onValueChange={setView} className="min-h-dvh flex flex-col">
+    <Tabs value={view} onValueChange={setView} className={`min-h-dvh flex flex-col ${fadeIn ? "page-fade" : ""}`}>
       {/* Under the header, whose menus stay sharp. A click here closes them through their outside-click listeners. */}
       <div
         aria-hidden="true"

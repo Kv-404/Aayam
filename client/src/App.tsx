@@ -2,7 +2,8 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { DEFAULT_COHORT_CHOICES, type CohortChoice } from "@shared/cohort";
 import { coordinatorPreview, findCoordinator } from "@shared/coordinators";
 import { DEFAULT_FACULTY_NAMES } from "@shared/faculty";
-import { useEffect, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { useEffect, useState, type ReactNode } from "react";
 import { AccessDenied } from "@/components/AccessDenied";
 import { Dashboard } from "@/components/Dashboard";
 import { FacultyLoginModal } from "@/components/FacultyLoginModal";
@@ -218,6 +219,7 @@ function useNow() {
 
 export function App() {
   const preferences = usePreferences();
+  const calmMotion = useReducedMotion();
   const now = useNow();
   const queryClient = useQueryClient();
   const [facultyModalOpen, setFacultyModalOpen] = useState(false);
@@ -438,26 +440,32 @@ export function App() {
     onSuccess: (data) => queryClient.setQueryData(["bootstrap", scope], data),
   });
 
+  // Back to the timetable's own address, so a reload stays on it.
+  function leaveLegalPage() {
+    const target = scope.faculty
+      ? keepPreview(`/?faculty=${encodeURIComponent(scope.faculty)}`)
+      : scope.division
+        ? `/${cohortToSlug(scope.division)}`
+        : "/";
+    window.history.pushState(null, "", target);
+    setRoute("/");
+  }
+
+  function renderPage(): [string, ReactNode] {
   if (route === "/privacy") {
-    return (
+    return ["privacy", (
       <PrivacyPolicy
-        onBack={() => {
-          window.history.pushState(null, "", "/");
-          setRoute("/");
-        }}
+        onBack={leaveLegalPage}
       />
-    );
+    )];
   }
 
   if (route === "/terms") {
-    return (
+    return ["terms", (
       <TermsOfService
-        onBack={() => {
-          window.history.pushState(null, "", "/");
-          setRoute("/");
-        }}
+        onBack={leaveLegalPage}
       />
-    );
+    )];
   }
 
   const choices = query.data?.choices && query.data.choices.length > 0 ? query.data.choices : DEFAULT_COHORT_CHOICES;
@@ -467,7 +475,7 @@ export function App() {
   if (typeof window !== "undefined") {
     const parsed = readScopeFromUrl(choices);
     if (parsed?.isUnknownSlug) {
-      return (
+      return ["not-found", (
         <main className="mx-auto flex min-h-dvh flex-col items-center justify-center px-4 py-8 max-w-md text-center">
           <div className="rounded-2xl border border-border/80 bg-card/70 p-8 shadow-sm">
             <h1 className="text-2xl font-medium tracking-tight text-foreground">Timetable Not Found</h1>
@@ -485,7 +493,7 @@ export function App() {
             </button>
           </div>
         </main>
-      );
+      )];
     }
   }
 
@@ -500,7 +508,7 @@ export function App() {
     if (matchedCohort && !isFaculty) {
       const allowed = isBatchUnlocked(matchedCohort.course, matchedCohort.batch);
       if (!allowed) {
-        return (
+        return ["access-denied", (
           <AccessDenied
             cohort={matchedCohort}
             choices={choices}
@@ -523,7 +531,7 @@ export function App() {
               }
             }}
           />
-        );
+        )];
       }
     }
   }
@@ -531,12 +539,12 @@ export function App() {
   const waitingForShortcut =
     sessionGate === "check" && !configured && !scope.division && !scope.faculty && !scope.all;
   if (waitingForShortcut) {
-    return <LoadingScreen />;
+    return ["loading", <LoadingScreen />];
   }
 
   // Root or unconfigured: Show Home Page
   if (!configured || (typeof window !== "undefined" && window.location.pathname === "/" && !scope.division && !scope.faculty && !scope.all)) {
-    return (
+    return ["home", (
       <ColorProvider theme={preferences.theme}>
         <HomePage
           choices={choices}
@@ -596,15 +604,15 @@ export function App() {
           }}
         />
       </ColorProvider>
-    );
+    )];
   }
 
   if (query.isPending && !query.data) {
-    return <LoadingScreen />;
+    return ["loading", <LoadingScreen />];
   }
 
   if (!query.data) {
-    return (
+    return ["unavailable", (
       <div className="mx-auto max-w-3xl px-4 py-16" role="alert">
         <h1 className="text-xl font-medium">The timetable is unavailable</h1>
         <p className="mt-2 text-sm text-muted-foreground">Start the API server, then try again.</p>
@@ -612,10 +620,10 @@ export function App() {
           Try again
         </button>
       </div>
-    );
+    )];
   }
 
-  return (
+  return ["timetable", (
     <ColorProvider theme={preferences.theme}>
       <Dashboard
         data={query.data}
@@ -634,5 +642,22 @@ export function App() {
         onScopeChange={handleScopeChange}
       />
     </ColorProvider>
+  )];
+  }
+
+  const [page, content] = renderPage();
+  // Fade only. A transform here would make this wrapper the anchor for the fixed bottom bar and sticky header.
+  return (
+    <AnimatePresence mode="wait" initial={false} onExitComplete={() => window.scrollTo(0, 0)}>
+      <motion.div
+        key={page}
+        data-page={page}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1, transition: { duration: calmMotion ? 0 : 0.24, ease: "easeOut" } }}
+        exit={{ opacity: 0, transition: { duration: calmMotion ? 0 : 0.12, ease: "easeIn" } }}
+      >
+        {content}
+      </motion.div>
+    </AnimatePresence>
   );
 }
