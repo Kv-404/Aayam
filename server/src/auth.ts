@@ -308,7 +308,8 @@ export async function verifyBatchPinWithNeon(pin: string): Promise<{
       return null;
     } catch (err) {
       console.error("[pin] Neon verification error:", err);
-      return null;
+      // A database failure says nothing about the PIN. The route reports it without counting a failed attempt.
+      throw err;
     }
   }
 

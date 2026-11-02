@@ -15,7 +15,8 @@ import { presentLecture } from "./services/presentLecture.ts";
 import { persistCancelledRemovals } from "./services/persistCancelled.ts";
 import { restoreRemovedLectures } from "./services/restoreRemoved.ts";
 import { loadSnapshot } from "./services/timetableSnapshotService.ts";
-import { runSync, type SyncContext } from "./services/syncScheduler.ts";
+import { hydrateArchive } from "./services/durableState.ts";
+import { runSync, syncInFlight, type SyncContext } from "./services/syncScheduler.ts";
 import { fetchSpreadsheet } from "./services/googleSheetsService.ts";
 import { zonedParts } from "./time.ts";
 
@@ -261,7 +262,7 @@ function allowedOrigins(config: AppConfig) {
   return ["http://localhost:5173", "http://127.0.0.1:5173", "http://[::1]:5173"];
 }
 
-export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext["load"], options?: { syncOnRead?: boolean; loadAll?: SyncContext["loadAll"] }) {
+export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext["load"], options?: { syncOnRead?: boolean; loadAll?: SyncContext["loadAll"]; runInBackground?: (work: Promise<unknown>) => void }) {
   const app = express();
   app.disable("x-powered-by");
   if (process.env.VERCEL || process.env.TRUST_PROXY === "1") {
@@ -297,93 +298,94 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
 
   const lastSyncBySheet = new Map<string, number>();
 
-  async function syncIfStale(filter?: { division?: string; faculty?: string; course?: string; batch?: string; all?: boolean }) {
-    if (!options?.syncOnRead) return;
-    const now = Date.now();
-    const intervalMs = config.syncIntervalSeconds * 1000;
+  type ReadScope = { division?: string; faculty?: string; course?: string; batch?: string; all?: boolean };
 
-    // Faculty and all-access read every sheet. One student's sheet being fresh says nothing about the rest.
-    if (filter?.faculty || filter?.all) {
-      if (config.spreadsheets.every((sheet) => now - (lastSyncBySheet.get(sheet.id) ?? 0) < intervalMs)) return;
-      // Marked when the download starts, so joining another request's one-sheet sync does not count as all of them.
-      const markAll = () => {
-        for (const sheet of config.spreadsheets) lastSyncBySheet.set(sheet.id, now);
-      };
+  /** Faculty and all-access read every sheet. A student reads the one sheet for their batch. */
+  function syncPlan(filter: ReadScope): { sheets: SheetSource[]; everything: boolean; ctx: SyncContext } | null {
+    // Marked when the download starts, so joining another request's sync does not count as this one.
+    const mark = (sheets: SheetSource[]) => {
+      const startedAt = Date.now();
+      for (const sheet of sheets) lastSyncBySheet.set(sheet.id, startedAt);
+    };
+    if (filter.faculty || filter.all) {
+      const sheets = config.spreadsheets;
+      if (sheets.length === 0) return null;
       const loadAll = options?.loadAll;
-      await runSync({
-        db,
-        config,
-        load: () => {
-          markAll();
-          return load();
+      return {
+        sheets,
+        everything: true,
+        ctx: {
+          db,
+          config,
+          load: () => {
+            mark(sheets);
+            return load();
+          },
+          loadAll: loadAll
+            ? () => {
+                mark(sheets);
+                return loadAll();
+              }
+            : undefined,
         },
-        loadAll: loadAll
-          ? () => {
-              markAll();
-              return loadAll();
-            }
-          : undefined,
-      });
-      return;
+      };
     }
-
-    // Student scope or single-sheet scope: find target sheet
-    const target = sheetForScope(filter ?? {}, config.spreadsheets);
-    if (target) {
-      const last = lastSyncBySheet.get(target.id) ?? 0;
-      const snapshot = loadSnapshot(db);
-      const hasLectures = snapshot.some(
-        (l) => l.spreadsheetId === target.id || (target.batch && l.batch === target.batch),
-      );
-      if (hasLectures && now - last < intervalMs) {
-        return;
-      }
-      await runSync({
+    // Student scope, or the primary sheet when no cohort is chosen yet.
+    const sheet =
+      sheetForScope(filter, config.spreadsheets) ??
+      config.spreadsheets.find((source) => source.id === config.spreadsheetId) ??
+      config.spreadsheets[0];
+    if (!sheet) return null;
+    return {
+      sheets: [sheet],
+      everything: false,
+      ctx: {
         db,
-        config: { ...config, spreadsheetId: target.id },
-        load: () => fetchSpreadsheet({ spreadsheetId: target.id }),
-        loadAll: async () => [
-          {
-            ...(await fetchSpreadsheet({ spreadsheetId: target.id })),
-            course: target.course,
-            spreadsheetId: target.id,
-          },
-        ],
-      });
-      lastSyncBySheet.set(target.id, now);
+        config: { ...config, spreadsheetId: sheet.id },
+        load: () => {
+          mark([sheet]);
+          return fetchSpreadsheet({ spreadsheetId: sheet.id });
+        },
+        loadAll: async () => {
+          mark([sheet]);
+          return [
+            {
+              ...(await fetchSpreadsheet({ spreadsheetId: sheet.id })),
+              course: sheet.course,
+              spreadsheetId: sheet.id,
+            },
+          ];
+        },
+      },
+    };
+  }
+
+  /** Answers from the saved timetable when there is one, and refreshes the sheets in the background. */
+  async function syncIfStale(filter: ReadScope = {}) {
+    if (!options?.syncOnRead) return;
+    // A cold start has an empty local database. The saved copy in Neon is what makes an instant answer possible.
+    await hydrateArchive(db).catch(() => false);
+    const plan = syncPlan(filter);
+    if (!plan) {
+      const state = readSyncState(db);
+      const age = state.lastSuccessAt ? Date.now() - new Date(state.lastSuccessAt).getTime() : Number.POSITIVE_INFINITY;
+      if (age > config.syncIntervalSeconds * 1000) await runSync({ db, config, load, loadAll: options.loadAll });
       return;
     }
-
-    // Default fallback: sync primary sheet if no cohort chosen yet
-    const primary = config.spreadsheets.find((s) => s.id === config.spreadsheetId) ?? config.spreadsheets[0];
-    if (primary) {
-      const last = lastSyncBySheet.get(primary.id) ?? 0;
-      const snapshot = loadSnapshot(db);
-      const hasLectures = snapshot.some((l) => l.spreadsheetId === primary.id);
-      if (hasLectures && now - last < intervalMs) {
-        return;
-      }
-      await runSync({
-        db,
-        config: { ...config, spreadsheetId: primary.id },
-        load: () => fetchSpreadsheet({ spreadsheetId: primary.id }),
-        loadAll: async () => [
-          {
-            ...(await fetchSpreadsheet({ spreadsheetId: primary.id })),
-            course: primary.course,
-            spreadsheetId: primary.id,
-          },
-        ],
-      });
-      lastSyncBySheet.set(primary.id, now);
+    const isFresh = () => plan.sheets.every((sheet) => Date.now() - (lastSyncBySheet.get(sheet.id) ?? 0) < config.syncIntervalSeconds * 1000);
+    const snapshot = loadSnapshot(db);
+    const saved = plan.everything
+      ? readSyncState(db).bootstrapped && snapshot.length > 0
+      : snapshot.some((lecture) => plan.sheets.some((sheet) => lecture.spreadsheetId === sheet.id || (sheet.batch && lecture.batch === sheet.batch)));
+    if (isFresh() && (saved || plan.everything)) return;
+    if (saved) {
+      const running = runSync(plan.ctx);
+      options.runInBackground?.(running);
       return;
     }
-
-    const state = readSyncState(db);
-    const age = state.lastSuccessAt ? now - new Date(state.lastSuccessAt).getTime() : Number.POSITIVE_INFINITY;
-    if (age > intervalMs) {
-      await runSync({ db, config, load, loadAll: options?.loadAll });
-    }
+    // Nothing to show yet, so this request has to wait for the sheet.
+    await runSync(plan.ctx);
+    if (!isFresh()) await runSync(plan.ctx);
   }
 
   app.get("/api/health", (_req, res) => {
@@ -400,7 +402,8 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
     const course = typeof req.query.course === "string" ? req.query.course.trim() : "";
     const batch = typeof req.query.batch === "string" ? req.query.batch.trim() : "";
     await syncIfStale({ division, faculty, course, batch, all: req.query.all === "1" });
-    res.json(buildBootstrap(db, config, new Date(), { division, faculty, course, batch }));
+    const payload = buildBootstrap(db, config, new Date(), { division, faculty, course, batch });
+    res.json({ ...payload, sync: { ...payload.sync, refreshing: syncInFlight(db) } });
   });
   app.get("/api/calendar.ics", async (req, res) => {
     const division = (typeof req.query.division === "string" ? req.query.division : typeof req.query.cohort === "string" ? req.query.cohort : "").trim();

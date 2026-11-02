@@ -14,6 +14,7 @@ import { readNeonRows, writeNeonRows } from "./neonRows.ts";
 import { archiveSignature, mergeArchives, type TimetableArchive } from "./timetableArchive.ts";
 
 let lastSignature = "";
+const hydrating = new WeakMap<AppDatabase, Promise<boolean>>();
 
 function neonUrl() {
   return process.env.DATABASE_URL?.trim() || "";
@@ -97,8 +98,17 @@ async function writeBlob(archive: TimetableArchive) {
 }
 
 /** On a cold start the local database is empty. Load the last saved timetable before comparing the sheet. */
-export async function hydrateArchive(db: AppDatabase) {
-  if (!neonUrl() || readSyncState(db).bootstrapped) return false;
+export function hydrateArchive(db: AppDatabase) {
+  if (!neonUrl() || readSyncState(db).bootstrapped) return Promise.resolve(false);
+  // Requests that arrive together share one read, so a late copy cannot overwrite a sync that has started.
+  const running = hydrating.get(db);
+  if (running) return running;
+  const pending = loadRemoteArchive(db).finally(() => hydrating.delete(db));
+  hydrating.set(db, pending);
+  return pending;
+}
+
+async function loadRemoteArchive(db: AppDatabase) {
   const archive = await readRemote();
   if (!archive?.sync.bootstrapped) return false;
   importArchive(db, archive);

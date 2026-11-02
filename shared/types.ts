@@ -86,6 +86,8 @@ export interface SyncInfo {
   tabNames: string[];
   contentHash: string | null;
   source: "google-sheets-xlsx-export";
+  /** A background sync is running, so a newer copy is coming shortly. */
+  refreshing?: boolean;
 }
 
 /** A previous published week kept after the live sheet moved on. `lectures` is already scoped the same way as `BootstrapResponse.lectures`. */

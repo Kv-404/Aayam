@@ -181,6 +181,7 @@ function usePreferences() {
     applyTheme(theme);
     try {
       localStorage.removeItem("timetable-layout");
+      localStorage.removeItem("timetable-week");
     } catch {
       // A blocked store still leaves this visit on the week grid and the compact day.
     }
@@ -428,7 +429,8 @@ export function App() {
     staleTime: 15 * 1000,
     gcTime: 10 * 60 * 1000,
     enabled: Boolean(configured || scope.division || scope.faculty || scope.all || (scope.course && scope.batch)),
-    refetchInterval: (result) => (result.state.data?.sync.intervalSeconds ?? 45) * 1000,
+    // While the server refreshes in the background, ask again soon to pick up the new copy.
+    refetchInterval: (result) => (result.state.data?.sync.refreshing ? 4 : result.state.data?.sync.intervalSeconds ?? 45) * 1000,
   });
 
   const refresh = useMutation({

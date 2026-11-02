@@ -30,7 +30,7 @@ esbuild server/src/vercel.ts --bundle --platform=node --format=cjs --outfile=api
 
 Commit that outfile. Vercel resolves the function before the build runs, so a source-only push does not update the API. Do not edit the bundle by hand.
 
-On Vercel, SQLite is `/tmp/timetable.sqlite` and dies on cold start. `syncOnRead` is on. Before compare, `hydrateArchive` loads Neon. Rows in `timetable_lectures`, `timetable_changes`, `timetable_weeks`, and `timetable_sync` are the stored timetable. `timetable_archive` remains so a build that still reads the single JSON document keeps working. `publishArchive` writes both after a successful sync. `DATABASE_URL` is set on Production, Preview, and Development. A removed lecture stays cancelled across cold starts because of that Neon archive.
+On Vercel, SQLite is `/tmp/timetable.sqlite` and dies on cold start. `syncOnRead` is on. `GET /api/bootstrap` loads Neon with `hydrateArchive`, answers from that saved copy, and syncs in the background under `waitUntil` (`@vercel/functions`). It sets `sync.refreshing`, and the client polls again after 4 seconds. A request waits for the sheet only when there is no saved copy for its scope. Before compare, `hydrateArchive` loads Neon. Rows in `timetable_lectures`, `timetable_changes`, `timetable_weeks`, and `timetable_sync` are the stored timetable. `timetable_archive` remains so a build that still reads the single JSON document keeps working. `publishArchive` writes both after a successful sync. `DATABASE_URL` is set on Production, Preview, and Development. A removed lecture stays cancelled across cold starts because of that Neon archive.
 
 ## Changing the sheet
 

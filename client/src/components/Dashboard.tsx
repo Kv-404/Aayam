@@ -1,8 +1,8 @@
-import type { BootstrapResponse, ChangeEvent, PublicLecture, SavedWeek, SheetLink } from "@shared/types";
+import type { BootstrapResponse, ChangeEvent, PublicLecture, SheetLink } from "@shared/types";
 import { cohortChoices, cohortLabel, lectureInCohort, type CohortChoice } from "@shared/cohort";
 import { findCoordinator } from "@shared/coordinators";
 import { changeMatchesFaculty, listFacultyNames } from "@shared/faculty";
-import { CalendarPlus, Check, ChevronDown, Download, FileSpreadsheet, LogOut, RefreshCw, Settings } from "lucide-react";
+import { Bell, CalendarPlus, Check, ChevronDown, Download, FileSpreadsheet, LogOut, RefreshCw, Settings, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { FacultyLoginModal } from "@/components/FacultyLoginModal";
 import { FacultyScopeMenu } from "@/components/FacultyScopeMenu";
@@ -20,11 +20,11 @@ import { useChangeNotifications } from "@/hooks/useNotifications";
 import { useLectureReminders } from "@/hooks/useLectureReminders";
 import { appleWeekCalendarUrl, calendarFeedUrl, googleWeekCalendarUrl, outlookWeekCalendarUrl } from "@/lib/calendar";
 import { lensFromScopeId, resolveFacultyView, signInFacultyLens } from "@/lib/facultyView";
-import { clearFacultyBrowse, clearStudentAuth, hasChosenRole, readCanSeeAllFaculty, readFacultyEmail, readFacultyLens, readFacultyPreview, readRole, readSavedWeek, readSetup, readStoredCohort, readStoredFaculty, readStudentBatch, saveCanSeeAllFaculty, saveCohort, saveFaculty, saveFacultyEmail, saveFacultyLens, saveFacultyPreview, saveSavedWeek, saveSetup, themes, type FacultyLens, type MeetAction, type ThemeId, type ViewerRole } from "@/lib/prefs";
+import { clearFacultyBrowse, clearStudentAuth, closeNotifyHint, hasChosenRole, readCanSeeAllFaculty, readFacultyEmail, readFacultyLens, readFacultyPreview, readNotifyHintClosed, readRole, readSetup, readStoredCohort, readStoredFaculty, readStudentBatch, saveCanSeeAllFaculty, saveCohort, saveFaculty, saveFacultyEmail, saveFacultyLens, saveFacultyPreview, saveSetup, themes, type FacultyLens, type MeetAction, type ThemeId, type ViewerRole } from "@/lib/prefs";
 import { ColorEditor } from "@/components/ColorEditor";
 import { ColorSwitch } from "@/components/ColorSwitch";
 import { formatClockTime, formatCompactRange, zonedNow } from "@/lib/time";
-import { applyFilters, collapseFullOffDays, defaultFilters, slotPhase, unique, type Filters } from "@/lib/view";
+import { applyFilters, collapseFullOffDays, defaultFilters, groupSavedWeeks, slotPhase, unique, type Filters, type WeekGroup } from "@/lib/view";
 import { AayamLogo } from "@/components/AayamLogo";
 
 const dayOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -98,8 +98,10 @@ export function Dashboard({
       faculty: "",
     };
   });
-  const [view, setView] = useState("week");
-  const [weekId, setWeekId] = useState(readSavedWeek);
+  // A reload opens today's schedule in the current week. Neither choice is remembered.
+  const [view, setView] = useState("today");
+  const [weekId, setWeekId] = useState("live");
+  const [notifyHintClosed, setNotifyHintClosed] = useState(readNotifyHintClosed);
   const zone = zonedNow(now, data.timezone);
   const choices = data.choices && data.choices.length > 0 ? data.choices : cohortChoices(data.lectures);
   const facultyNames = data.faculties && data.faculties.length > 0 ? data.faculties : listFacultyNames(data.lectures.filter((lecture) => lecture.kind !== "break").map((lecture) => lecture.faculty));
@@ -111,14 +113,12 @@ export function Dashboard({
   );
   const selected = choice ? choice.division : cohort;
 
-  const savedWeeks = data.savedWeeks ?? [];
+  const allWeeks = useMemo(() => groupSavedWeeks(data.savedWeeks ?? []), [data.savedWeeks]);
+  const savedWeeks = role === "student" && choice ? allWeeks.filter((week) => week.lectures.some((lecture) => lectureInCohort(lecture, choice))) : allWeeks;
   const selectedWeek = savedWeeks.find((week) => week.id === weekId);
   useEffect(() => {
-    if (weekId !== "live" && !savedWeeks.some((week) => week.id === weekId)) {
-      setWeekId("live");
-      saveSavedWeek("live");
-    }
-  }, [savedWeeks, weekId]);
+    if (weekId !== "live" && !selectedWeek) setWeekId("live");
+  }, [selectedWeek, weekId]);
   const lectureFeed = selectedWeek?.lectures ?? data.lectures;
   const board = resolveFacultyView({
     lectures: lectureFeed,
@@ -265,7 +265,6 @@ export function Dashboard({
   const changes = shownChanges;
   function chooseWeek(id: string) {
     setWeekId(id);
-    saveSavedWeek(id);
   }
   const failing = Boolean(data.sync.lastError);
   const activeSheet = role === "student" ? choice : facultyChoice;
@@ -462,7 +461,7 @@ export function Dashboard({
       status: "all",
     }));
     setReady(true);
-    setView("week");
+    setView("today");
   }
 
   function patch(partial: Partial<Filters>) {
@@ -541,7 +540,6 @@ export function Dashboard({
   }
 
   const weekLabel = data.weekStart && data.weekEnd ? `${formatShort(data.weekStart)} – ${formatShort(data.weekEnd)}` : "This week";
-  const severalBatches = new Set(savedWeeks.map((week) => week.batch).filter(Boolean)).size > 1;
   const segmentProps = {
     trackColor: "var(--muted)",
     thumbColor: "var(--foreground)",
@@ -600,29 +598,20 @@ export function Dashboard({
       {...segmentProps}
     />
   ) : null;
-  const weekControl = savedWeeks.length > 0 ? (
-    <label className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-      <span className="sr-only">Week</span>
-      <select
-        aria-label="Choose a week"
-        value={selectedWeek ? selectedWeek.id : "live"}
-        onChange={(event) => chooseWeek(event.target.value)}
-        className="min-w-0 max-w-full rounded-md border border-border bg-background px-2 py-1 text-xs font-medium text-foreground"
-      >
-        <option value="live">{weekLabel}</option>
-        {savedWeeks.map((week) => (
-          <option key={week.id} value={week.id}>
-            {formatShort(week.start)} – {formatShort(week.end)}
-            {severalBatches && week.batch ? ` · ${week.batch}` : ""}
-          </option>
-        ))}
-      </select>
-    </label>
-  ) : null;
+  const weekControl = (opensUp = false) =>
+    savedWeeks.length > 0 ? (
+      <WeekMenu liveLabel={weekLabel} weeks={savedWeeks} value={selectedWeek ? selectedWeek.id : "live"} onChange={chooseWeek} opensUp={opensUp} />
+    ) : null;
   const notice = reminders.notice ?? notifications.notice;
   const dismissNotice = () => {
     if (reminders.notice) reminders.dismiss();
     else notifications.dismiss();
+  };
+  const liveMarks = role !== "faculty" || board.showLive || Boolean(filters.division);
+  const floatBottom = view === "today" ? "bottom-44" : "bottom-28";
+  const dismissNotifyHint = () => {
+    closeNotifyHint();
+    setNotifyHintClosed(true);
   };
   const searchPlaceholder = role === "faculty" ? "Subject, cohort, or room" : "Subject, faculty, or room";
   const statusLine = (
@@ -637,7 +626,7 @@ export function Dashboard({
   );
   const headerControls = (
     <>
-      {weekControl}
+      {weekControl()}
       {viewControl("shrink-0")}
       <NotifyControl optedIn={notifications.optedIn} pulse={reminders.pulse} onEnable={() => void notifications.enable()} />
     </>
@@ -770,9 +759,6 @@ export function Dashboard({
               </div>
             </div>
           )}
-          <div className="flex justify-end empty:hidden sm:hidden">
-            <NotifyControl optedIn={notifications.optedIn} pulse={reminders.pulse} onEnable={() => void notifications.enable()} />
-          </div>
         </div>
       </header>
 
@@ -785,8 +771,7 @@ export function Dashboard({
         {selectedWeek && (
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm">
             <p>
-              Viewing {formatShort(selectedWeek.start)} – {formatShort(selectedWeek.end)}
-              {selectedWeek.batch ? ` · ${selectedWeek.batch}` : ""}.
+              Viewing {formatShort(selectedWeek.start)} – {formatShort(selectedWeek.end)}.
             </p>
             <button type="button" className="text-xs font-medium text-foreground underline-offset-4 hover:underline" onClick={() => chooseWeek("live")}>
               Back to this week
@@ -803,6 +788,7 @@ export function Dashboard({
                 minutes={zone.minutes}
                 showDivision={role === "faculty" && board.showDivision}
                 showFaculty={role === "faculty" && board.showFaculty}
+                showLive={liveMarks}
                 note={todayPack.note}
                 meet={meet}
                 onPrevDay={() => navigateDay(-1)}
@@ -811,7 +797,7 @@ export function Dashboard({
             </div>
           </TabsContent>
           <TabsContent value="week" className="rise mt-0">
-            <WeeklyView lectures={weekLectures} showDivision={role === "faculty" && board.showDivision} showFaculty={role === "faculty" && board.showFaculty} today={zone.iso} minutes={zone.minutes} meet={meet} />
+            <WeeklyView lectures={weekLectures} showDivision={role === "faculty" && board.showDivision} showFaculty={role === "faculty" && board.showFaculty} showLive={liveMarks} today={zone.iso} minutes={zone.minutes} meet={meet} />
           </TabsContent>
           <TabsContent value="updates" className="rise mt-0">
             <RecentChanges
@@ -851,7 +837,7 @@ export function Dashboard({
       </main>
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background/95 backdrop-blur-md sm:hidden pb-[env(safe-area-inset-bottom)]">
         <div className="flex flex-col gap-2 px-3 py-2">
-          {weekControl}
+          {weekControl(true)}
           {view === "today" && dayControl("w-full")}
           {viewControl("w-full")}
         </div>
@@ -860,11 +846,34 @@ export function Dashboard({
         <div
           role="status"
           data-testid="notify-notice"
-          className={`fixed inset-x-3 ${view === "today" ? "bottom-44" : "bottom-28"} z-50 flex items-start gap-3 rounded-xl border border-border bg-background px-3 py-3 text-sm shadow-lg sm:inset-x-auto sm:right-6 sm:bottom-6 sm:max-w-sm`}
+          className={`fixed inset-x-3 ${floatBottom} z-50 flex items-start gap-3 rounded-xl border border-border bg-background px-3 py-3 text-sm shadow-lg sm:inset-x-auto sm:right-6 sm:bottom-6 sm:max-w-sm`}
         >
           <p className="min-w-0 flex-1 leading-snug">{notice}</p>
           <button type="button" className="shrink-0 text-xs text-muted-foreground hover:text-foreground" onClick={dismissNotice}>
             Close
+          </button>
+        </div>
+      )}
+      {!notifications.optedIn && !notifyHintClosed && !notice && (
+        <div
+          role="status"
+          data-testid="notify-hint"
+          className={`menu-pop-up fixed inset-x-3 ${floatBottom} z-50 flex items-center gap-2 rounded-lg border border-border bg-background py-1.5 pr-1 pl-3 text-xs shadow-lg sm:hidden`}
+        >
+          <Bell className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <p className="min-w-0 flex-1 truncate text-muted-foreground">Get told when a class changes</p>
+          <button
+            type="button"
+            className="shrink-0 rounded-md px-2 py-1 font-semibold text-foreground hover:bg-muted"
+            onClick={() => {
+              dismissNotifyHint();
+              void notifications.enable();
+            }}
+          >
+            Turn on
+          </button>
+          <button type="button" aria-label="Dismiss" className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground" onClick={dismissNotifyHint}>
+            <X className="size-3.5" aria-hidden="true" />
           </button>
         </div>
       )}
@@ -1060,7 +1069,7 @@ function AppearanceMenu({
   onDisable: () => void;
   onStudentLogout?: () => void;
   onFacultyLogout?: () => void;
-  savedWeeks: SavedWeek[];
+  savedWeeks: WeekGroup[];
   weekId: string;
   onWeek: (id: string) => void;
 }) {
@@ -1158,7 +1167,7 @@ function AppearanceMenu({
                 </button>
                 {savedWeeks.map((week) => {
                   const selected = weekId === week.id;
-                  const label = `${formatShort(week.start)} – ${formatShort(week.end)}${week.batch ? ` · ${week.batch}` : ""}`;
+                  const label = `${formatShort(week.start)} – ${formatShort(week.end)}`;
                   return (
                     <button
                       key={week.id}
@@ -1208,6 +1217,84 @@ function AppearanceMenu({
               </button>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WeekMenu({
+  liveLabel,
+  weeks,
+  value,
+  onChange,
+  opensUp,
+}: {
+  liveLabel: string;
+  weeks: WeekGroup[];
+  value: string;
+  onChange: (id: string) => void;
+  opensUp: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    function onPointer(event: MouseEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    window.addEventListener("mousedown", onPointer);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onPointer);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const options = [{ id: "live", label: liveLabel }, ...weeks.map((week) => ({ id: week.id, label: `${formatShort(week.start)} – ${formatShort(week.end)}` }))];
+  const current = options.find((option) => option.id === value) ?? options[0]!;
+  return (
+    <div ref={menuRef} className="relative shrink-0 self-start">
+      <button
+        type="button"
+        aria-label={`Week, ${current.label}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        data-testid="week-menu"
+        onClick={() => setOpen((prev) => !prev)}
+        className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-xs font-medium whitespace-nowrap text-foreground transition-colors hover:bg-muted"
+      >
+        {current.label}
+        <ChevronDown className={`size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 ${open ? "rotate-180" : ""}`} aria-hidden="true" />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          aria-label="Choose a week"
+          className={`absolute left-0 z-40 max-h-[min(20rem,calc(100dvh-8rem))] min-w-44 overflow-y-auto rounded-lg border border-border bg-background p-1 shadow-md ${opensUp ? "menu-pop-up bottom-full mb-1" : "menu-pop top-full mt-1"}`}
+        >
+          {options.map((option) => {
+            const selected = option.id === value;
+            return (
+              <button
+                key={option.id}
+                type="button"
+                role="menuitemradio"
+                aria-checked={selected}
+                data-testid={`week-${option.id}`}
+                onClick={() => {
+                  onChange(option.id);
+                  setOpen(false);
+                }}
+                className={`flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-sm whitespace-nowrap transition-colors hover:bg-muted ${selected ? "bg-muted/60 font-medium" : ""}`}
+              >
+                <span>{option.label}</span>
+                {selected && <Check className="size-4 shrink-0 text-foreground" aria-hidden="true" />}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

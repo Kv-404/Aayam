@@ -8,7 +8,7 @@ Express API in `server/src`. Local entry `server/src/index.ts`. Vercel entry `se
 
 | Route | Behaviour |
 | --- | --- |
-| `GET /api/bootstrap` | Sync if the last success is older than the interval, then the public payload. Accepts optional `?division=`, `?faculty=`, `?course=`, `?batch=` to scope lectures and changes |
+| `GET /api/bootstrap` | The public payload. On Vercel, a sheet older than the interval syncs in the background unless there is no saved copy to show. `?all=1` or `?faculty=` covers every sheet. Accepts optional `?division=`, `?faculty=`, `?course=`, `?batch=` to scope lectures and changes |
 | `POST /api/sync` | Sync now, return the same payload |
 | `GET /api/calendar.ics` | `?division=` one cohort, or `?faculty=` every matching lecture. Faculty events put the cohort in `SUMMARY`. `download=1` sets Content-Disposition |
 | `GET /api/changes` | Recent change rows |

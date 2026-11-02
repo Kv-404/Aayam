@@ -15,6 +15,7 @@ export function TodayView({
   minutes,
   showDivision,
   showFaculty = false,
+  showLive = true,
   note,
   meet,
   onPrevDay,
@@ -25,6 +26,7 @@ export function TodayView({
   minutes: number;
   showDivision: boolean;
   showFaculty?: boolean;
+  showLive?: boolean;
   note?: string;
   meet: MeetAction;
   onPrevDay?: () => void;
@@ -95,7 +97,7 @@ export function TodayView({
               </li>
             );
           }
-          const live = isLive(item.lecture, today, minutes);
+          const live = showLive && isLive(item.lecture, today, minutes);
           const off = item.lecture.subject === "OFF";
           const allDayOff = isFoldedOff(item.lecture);
           const showStatus = !off && (item.lecture.displayStatus === "cancelled" || item.lecture.displayStatus === "rescheduled");

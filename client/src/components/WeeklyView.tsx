@@ -16,6 +16,7 @@ export function WeeklyView({
   lectures,
   showDivision,
   showFaculty = false,
+  showLive = true,
   today = "",
   minutes = -1,
   meet,
@@ -23,6 +24,7 @@ export function WeeklyView({
   lectures: PublicLecture[];
   showDivision: boolean;
   showFaculty?: boolean;
+  showLive?: boolean;
   today?: string;
   minutes?: number;
   meet: MeetAction;
@@ -88,7 +90,7 @@ export function WeeklyView({
                 {[...dayLectures]
                   .sort((a, b) => a.startMinutes - b.startMinutes || a.division.localeCompare(b.division) || a.subject.localeCompare(b.subject))
                   .map((lecture) => (
-                    <PhoneRow key={lecture.id} lecture={lecture} showDivision={showDivision} showFaculty={showFaculty} now={isLive(lecture, today, minutes)} meet={meet} />
+                    <PhoneRow key={lecture.id} lecture={lecture} showDivision={showDivision} showFaculty={showFaculty} now={showLive && isLive(lecture, today, minutes)} meet={meet} />
                   ))}
               </ol>
             )}
@@ -214,7 +216,7 @@ export function WeeklyView({
                         <td key={group.dates[0]} className={`px-2 py-2 ${group.dates[0] === today ? "cal-today" : ""}`}>
                           <div className="space-y-2">
                             {group.classes!.map((lecture) => (
-                              <Cell key={lecture.id} lecture={lecture} showDivision={showDivision} showFaculty={showFaculty} now={isLive(lecture, today, minutes)} meet={meet} />
+                              <Cell key={lecture.id} lecture={lecture} showDivision={showDivision} showFaculty={showFaculty} now={showLive && isLive(lecture, today, minutes)} meet={meet} />
                             ))}
                           </div>
                         </td>

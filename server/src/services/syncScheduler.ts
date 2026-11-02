@@ -212,6 +212,10 @@ function successState(current: SyncState, attemptAt: string, contentHash: string
   };
 }
 
+export function syncInFlight(db: AppDatabase) {
+  return inflight.has(db);
+}
+
 export function runSync(ctx: SyncContext) {
   const existing = inflight.get(ctx.db);
   if (existing) return existing;
