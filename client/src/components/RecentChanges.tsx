@@ -94,7 +94,7 @@ export function RecentChanges({
                         {details.map((detail) => (
                           <div key={detail.label} className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-2 text-xs">
                             <dt className="text-muted-foreground">{detail.label}</dt>
-                            <dd className="min-w-0 text-foreground">{detail.value}</dd>
+                            <dd className="min-w-0 break-words text-foreground">{detail.value}</dd>
                           </div>
                         ))}
                       </dl>

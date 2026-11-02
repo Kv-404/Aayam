@@ -10,6 +10,7 @@ export function SearchPanel({
   query,
   placeholder,
   filters,
+  filtersOn = false,
   courses,
   batches,
   semesters,
@@ -26,6 +27,7 @@ export function SearchPanel({
   query: string;
   placeholder: string;
   filters: Filters;
+  filtersOn?: boolean;
   courses: string[];
   batches: string[];
   semesters: string[];
@@ -45,7 +47,7 @@ export function SearchPanel({
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const pressed = open || query.trim() !== "";
+  const pressed = open || filtersOn || query.trim() !== "";
 
   function place() {
     const bottom = buttonRef.current?.getBoundingClientRect().bottom;
@@ -112,7 +114,7 @@ export function SearchPanel({
       <button
         ref={buttonRef}
         type="button"
-        aria-label="Search"
+        aria-label={filtersOn ? "Search, filters on" : "Search"}
         aria-expanded={open}
         aria-pressed={pressed}
         data-testid="search-button"
@@ -175,7 +177,7 @@ export function SearchPanel({
                   ))}
                 </ul>
                 <div className="flex justify-end">
-                  <button type="button" className="text-xs font-semibold text-accent" onClick={() => setHistory(clearSearchHistory())}>
+                  <button type="button" className="text-xs font-semibold text-foreground" onClick={() => setHistory(clearSearchHistory())}>
                     Clear all
                   </button>
                 </div>

@@ -7,7 +7,7 @@ import { ClockLabel } from "@/components/ClockLabel";
 import type { MeetAction } from "@/lib/prefs";
 import { formatCalendarDate, formatCompactRange, formatLongDate } from "@/lib/time";
 import { useColors } from "@/lib/colorState";
-import { collapseFullOffDays, slotPhase } from "@/lib/view";
+import { isFoldedOff, slotPhase } from "@/lib/view";
 
 export function TodayView({
   lectures,
@@ -29,7 +29,7 @@ export function TodayView({
   onNextDay?: () => void;
 }) {
   const { classNameFor } = useColors();
-  const visible = collapseFullOffDays(lectures);
+  const visible = lectures;
   const dated = visible.filter((lecture) => lecture.date);
   const date = dated[0]?.date ?? today;
   if (visible.length === 0) {
@@ -95,7 +95,7 @@ export function TodayView({
           }
           const live = isLive(item.lecture, today, minutes);
           const off = item.lecture.subject === "OFF";
-          const allDayOff = off && item.lecture.id.endsWith("-off");
+          const allDayOff = isFoldedOff(item.lecture);
           const showStatus = !off && (item.lecture.displayStatus === "cancelled" || item.lecture.displayStatus === "rescheduled");
           return (
             <li

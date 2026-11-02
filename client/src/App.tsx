@@ -247,7 +247,7 @@ export function App() {
   });
   const [configured, setConfigured] = useState(() => {
     if (boot || returning) return true;
-    if (typeof window !== "undefined" && window.location.pathname === "/") {
+    if (isPublicHome()) {
       return false;
     }
     const urlScope = readScopeFromUrl(DEFAULT_COHORT_CHOICES);
@@ -259,7 +259,7 @@ export function App() {
   const [scope, setScope] = useState<BootstrapScope>(() => {
     if (boot) return boot;
     if (returning) return returning;
-    if (typeof window !== "undefined" && window.location.pathname === "/") {
+    if (isPublicHome()) {
       return {};
     }
     const urlScope = readScopeFromUrl(DEFAULT_COHORT_CHOICES);
@@ -342,7 +342,7 @@ export function App() {
       }
       setRoute("/");
 
-      if (p === "/") {
+      if (isPublicHome()) {
         setConfigured(false);
         setScope({});
         return;

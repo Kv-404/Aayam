@@ -3,6 +3,7 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme inline {
+  --breakpoint-xs: 24rem;
   --font-sans: Satoshi, ui-sans-serif, system-ui, sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
   --font-display: Satoshi, ui-sans-serif, system-ui, sans-serif;

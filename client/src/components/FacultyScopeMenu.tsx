@@ -69,7 +69,7 @@ export function FacultyScopeMenu({
   }, [filterQuery, sections]);
 
   return (
-    <div ref={menuRef} className="relative flex items-center gap-1.5">
+    <div ref={menuRef} className="relative flex min-w-0 items-center gap-1.5">
       <button
         type="button"
         aria-label="Faculty scope"
@@ -77,34 +77,34 @@ export function FacultyScopeMenu({
         aria-expanded={open}
         data-testid="faculty-scope"
         onClick={() => setOpen((current) => !current)}
-        className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border/80 bg-background/90 px-2.5 py-1 text-sm font-medium shadow-xs hover:bg-muted/50 transition-colors"
+        className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-lg border border-border/80 bg-background/90 px-2 py-1 text-xs font-medium sm:gap-1.5 sm:px-2.5 sm:text-sm shadow-xs hover:bg-muted/50 transition-colors"
       >
         <div className="flex flex-col text-left min-w-0">
-          <div className="flex items-center gap-1.5">
-            <span data-testid="faculty-scope-label" className="font-semibold text-foreground truncate max-w-[130px] sm:max-w-[190px]">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span data-testid="faculty-scope-label" className="min-w-0 font-semibold text-foreground truncate sm:max-w-[190px]">
               {label}
             </span>
-            <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium ${badgeClass}`}>
+            <span className={`hidden shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium sm:inline-flex ${badgeClass}`}>
               {badge}
             </span>
           </div>
           {email && (
-            <span className="text-[11px] text-muted-foreground truncate max-w-[150px] sm:max-w-[220px]">
+            <span className="hidden text-[11px] text-muted-foreground truncate sm:block sm:max-w-[220px]">
               {email}
             </span>
           )}
         </div>
-        <ChevronDown className="size-4 shrink-0 text-muted-foreground ml-0.5" aria-hidden="true" />
+        <ChevronDown className="size-3 shrink-0 text-muted-foreground sm:ml-0.5 sm:size-4" aria-hidden="true" />
       </button>
 
       <button
         type="button"
         onClick={onLogout}
-        className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors border border-border/60"
+        className="hidden items-center gap-1 rounded-md px-2 py-1.5 text-xs sm:inline-flex text-muted-foreground hover:bg-muted hover:text-foreground transition-colors border border-border/60"
         title="Sign out of faculty mode"
       >
         <LogOut className="size-3.5" aria-hidden="true" />
-        <span className="hidden sm:inline">Sign out</span>
+        <span className="hidden 2xl:inline">Sign out</span>
       </button>
 
       {open && (
@@ -112,7 +112,7 @@ export function FacultyScopeMenu({
           role="menu"
           aria-label="Choose a cohort or faculty"
           data-testid="faculty-scope-menu"
-          className="menu-pop absolute top-full left-0 z-40 mt-1 max-h-[min(28rem,calc(100dvh-5rem))] w-[min(20rem,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-border bg-background p-1.5 shadow-md"
+          className="menu-pop absolute top-full left-0 z-40 mt-1 max-h-[min(28rem,calc(100dvh-5rem))] w-80 overflow-y-auto max-sm:fixed max-sm:inset-x-3 max-sm:top-12 max-sm:mt-0 max-sm:w-auto rounded-lg border border-border bg-background p-1.5 shadow-md"
         >
           <div className="p-1 pb-2">
             <input

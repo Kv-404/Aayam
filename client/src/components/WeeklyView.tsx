@@ -8,7 +8,7 @@ import { ClockLabel } from "@/components/ClockLabel";
 import { LectureRoom } from "@/components/MeetLink";
 import type { MeetAction } from "@/lib/prefs";
 import { formatCalendarDate, formatCompactRange } from "@/lib/time";
-import { isFullOff, slotPhase } from "@/lib/view";
+import { isFoldedOff, isFoldedOffDay, slotPhase } from "@/lib/view";
 
 const dayOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
@@ -60,11 +60,13 @@ export function WeeklyView({
     return <p className="py-8 text-sm text-muted-foreground">No dated lectures match these filters.</p>;
   }
   const forDay = (date: string) => lectures.filter((lecture) => lecture.date === date);
-  const offDay = (date: string) => isFullOff(forDay(date));
+  const offDay = (date: string) => isFoldedOffDay(forDay(date));
   // Full-day OFF cards span the first slot through the last. Their start must not label a normal class row.
-  const starts = [...new Set(lectures.filter((lecture) => lecture.kind !== "off").map((lecture) => lecture.startMinutes))]
-    .filter((minute) => minute >= 0)
-    .sort((a, b) => a - b);
+  // Rows are keyed on start and end, so a class that ends at another time gets its own correct label.
+  const inRow = (lecture: PublicLecture) => !isFoldedOff(lecture) && lecture.startMinutes >= 0;
+  const rowKey = (lecture: PublicLecture) => `${lecture.startMinutes}-${lecture.endMinutes}`;
+  const rows = [...new Map(lectures.filter(inRow).map((lecture) => [rowKey(lecture), lecture])).values()]
+    .sort((a, b) => a.startMinutes - b.startMinutes || a.endMinutes - b.endMinutes);
   return (
     <>
     <div className="sm:hidden">
@@ -118,16 +120,18 @@ export function WeeklyView({
           </tr>
         </thead>
         <tbody>
-          {starts.length === 0 ? (
+          {rows.length === 0 ? (
             <tr className="align-top">
               <th className="sticky left-0 bg-background px-3 py-3 font-mono text-xs font-medium whitespace-nowrap text-muted-foreground">All day</th>
               {days.map((date) => (
-                <td key={date} className="px-3 py-3" />
+                <td key={date} className={`px-3 py-3 ${offDay(date) ? "text-sm font-medium text-danger" : ""}`}>
+                  {offDay(date) ? "Off" : null}
+                </td>
               ))}
             </tr>
           ) : (
-            starts.map((start) => {
-              const sample = lectures.find((lecture) => lecture.startMinutes === start && lecture.kind !== "off");
+            rows.map((sample) => {
+              const key = rowKey(sample);
 
               type DayCell =
                 | { kind: "off"; date: string }
@@ -139,7 +143,7 @@ export function WeeklyView({
                 if (offDay(date)) {
                   return { kind: "off", date };
                 }
-                const daySlots = forDay(date).filter((lecture) => lecture.startMinutes === start && lecture.kind !== "off");
+                const daySlots = forDay(date).filter((lecture) => inRow(lecture) && rowKey(lecture) === key);
                 const dayBreaks = daySlots.filter((lecture) => lecture.kind === "break");
                 const dayClasses = daySlots.filter((lecture) => lecture.kind !== "break");
 
@@ -183,11 +187,11 @@ export function WeeklyView({
               }
 
               return (
-                <tr key={start} className="border-b border-border align-top">
+                <tr key={key} className="border-b border-border align-top">
                   <th className="sticky left-0 z-10 bg-background border-r border-border/60 px-3 py-3 font-mono text-xs font-medium whitespace-nowrap text-muted-foreground">
-                    <ClockLabel label={sample?.startLabel ?? ""} />
+                    <ClockLabel label={sample.startLabel} />
                     <span className="mt-1 block font-normal">
-                      <ClockLabel label={sample?.endLabel ?? ""} />
+                      <ClockLabel label={sample.endLabel} />
                     </span>
                   </th>
                   {groups.map((group) => {
@@ -267,7 +271,7 @@ function PhoneRow({ lecture, showDivision, now, meet }: { lecture: PublicLecture
   if (lecture.kind === "break") {
     return (
       <li className="flex items-baseline gap-3 border-b border-border py-2 text-xs text-muted-foreground">
-        <span className="w-12 shrink-0 text-right font-mono">{bareTime(lecture.startLabel)}</span>
+        <span className="w-12 shrink-0" aria-hidden="true" />
         <span>
           {lecture.subject} · {formatCompactRange(lecture.startLabel, lecture.endLabel)}
         </span>

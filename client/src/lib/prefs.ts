@@ -151,6 +151,8 @@ export function clearFacultyBrowse() {
   saveFacultyPreview(false);
   try {
     localStorage.removeItem(facultyLensKey);
+    localStorage.removeItem(facultyKey);
+    if (storageGet(roleKey) === "faculty") localStorage.removeItem(roleKey);
   } catch {
     // The sign-out still leaves faculty mode.
   }

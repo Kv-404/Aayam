@@ -58,7 +58,7 @@ export function FacultyLoginModal({
       if (!window.google?.accounts?.id || !buttonContainerRef.current) return false;
       const clientId = await fetchGoogleClientId();
       if (!clientId) {
-        setError("Google Client ID is not configured. Please set GOOGLE_CLIENT_ID in .env.");
+        setError(import.meta.env.DEV ? "Google Client ID is not configured. Please set GOOGLE_CLIENT_ID in .env." : "Google sign-in is unavailable right now. Please try again shortly.");
         return true;
       }
 
@@ -126,8 +126,8 @@ export function FacultyLoginModal({
         </button>
 
         <div className="flex flex-col items-center text-center">
-          <div className="flex size-12 items-center justify-center rounded-full bg-accent/10 text-accent mb-4">
-            <Lock className="size-6 text-accent" />
+          <div className="flex size-12 items-center justify-center rounded-full bg-muted text-foreground mb-4">
+            <Lock className="size-6" />
           </div>
 
           <h2 id="faculty-modal-title" className="text-xl font-semibold tracking-tight">

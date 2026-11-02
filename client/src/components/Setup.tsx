@@ -11,6 +11,7 @@ import { signInFacultyLens } from "@/lib/facultyView";
 import {
   clearStudentAuth,
   isBatchUnlocked,
+  readFacultyEmail,
   readStoredCohort,
   readStudentBatch,
   saveCanSeeAllFaculty,
@@ -84,7 +85,7 @@ export function Setup({
   const [program, setProgram] = useState(savedBatch?.course ?? "");
   const [year, setYear] = useState(savedBatch?.batch ?? "");
   const [picked, setPicked] = useState(savedBatch && saved ? saved.division : "");
-  const [name, setName] = useState(faculties.includes(faculty) ? faculty : "");
+  const [name, setName] = useState(readFacultyEmail() && faculties.includes(faculty) ? faculty : "");
   const [query, setQuery] = useState("");
   const [codeStatus, setCodeStatus] = useState<"idle" | "error" | "success">("idle");
   const [codeError, setCodeError] = useState<string | null>(null);
@@ -93,10 +94,14 @@ export function Setup({
   const [authError, setAuthError] = useState<string | null>(null);
   const [authEmail, setAuthEmail] = useState<string | null>(null);
   const [clientId, setClientId] = useState<string>("");
+  const [clientChecked, setClientChecked] = useState(false);
   const googleBtnRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetchGoogleClientId().then(setClientId);
+    fetchGoogleClientId().then((id) => {
+      setClientId(id);
+      setClientChecked(true);
+    });
   }, []);
 
   useEffect(() => {
@@ -155,7 +160,8 @@ export function Setup({
   }, [step, name, faculties]);
 
   const cohorts = cohortsInYear(choices, program, year);
-  const steps = role === "faculty" ? facultySteps : studentSteps;
+  // Google sign-in opens the timetable directly, so the theme step only counts for someone already signed in.
+  const steps = role === "faculty" ? (name ? facultySteps : facultySteps.slice(0, 2)) : studentSteps;
   const index = Math.max(0, steps.indexOf(step));
   const visibleFaculties = faculties.filter((item) => item.toLowerCase().includes(query.trim().toLowerCase()));
   const copy: Record<StepId, [string, string]> = {
@@ -318,12 +324,9 @@ export function Setup({
           <div className="mt-8 flex flex-col items-center gap-6 text-center">
             <div className="rounded-2xl border border-border/80 bg-card/60 p-6 sm:p-8 backdrop-blur-sm shadow-sm flex flex-col items-center max-w-md w-full">
               <div className="mb-6 flex flex-col items-center">
-                <span className="inline-flex items-center rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary mb-2">
+                <span className="inline-flex items-center rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
                   Student Verification
                 </span>
-                <p className="text-sm text-muted-foreground">
-                  Enter your 6-digit PIN to access your batch's classes.
-                </p>
               </div>
 
               <CodeSlots
@@ -481,7 +484,10 @@ export function Setup({
                     </div>
                   </div>
                 )}
-                {!clientId && (
+                {!import.meta.env.DEV && clientChecked && !clientId && (
+                  <p className="text-sm text-muted-foreground">Google sign-in is unavailable right now. Please try again shortly.</p>
+                )}
+                {import.meta.env.DEV && clientChecked && !clientId && (
                   <div className="mt-4 w-full max-w-md rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-xs text-amber-600 dark:text-amber-400 text-left">
                     <p className="font-semibold mb-1">Development Notice: Google Client ID Not Set</p>
                     <p>Set <code>VITE_GOOGLE_CLIENT_ID</code> in <code>.env</code> to enable live Google Sign-In.</p>

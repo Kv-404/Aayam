@@ -66,7 +66,7 @@ export function TimetableFilters({
     <section aria-label="Filters" className="space-y-3">
       <div className="flex items-center justify-between">
         <h2 className="text-xs font-semibold tracking-[0.16em] text-muted-foreground uppercase">Filters</h2>
-        <button type="button" className="text-xs font-semibold text-accent" onClick={onClear}>
+        <button type="button" className="text-xs font-semibold text-foreground" onClick={onClear}>
           Clear
         </button>
       </div>

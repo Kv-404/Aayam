@@ -1,13 +1,12 @@
 import type { BootstrapResponse, ChangeEvent, PublicLecture, SavedWeek, SheetLink } from "@shared/types";
-import { cohortChoices, cohortLabel, cohortPrograms, cohortYears, cohortsInYear, lectureInCohort, type CohortChoice } from "@shared/cohort";
+import { cohortChoices, cohortLabel, lectureInCohort, type CohortChoice } from "@shared/cohort";
 import { findCoordinator } from "@shared/coordinators";
 import { changeMatchesFaculty, listFacultyNames } from "@shared/faculty";
-import { CalendarPlus, Check, ChevronDown, ChevronLeft, Download, FileSpreadsheet, LogOut, RefreshCw, Settings } from "lucide-react";
+import { CalendarPlus, Check, ChevronDown, Download, FileSpreadsheet, LogOut, RefreshCw, Settings } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { FacultyLoginModal } from "@/components/FacultyLoginModal";
 import { FacultyScopeMenu } from "@/components/FacultyScopeMenu";
-import CodeSlots from "@/components/CodeSlots";
-import { fetchCurrentAuth, logoutFaculty, verifyBatchCode } from "@/lib/auth";
+import { fetchCurrentAuth, logoutFaculty } from "@/lib/auth";
 import { LectureRoom, MeetChoice } from "@/components/MeetLink";
 import { NotifyControl } from "@/components/NotifyControl";
 import RubberSegment from "@/components/RubberSegment";
@@ -21,7 +20,7 @@ import { useChangeNotifications } from "@/hooks/useNotifications";
 import { useLectureReminders } from "@/hooks/useLectureReminders";
 import { appleWeekCalendarUrl, calendarFeedUrl, googleWeekCalendarUrl, outlookWeekCalendarUrl } from "@/lib/calendar";
 import { lensFromScopeId, resolveFacultyView, signInFacultyLens } from "@/lib/facultyView";
-import { clearFacultyBrowse, clearStudentAuth, hasChosenRole, isBatchUnlocked, readCanSeeAllFaculty, readFacultyEmail, readFacultyLens, readFacultyPreview, readRole, readSavedWeek, readSetup, readStoredCohort, readStoredFaculty, readStudentBatch, saveCanSeeAllFaculty, saveCohort, saveFaculty, saveFacultyEmail, saveFacultyLens, saveFacultyPreview, saveSavedWeek, saveSetup, saveUnlockedBatch, themes, type FacultyLens, type MeetAction, type ThemeId, type ViewerRole } from "@/lib/prefs";
+import { clearFacultyBrowse, clearStudentAuth, hasChosenRole, readCanSeeAllFaculty, readFacultyEmail, readFacultyLens, readFacultyPreview, readRole, readSavedWeek, readSetup, readStoredCohort, readStoredFaculty, readStudentBatch, saveCanSeeAllFaculty, saveCohort, saveFaculty, saveFacultyEmail, saveFacultyLens, saveFacultyPreview, saveSavedWeek, saveSetup, themes, type FacultyLens, type MeetAction, type ThemeId, type ViewerRole } from "@/lib/prefs";
 import { ColorEditor } from "@/components/ColorEditor";
 import { ColorSwitch } from "@/components/ColorSwitch";
 import { formatClockTime, formatCompactRange, zonedNow } from "@/lib/time";
@@ -131,6 +130,10 @@ export function Dashboard({
     lens,
   });
   const selectedFaculty = board.signedInName;
+  // Now/Next, reminders, and alerts follow today's timetable while an old week is on screen.
+  const liveBoard = selectedWeek
+    ? resolveFacultyView({ lectures: data.lectures, choices, facultyNames, signedInName: faculty, email: authEmail, canSeeAll, lens })
+    : board;
 
   useEffect(() => {
     if (import.meta.env.DEV && readFacultyPreview()) {
@@ -167,8 +170,9 @@ export function Dashboard({
         setAuthEmail(undefined);
         setCanSeeAll(false);
         setLens(null);
+        const wasFaculty = readRole() === "faculty";
         clearFacultyBrowse();
-        if (readRole() === "faculty") onReset?.();
+        if (wasFaculty) onReset?.();
       }
     });
     return () => {
@@ -208,18 +212,18 @@ export function Dashboard({
   }, [choices, role, studentBatch, selected]);
   const facultyPool = board.lectures;
   const facultyChoice = choices.find((item) => item.division === filters.division) ?? board.sheet;
-  const facultyVisible = filters.division
-    ? facultyPool.filter((lecture) => {
-        const picked = choices.find((item) => item.division === filters.division);
-        return picked ? lectureInCohort(lecture, picked) : lecture.division === filters.division;
-      })
-    : facultyPool;
+  const inPickedCohort = (list: PublicLecture[]) => {
+    if (!filters.division) return list;
+    const picked = choices.find((item) => item.division === filters.division);
+    return list.filter((lecture) => (picked ? lectureInCohort(lecture, picked) : lecture.division === filters.division));
+  };
+  const facultyVisible = inPickedCohort(facultyPool);
   const studentPool = choice ? lectureFeed.filter((lecture) => lectureInCohort(lecture, choice)) : [];
   const watchedDivisions = new Set(choice ? [choice.division, ...choice.also] : selected ? [selected] : []);
-  const facultyIds = new Set(facultyPool.map((lecture) => lecture.id));
+  const lectureIds = (list: PublicLecture[]) => new Set(list.map((lecture) => lecture.id));
   const facultyFilter = board.facultyFilter;
   const facultyDivisions = board.watchedDivisions;
-  const visibleChanges = (list: ChangeEvent[]) =>
+  const visibleChanges = (list: ChangeEvent[], facultyIds: Set<string>) =>
     role === "faculty"
       ? facultyFilter
         ? list.filter((change) => changeMatchesFaculty(change, facultyFilter, facultyIds))
@@ -227,8 +231,8 @@ export function Dashboard({
           ? list.filter((change) => !change.division || facultyDivisions.has(change.division))
           : list
       : list.filter((change) => watchedDivisions.size === 0 || !change.division || watchedDivisions.has(change.division));
-  const liveChanges = visibleChanges(data.changes);
-  const shownChanges = selectedWeek ? visibleChanges(selectedWeek.changes ?? []) : liveChanges;
+  const liveChanges = visibleChanges(data.changes, lectureIds(liveBoard.lectures));
+  const shownChanges = selectedWeek ? visibleChanges(selectedWeek.changes ?? [], lectureIds(facultyPool)) : liveChanges;
   const notifications = useChangeNotifications(liveChanges);
 
   const courses = [...new Set(choices.map((item) => item.course))];
@@ -236,17 +240,28 @@ export function Dashboard({
   const semesters = [...new Set(choices.filter((item) => item.course === filters.course && item.batch === filters.batch).map((item) => item.semester))];
   const scope = role === "faculty" ? facultyVisible : studentPool.filter((lecture) => lecture.kind !== "break");
   const days = dayOrder.filter((day) => scope.some((lecture) => lecture.weekday === day));
-  const requestedDay = filters.day || zone.weekday;
-  const activeDay = days.includes(requestedDay) ? requestedDay : days[0] ?? "";
   const subjects = unique(scope.map((lecture) => lecture.subject));
   const faculties = unique(scope.map((lecture) => lecture.faculty));
   const rooms = unique(scope.map((lecture) => lecture.room));
   const pool = role === "faculty" ? facultyVisible : studentPool;
   const effective = { ...filters, course: "", batch: "", semester: "", division: "", faculty: role === "faculty" ? "" : filters.faculty };
-  const dayLectures = collapseFullOffDays(applyFilters(pool, effective));
-  const weekLectures = collapseFullOffDays(applyFilters(pool, effective, { ignoreDay: true }));
-  const todayPack = useMemo(() => resolveToday(dayLectures, zone.iso, filters.day), [dayLectures, zone.iso, filters.day]);
-  const upcoming = nextClass(scope, zone.iso, zone.minutes);
+  // Fold whole OFF days before filtering, so a filter that leaves one OFF slot cannot turn a teaching day into a day off.
+  const foldedPool = collapseFullOffDays(pool);
+  const dayLectures = applyFilters(foldedPool, effective);
+  const weekLectures = applyFilters(foldedPool, effective, { ignoreDay: true });
+  const pinnedDay = filters.day || (selectedWeek ? days[0] ?? "" : "");
+  const todayPack = useMemo(() => resolveToday(dayLectures, zone.iso, pinnedDay), [dayLectures, zone.iso, pinnedDay]);
+  const requestedDay = filters.day || todayPack.lectures[0]?.weekday || zone.weekday;
+  const activeDay = days.includes(requestedDay) ? requestedDay : days[0] ?? "";
+  const liveScope = !selectedWeek
+    ? scope
+    : role === "faculty"
+      ? inPickedCohort(liveBoard.lectures)
+      : choice
+        ? data.lectures.filter((lecture) => lectureInCohort(lecture, choice) && lecture.kind !== "break")
+        : [];
+  const upcoming = nextClass(liveScope, zone.iso, zone.minutes);
+  const filtersOn = Boolean(filters.subject || filters.faculty || filters.room || filters.status !== "all" || (role === "faculty" && filters.division));
   const changes = shownChanges;
   function chooseWeek(id: string) {
     setWeekId(id);
@@ -258,7 +273,6 @@ export function Dashboard({
 
   function navigateDay(direction: -1 | 1) {
     if (days.length <= 1) return;
-    const activeDay = filters.day || zone.weekday;
     const idx = days.indexOf(activeDay);
     const validIdx = idx === -1 ? 0 : idx;
     const nextIdx = (validIdx + direction + days.length) % days.length;
@@ -297,7 +311,7 @@ export function Dashboard({
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [view, filters.day, zone.weekday, days]);
+  }, [view, filters.day, zone.weekday, days, activeDay]);
 
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
@@ -371,13 +385,13 @@ export function Dashboard({
     setAuthEmail(undefined);
     setCanSeeAll(false);
     setLens(null);
+    setFaculty("");
     clearFacultyBrowse();
     const targetDivision = readStoredCohort();
     if (targetDivision) {
       choose(targetDivision);
     } else {
-      setRole("student");
-      openSetup("student");
+      onReset?.();
     }
   }
 
@@ -491,7 +505,7 @@ export function Dashboard({
 
   const missingIdentity = role === "faculty" ? (!selectedFaculty && !board.wide) : !selected;
   const reminders = useLectureReminders({
-    lectures: scope,
+    lectures: liveScope,
     today: zone.iso,
     minutes: zone.minutes,
     enabled: ready && !missingIdentity && notifications.optedIn,
@@ -558,7 +572,7 @@ export function Dashboard({
   const dayControl = (className: string) => days.length > 0 && activeDay ? (
     <RubberSegment
       items={days.map((day) => {
-        const isToday = day === zone.weekday;
+        const isToday = !selectedWeek && day === zone.weekday;
         return {
           value: day,
           label: (
@@ -611,6 +625,23 @@ export function Dashboard({
     else notifications.dismiss();
   };
   const searchPlaceholder = role === "faculty" ? "Subject, cohort, or room" : "Subject, faculty, or room";
+  const statusLine = (
+    <HeaderStatus
+      lecture={upcoming}
+      today={zone.iso}
+      minutes={zone.minutes}
+      showCohort={role === "faculty" && board.showDivision}
+      meet={meet}
+      clockLabel={formatClockTime(now, data.timezone)}
+    />
+  );
+  const headerControls = (
+    <>
+      {weekControl}
+      {viewControl("shrink-0")}
+      <NotifyControl optedIn={notifications.optedIn} pulse={reminders.pulse} onEnable={() => void notifications.enable()} />
+    </>
+  );
 
   return (
     <Tabs value={view} onValueChange={setView} className="min-h-dvh flex flex-col">
@@ -660,24 +691,15 @@ export function Dashboard({
               )}
             </div>
 
-            {/* Center on Desktop: HeaderStatus */}
-            <div className="hidden md:flex flex-1 items-center justify-center min-w-0 px-2 max-w-lg mx-auto">
-              <HeaderStatus
-                lecture={upcoming}
-                today={zone.iso}
-                minutes={zone.minutes}
-                showCohort={role === "faculty" && board.showDivision}
-                meet={meet}
-                clockLabel={formatClockTime(now, data.timezone)}
-              />
+            {/* Center on the widest screens: HeaderStatus. Faculty menus are wider, so they need more room. */}
+            <div className={`hidden ${role === "faculty" ? "2xl:flex" : "xl:flex"} flex-1 items-center justify-center min-w-0 px-2 max-w-lg mx-auto`}>
+              {statusLine}
             </div>
 
-            {/* Right: View Switcher (Desktop) + Actions Toolbar */}
+            {/* Right: View Switcher (widest screens) + Actions Toolbar */}
             <div className="relative z-30 flex shrink-0 items-center gap-1 sm:gap-2">
-              <div className="hidden sm:flex sm:items-center sm:gap-2">
-                {weekControl}
-                {viewControl("shrink-0")}
-                <NotifyControl optedIn={notifications.optedIn} pulse={reminders.pulse} onEnable={() => void notifications.enable()} />
+              <div className="hidden xl:flex xl:items-center xl:gap-2">
+                {headerControls}
                 <div className="h-4 w-px bg-border/60 mx-0.5" aria-hidden="true" />
               </div>
 
@@ -685,7 +707,8 @@ export function Dashboard({
                 <SearchPanel
                   query={filters.query}
                   placeholder={searchPlaceholder}
-                  filters={effective}
+                  filters={{ ...effective, division: role === "faculty" ? filters.division : "" }}
+                  filtersOn={filtersOn}
                   courses={role === "student" ? [] : courses}
                   batches={role === "student" ? [] : batches}
                   semesters={role === "student" ? [] : semesters}
@@ -700,7 +723,10 @@ export function Dashboard({
                     return item ? `${name} · ${item.course} ${item.batch}` : name;
                   }}
                   onQuery={(query: string) => patch({ query })}
-                  onChange={patch}
+                  onChange={(partial) => {
+                    patch(partial);
+                    if (partial.day) setView("today");
+                  }}
                   onClear={() => patch({ division: "", day: "", subject: "", faculty: "", room: "", status: "all", query: "" })}
                 />
                 {role !== "faculty" || board.calendar ? (
@@ -714,29 +740,27 @@ export function Dashboard({
                   target="_blank"
                   rel="noreferrer"
                   aria-label="Open the sheet"
-                  className="inline-flex size-7.5 sm:size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                  className="inline-flex size-8 sm:size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
                 >
                   <FileSpreadsheet className="size-4" aria-hidden="true" />
                 </a>
                 <IconButton label={pending ? "Refreshing" : "Refresh"} onClick={onRefresh} disabled={pending} testId="refresh-button">
                   <RefreshCw className={`size-4 ${pending ? "animate-spin" : ""}`} aria-hidden="true" />
                 </IconButton>
-                <AppearanceMenu theme={theme} colors={colors} bold={bold} meet={meet} subjects={subjects} notifications={notifications.optedIn} onTheme={onTheme} onColors={onColors} onBold={onBold} onMeet={onMeet} onDisable={notifications.disable} role={role} onStudentLogout={handleStudentLogout} savedWeeks={savedWeeks} weekId={selectedWeek ? selectedWeek.id : "live"} onWeek={chooseWeek} />
+                <AppearanceMenu theme={theme} colors={colors} bold={bold} meet={meet} subjects={subjects} notifications={notifications.optedIn} onTheme={onTheme} onColors={onColors} onBold={onBold} onMeet={onMeet} onEnable={() => void notifications.enable()} onDisable={notifications.disable} role={role} onStudentLogout={handleStudentLogout} onFacultyLogout={handleFacultyLogout} savedWeeks={savedWeeks} weekId={selectedWeek ? selectedWeek.id : "live"} onWeek={chooseWeek} />
               </div>
             </div>
           </div>
 
-          {/* Row 2 on Mobile: HeaderStatus Pill */}
-          <div className="md:hidden w-full">
-            <HeaderStatus
-              lecture={upcoming}
-              today={zone.iso}
-              minutes={zone.minutes}
-              showCohort={role === "faculty" && board.showDivision}
-              meet={meet}
-              clockLabel={formatClockTime(now, data.timezone)}
-            />
+          {/* Phone: HeaderStatus on its own line */}
+          <div className="sm:hidden w-full">{statusLine}</div>
+
+          {/* Tablet and small laptop: controls and status drop to their own row, so the top row never overlaps */}
+          <div className="hidden sm:flex xl:hidden flex-wrap items-center gap-2">
+            {headerControls}
+            <div className="min-w-64 flex-1">{statusLine}</div>
           </div>
+          {role === "faculty" && <div className="hidden xl:block 2xl:hidden">{statusLine}</div>}
 
           {/* Row 2 on Desktop for Day View: day selector */}
           {view === "today" && days.length > 0 && activeDay && (
@@ -746,7 +770,7 @@ export function Dashboard({
               </div>
             </div>
           )}
-          <div className="flex justify-end sm:hidden">
+          <div className="flex justify-end empty:hidden sm:hidden">
             <NotifyControl optedIn={notifications.optedIn} pulse={reminders.pulse} onEnable={() => void notifications.enable()} />
           </div>
         </div>
@@ -824,7 +848,7 @@ export function Dashboard({
           </a>
         </footer>
       </main>
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur-md sm:hidden pb-[env(safe-area-inset-bottom)]">
+      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background/95 backdrop-blur-md sm:hidden pb-[env(safe-area-inset-bottom)]">
         <div className="flex flex-col gap-2 px-3 py-2">
           {weekControl}
           {view === "today" && dayControl("w-full")}
@@ -863,18 +887,18 @@ function AuthenticatedFacultyBadge({
 }) {
   const domainLabel = email?.includes("@isu.ac.in") ? "@isu.ac.in" : "@itm.edu";
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-border/80 bg-background/90 px-2.5 py-1 shadow-xs">
+    <div className="flex min-w-0 items-center gap-2 rounded-lg border border-border/80 bg-background/90 px-2 py-1 shadow-xs sm:px-2.5">
       <div className="flex flex-col text-left min-w-0">
-        <div className="flex items-center gap-1.5">
-          <span className="font-semibold text-sm text-foreground truncate max-w-[130px] sm:max-w-[200px]">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="min-w-0 font-semibold text-xs sm:text-sm text-foreground truncate sm:max-w-[200px]">
             {faculty}
           </span>
-          <span className="inline-flex items-center rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+          <span className="hidden shrink-0 items-center rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 sm:inline-flex dark:text-emerald-400">
             {domainLabel}
           </span>
         </div>
         {email && (
-          <span className="text-[11px] text-muted-foreground truncate max-w-[130px] sm:max-w-[200px]">
+          <span className="hidden text-[11px] text-muted-foreground truncate sm:block sm:max-w-[200px]">
             {email}
           </span>
         )}
@@ -882,11 +906,11 @@ function AuthenticatedFacultyBadge({
       <button
         type="button"
         onClick={onLogout}
-        className="ml-1 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+        className="ml-1 hidden items-center gap-1 rounded-md px-2 py-1 text-xs sm:inline-flex text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
         title="Sign out of faculty mode"
       >
         <LogOut className="size-3.5" aria-hidden="true" />
-        <span className="hidden sm:inline">Sign out</span>
+        <span>Sign out</span>
       </button>
     </div>
   );
@@ -914,26 +938,21 @@ function CalendarMenu({ scope, label }: { scope: { division?: string; faculty?: 
     };
   }, [open]);
 
-  async function addToGoogle() {
+  async function copyFeed() {
     try {
       await navigator.clipboard.writeText(feed);
-      setCalendarNotice({ type: "google", copied: true });
+      return true;
     } catch {
-      setCalendarNotice({ type: "google", copied: false });
+      return false;
     }
-    window.open(googleWeekCalendarUrl(scope), "_blank", "noopener");
-    setOpen(false);
   }
 
-  async function addToProton() {
-    try {
-      await navigator.clipboard.writeText(feed);
-      setCalendarNotice({ type: "proton", copied: true });
-    } catch {
-      setCalendarNotice({ type: "proton", copied: false });
-    }
-    window.open("https://calendar.proton.me", "_blank", "noopener");
+  // Open the tab inside the click, or phone browsers block it as a popup.
+  async function addToCalendar(type: "google" | "proton", url: string) {
+    const copying = copyFeed();
+    window.open(url, "_blank", "noopener");
     setOpen(false);
+    setCalendarNotice({ type, copied: await copying });
   }
 
   return (
@@ -955,11 +974,11 @@ function CalendarMenu({ scope, label }: { scope: { division?: string; faculty?: 
             <Download className="size-4" aria-hidden="true" />
             Download file
           </a>
-          <button type="button" role="menuitem" data-testid="calendar-google" onClick={() => void addToGoogle()} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted">
+          <button type="button" role="menuitem" data-testid="calendar-google" onClick={() => void addToCalendar("google", googleWeekCalendarUrl(scope))} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted">
             <CalendarPlus className="size-4" aria-hidden="true" />
             Google Calendar
           </button>
-          <a role="menuitem" data-testid="calendar-apple" href={appleWeekCalendarUrl(scope)} className="flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted">
+          <a role="menuitem" data-testid="calendar-apple" href={appleWeekCalendarUrl(scope)} onClick={() => setOpen(false)} className="flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted">
             <CalendarPlus className="size-4" aria-hidden="true" />
             Apple Calendar
           </a>
@@ -967,16 +986,16 @@ function CalendarMenu({ scope, label }: { scope: { division?: string; faculty?: 
             <CalendarPlus className="size-4" aria-hidden="true" />
             Outlook
           </a>
-          <button type="button" role="menuitem" data-testid="calendar-proton" onClick={() => void addToProton()} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted">
+          <button type="button" role="menuitem" data-testid="calendar-proton" onClick={() => void addToCalendar("proton", "https://calendar.proton.me")} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted">
             <CalendarPlus className="size-4" aria-hidden="true" />
             Proton Calendar
           </button>
         </div>
       )}
       {calendarNotice && (
-        <div role="status" data-testid={calendarNotice.type === "google" ? "google-note" : "proton-note"} className="absolute top-full right-0 z-40 mt-1 w-[min(20rem,calc(100vw-2rem))] rounded-lg border border-border bg-background p-3 text-sm shadow-sm">
+        <div role="status" data-testid={calendarNotice.type === "google" ? "google-note" : "proton-note"} className="absolute top-full right-0 z-40 mt-1 w-80 rounded-lg border border-border bg-background p-3 text-sm shadow-sm max-sm:fixed max-sm:inset-x-3 max-sm:top-12 max-sm:mt-0 max-sm:w-auto">
           <p className="font-medium text-foreground">
-            {calendarNotice.type === "google" ? "Google Calendar link copied" : (calendarNotice.copied ? "Link copied." : "Copy this link.")}
+            {calendarNotice.copied ? "Link copied." : "Copy this link."}
           </p>
           <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
             {calendarNotice.type === "google"
@@ -989,7 +1008,8 @@ function CalendarMenu({ scope, label }: { scope: { division?: string; faculty?: 
               type="button"
               className="text-xs text-foreground font-medium hover:underline"
               onClick={async () => {
-                await navigator.clipboard.writeText(feed);
+                const copied = await copyFeed();
+                setCalendarNotice((current) => (current ? { ...current, copied } : current));
               }}
             >
               Copy link
@@ -1016,8 +1036,10 @@ function AppearanceMenu({
   onColors,
   onBold,
   onMeet,
+  onEnable,
   onDisable,
   onStudentLogout,
+  onFacultyLogout,
   savedWeeks,
   weekId,
   onWeek,
@@ -1033,8 +1055,10 @@ function AppearanceMenu({
   onColors: (on: boolean) => void;
   onBold: (on: boolean) => void;
   onMeet: (action: MeetAction) => void;
+  onEnable: () => void;
   onDisable: () => void;
   onStudentLogout?: () => void;
+  onFacultyLogout?: () => void;
   savedWeeks: SavedWeek[];
   weekId: string;
   onWeek: (id: string) => void;
@@ -1100,7 +1124,8 @@ function AppearanceMenu({
               compact
               on={notifications}
               onChange={(next) => {
-                if (!next) onDisable();
+                if (next) onEnable();
+                else onDisable();
               }}
               title="Notifications"
               testId="notify-toggle"
@@ -1167,6 +1192,21 @@ function AppearanceMenu({
               </button>
             </div>
           )}
+          {role === "faculty" && (
+            <div className="mt-3 border-t border-border pt-2.5 sm:hidden">
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  onFacultyLogout?.();
+                }}
+                className="flex w-full items-center justify-center gap-2 rounded-md border border-border px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition-colors"
+              >
+                <LogOut className="size-3.5 shrink-0" aria-hidden="true" />
+                <span>Sign out</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1204,7 +1244,7 @@ function StudentCohortMenu({
   }, [open]);
 
   return (
-    <div ref={menuRef} className="relative">
+    <div ref={menuRef} className="relative min-w-0">
       <button
         type="button"
         aria-label="Cohort"
@@ -1258,92 +1298,6 @@ function StudentCohortMenu({
             className="mt-1 block w-full rounded-md border-t border-border px-3 py-2 text-left text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             I'm a teacher
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CohortMenu({
-  label,
-  detail,
-  ariaLabel,
-  value,
-  options,
-  groups,
-  format,
-  onChange,
-  switchLabel,
-  onSwitch,
-}: {
-  label: string;
-  detail?: string;
-  ariaLabel: string;
-  value: string;
-  options: string[];
-  groups?: { label: string; options: string[] }[];
-  format: (value: string) => string;
-  onChange: (value: string) => void;
-  switchLabel: string;
-  onSwitch: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    function onPointer(event: MouseEvent) {
-      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
-    }
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
-    window.addEventListener("mousedown", onPointer);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onPointer);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-  return (
-    <div ref={menuRef} className="relative">
-      <button
-        type="button"
-        aria-label={ariaLabel}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
-        className={`inline-flex max-w-full items-center gap-1 rounded-md px-1.5 text-sm font-medium ${detail ? "py-1" : "h-9"}`}
-      >
-        <span className="min-w-0 text-left">
-          <span className="block truncate">{label}</span>
-          {detail && <span className="block truncate text-[11px] font-normal text-muted-foreground">{detail}</span>}
-        </span>
-        <ChevronDown className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-      </button>
-      {open && (
-        <div role="menu" aria-label={ariaLabel} className="menu-pop absolute top-full left-0 z-40 mt-1 max-h-[min(24rem,calc(100dvh-5rem))] min-w-56 overflow-y-auto rounded-lg border border-border bg-background p-1 shadow-sm">
-          {(groups ?? [{ label: "", options }]).map((group) => (
-            <div key={group.label || "cohorts"}>
-              {group.label && <p className="px-3 pt-2 pb-1 text-[11px] font-medium text-muted-foreground">{group.label}</p>}
-              {group.options.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    onChange(option);
-                    setOpen(false);
-                  }}
-                  className={`block w-full rounded-md px-3 py-2 text-left text-sm hover:bg-muted ${option === value ? "font-medium" : ""}`}
-                >
-                  {format(option)}
-                </button>
-              ))}
-            </div>
-          ))}
-          <button type="button" role="menuitem" onClick={() => { setOpen(false); onSwitch(); }} className="mt-1 block w-full rounded-md border-t border-border px-3 py-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground">
-            {switchLabel}
           </button>
         </div>
       )}
@@ -1456,8 +1410,9 @@ function resolveToday(lectures: PublicLecture[], today: string, day: string) {
   }
   const todays = lectures.filter((lecture) => lecture.date === today);
   if (todays.length > 0) return { lectures: todays, note: undefined };
-  const dated = lectures.map((lecture) => lecture.date).filter((date): date is string => Boolean(date)).sort();
-  const nearest = dated.find((date) => date >= today) ?? dated[0];
+  const dated = lectures.map((lecture) => lecture.date).filter((date): date is string => Boolean(date));
+  const gap = (date: string) => Math.abs(Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`));
+  const nearest = dated.reduce<string | undefined>((best, date) => (best === undefined || gap(date) < gap(best) ? date : best), undefined);
   if (!nearest) return { lectures: [], note: "This sheet has no dated lectures." };
   return {
     lectures: lectures.filter((lecture) => lecture.date === nearest),

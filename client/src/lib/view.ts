@@ -85,6 +85,16 @@ export function isFullOff(lectures: PublicLecture[]) {
   return slots.length > 0 && slots.every((lecture) => lecture.subject === "OFF" && lecture.displayStatus === "cancelled");
 }
 
+/** True for the single row `collapseFullOffDays` folds a whole OFF day into. */
+export function isFoldedOff(lecture: PublicLecture) {
+  return lecture.subject === "OFF" && lecture.id.endsWith("-off");
+}
+
+export function isFoldedOffDay(lectures: PublicLecture[]) {
+  const slots = lectures.filter((lecture) => lecture.kind !== "break");
+  return slots.length > 0 && slots.every(isFoldedOff);
+}
+
 export function collapseFullOffDays(lectures: PublicLecture[]) {
   const collapsed: PublicLecture[] = lectures.filter((lecture) => lecture.kind === "break");
   const groups = new Map<string, PublicLecture[]>();
