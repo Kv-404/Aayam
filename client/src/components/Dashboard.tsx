@@ -802,6 +802,7 @@ export function Dashboard({
                 today={zone.iso}
                 minutes={zone.minutes}
                 showDivision={role === "faculty" && board.showDivision}
+                showFaculty={role === "faculty" && board.showFaculty}
                 note={todayPack.note}
                 meet={meet}
                 onPrevDay={() => navigateDay(-1)}
@@ -810,7 +811,7 @@ export function Dashboard({
             </div>
           </TabsContent>
           <TabsContent value="week" className="rise mt-0">
-            <WeeklyView lectures={weekLectures} showDivision={role === "faculty" && board.showDivision} today={zone.iso} minutes={zone.minutes} meet={meet} />
+            <WeeklyView lectures={weekLectures} showDivision={role === "faculty" && board.showDivision} showFaculty={role === "faculty" && board.showFaculty} today={zone.iso} minutes={zone.minutes} meet={meet} />
           </TabsContent>
           <TabsContent value="updates" className="rise mt-0">
             <RecentChanges

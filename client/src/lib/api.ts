@@ -17,7 +17,10 @@ export interface BootstrapScope {
 }
 
 function applyScope(url: URL, scope?: BootstrapScope) {
-  if (scope?.all) return;
+  if (scope?.all) {
+    url.searchParams.set("all", "1");
+    return;
+  }
   if (scope?.faculty) url.searchParams.set("faculty", scope.faculty);
   else if (scope?.division) url.searchParams.set("division", scope.division);
   else {

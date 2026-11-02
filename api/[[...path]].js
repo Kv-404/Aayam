@@ -3597,13 +3597,24 @@ function createApp(db2, config2, load, options) {
     if (!options?.syncOnRead) return;
     const now = Date.now();
     const intervalMs = config2.syncIntervalSeconds * 1e3;
-    if (filter?.faculty) {
-      const state2 = readSyncState(db2);
-      const age2 = state2.lastSuccessAt ? now - new Date(state2.lastSuccessAt).getTime() : Number.POSITIVE_INFINITY;
-      if (age2 > intervalMs) {
-        await runSync({ db: db2, config: config2, load, loadAll: options?.loadAll });
+    if (filter?.faculty || filter?.all) {
+      if (config2.spreadsheets.every((sheet) => now - (lastSyncBySheet.get(sheet.id) ?? 0) < intervalMs)) return;
+      const markAll = () => {
         for (const sheet of config2.spreadsheets) lastSyncBySheet.set(sheet.id, now);
-      }
+      };
+      const loadAll = options?.loadAll;
+      await runSync({
+        db: db2,
+        config: config2,
+        load: () => {
+          markAll();
+          return load();
+        },
+        loadAll: loadAll ? () => {
+          markAll();
+          return loadAll();
+        } : void 0
+      });
       return;
     }
     const target = sheetForScope(filter ?? {}, config2.spreadsheets);
@@ -3673,7 +3684,7 @@ function createApp(db2, config2, load, options) {
     const faculty = typeof req.query.faculty === "string" ? req.query.faculty.trim() : "";
     const course = typeof req.query.course === "string" ? req.query.course.trim() : "";
     const batch = typeof req.query.batch === "string" ? req.query.batch.trim() : "";
-    await syncIfStale({ division, faculty, course, batch });
+    await syncIfStale({ division, faculty, course, batch, all: req.query.all === "1" });
     res.json(buildBootstrap(db2, config2, /* @__PURE__ */ new Date(), { division, faculty, course, batch }));
   });
   app2.get("/api/calendar.ics", async (req, res) => {

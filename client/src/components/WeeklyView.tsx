@@ -15,12 +15,14 @@ const dayOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Satur
 export function WeeklyView({
   lectures,
   showDivision,
+  showFaculty = false,
   today = "",
   minutes = -1,
   meet,
 }: {
   lectures: PublicLecture[];
   showDivision: boolean;
+  showFaculty?: boolean;
   today?: string;
   minutes?: number;
   meet: MeetAction;
@@ -86,7 +88,7 @@ export function WeeklyView({
                 {[...dayLectures]
                   .sort((a, b) => a.startMinutes - b.startMinutes || a.division.localeCompare(b.division) || a.subject.localeCompare(b.subject))
                   .map((lecture) => (
-                    <PhoneRow key={lecture.id} lecture={lecture} showDivision={showDivision} now={isLive(lecture, today, minutes)} meet={meet} />
+                    <PhoneRow key={lecture.id} lecture={lecture} showDivision={showDivision} showFaculty={showFaculty} now={isLive(lecture, today, minutes)} meet={meet} />
                   ))}
               </ol>
             )}
@@ -212,7 +214,7 @@ export function WeeklyView({
                         <td key={group.dates[0]} className={`px-2 py-2 ${group.dates[0] === today ? "cal-today" : ""}`}>
                           <div className="space-y-2">
                             {group.classes!.map((lecture) => (
-                              <Cell key={lecture.id} lecture={lecture} showDivision={showDivision} now={isLive(lecture, today, minutes)} meet={meet} />
+                              <Cell key={lecture.id} lecture={lecture} showDivision={showDivision} showFaculty={showFaculty} now={isLive(lecture, today, minutes)} meet={meet} />
                             ))}
                           </div>
                         </td>
@@ -265,7 +267,7 @@ function bareTime(label: string) {
   return label.replace(/\s*[AP]M$/i, "").trim();
 }
 
-function PhoneRow({ lecture, showDivision, now, meet }: { lecture: PublicLecture; showDivision: boolean; now: boolean; meet: MeetAction }) {
+function PhoneRow({ lecture, showDivision, showFaculty, now, meet }: { lecture: PublicLecture; showDivision: boolean; showFaculty: boolean; now: boolean; meet: MeetAction }) {
   const { classNameFor } = useColors();
   const cancelled = lecture.displayStatus === "cancelled" && lecture.subject !== "OFF";
   if (lecture.kind === "break") {
@@ -290,13 +292,13 @@ function PhoneRow({ lecture, showDivision, now, meet }: { lecture: PublicLecture
           {now && <NowMark />}
           {cancelled && <span className="shrink-0 text-[11px] font-semibold text-danger">Cancelled</span>}
         </div>
-        <ClassFoot faculty={showDivision ? "" : lecture.faculty} room={lecture.room} cohort={showDivision ? lecture.division : ""} meet={meet} />
+        <ClassFoot faculty={showDivision && !showFaculty ? "" : lecture.faculty} room={lecture.room} cohort={showDivision ? lecture.division : ""} meet={meet} oneLine />
       </div>
     </li>
   );
 }
 
-function Cell({ lecture, showDivision, now, meet }: { lecture: PublicLecture; showDivision: boolean; now: boolean; meet: MeetAction }) {
+function Cell({ lecture, showDivision, showFaculty, now, meet }: { lecture: PublicLecture; showDivision: boolean; showFaculty: boolean; now: boolean; meet: MeetAction }) {
   const { classNameFor } = useColors();
   const cancelled = lecture.displayStatus === "cancelled" && lecture.subject !== "OFF";
   const rescheduled = lecture.displayStatus === "rescheduled";
@@ -313,7 +315,7 @@ function Cell({ lecture, showDivision, now, meet }: { lecture: PublicLecture; sh
           <span className="line-through">{lecture.previous?.startLabel}</span> {lecture.startLabel}
         </p>
       )}
-      <ClassFoot faculty={showDivision ? "" : lecture.faculty} room={lecture.room} cohort={showDivision ? lecture.division : ""} meet={meet} />
+      <ClassFoot faculty={showDivision && !showFaculty ? "" : lecture.faculty} room={lecture.room} cohort={showDivision ? lecture.division : ""} meet={meet} />
       {rescheduled && (
         <div className="mt-1">
           <StatusBadge status={lecture.displayStatus} label={badgeText(lecture.displayStatus, lecture.subject)} />
@@ -323,12 +325,12 @@ function Cell({ lecture, showDivision, now, meet }: { lecture: PublicLecture; sh
   );
 }
 
-function ClassFoot({ faculty, room, cohort = "", meet }: { faculty: string; room: string; cohort?: string; meet: MeetAction }) {
-  const label = cohort ? cohortLabel(cohort) : faculty;
+function ClassFoot({ faculty, room, cohort = "", meet, oneLine = false }: { faculty: string; room: string; cohort?: string; meet: MeetAction; oneLine?: boolean }) {
+  const label = [cohort ? cohortLabel(cohort) : "", faculty].filter(Boolean).join(" · ");
   if (!label && !room.trim()) return null;
   return (
     <div className="mt-1.5 flex items-start justify-between gap-2 text-[13px] leading-snug">
-      {label ? <span className="class-faculty min-w-0 font-medium text-foreground" title={label}>{label}</span> : <span />}
+      {label ? <span className={`class-faculty min-w-0 font-medium text-foreground ${oneLine ? "truncate" : ""}`} title={label}>{label}</span> : <span />}
       {room.trim() && <LectureRoom room={room} action={meet} variant="chip" />}
     </div>
   );

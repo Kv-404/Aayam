@@ -297,19 +297,33 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
 
   const lastSyncBySheet = new Map<string, number>();
 
-  async function syncIfStale(filter?: { division?: string; faculty?: string; course?: string; batch?: string }) {
+  async function syncIfStale(filter?: { division?: string; faculty?: string; course?: string; batch?: string; all?: boolean }) {
     if (!options?.syncOnRead) return;
     const now = Date.now();
     const intervalMs = config.syncIntervalSeconds * 1000;
 
-    // Faculty needs all sheets
-    if (filter?.faculty) {
-      const state = readSyncState(db);
-      const age = state.lastSuccessAt ? now - new Date(state.lastSuccessAt).getTime() : Number.POSITIVE_INFINITY;
-      if (age > intervalMs) {
-        await runSync({ db, config, load, loadAll: options?.loadAll });
+    // Faculty and all-access read every sheet. One student's sheet being fresh says nothing about the rest.
+    if (filter?.faculty || filter?.all) {
+      if (config.spreadsheets.every((sheet) => now - (lastSyncBySheet.get(sheet.id) ?? 0) < intervalMs)) return;
+      // Marked when the download starts, so joining another request's one-sheet sync does not count as all of them.
+      const markAll = () => {
         for (const sheet of config.spreadsheets) lastSyncBySheet.set(sheet.id, now);
-      }
+      };
+      const loadAll = options?.loadAll;
+      await runSync({
+        db,
+        config,
+        load: () => {
+          markAll();
+          return load();
+        },
+        loadAll: loadAll
+          ? () => {
+              markAll();
+              return loadAll();
+            }
+          : undefined,
+      });
       return;
     }
 
@@ -385,7 +399,7 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
     const faculty = typeof req.query.faculty === "string" ? req.query.faculty.trim() : "";
     const course = typeof req.query.course === "string" ? req.query.course.trim() : "";
     const batch = typeof req.query.batch === "string" ? req.query.batch.trim() : "";
-    await syncIfStale({ division, faculty, course, batch });
+    await syncIfStale({ division, faculty, course, batch, all: req.query.all === "1" });
     res.json(buildBootstrap(db, config, new Date(), { division, faculty, course, batch }));
   });
   app.get("/api/calendar.ics", async (req, res) => {

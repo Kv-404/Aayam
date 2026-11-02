@@ -14,6 +14,7 @@ export function TodayView({
   today,
   minutes,
   showDivision,
+  showFaculty = false,
   note,
   meet,
   onPrevDay,
@@ -23,6 +24,7 @@ export function TodayView({
   today: string;
   minutes: number;
   showDivision: boolean;
+  showFaculty?: boolean;
   note?: string;
   meet: MeetAction;
   onPrevDay?: () => void;
@@ -134,7 +136,7 @@ export function TodayView({
                   </div>
                   <div className="flex shrink-0 items-start gap-2">
                     {live && <NowMark />}
-                    {!off && <ClassMeta faculty={showDivision ? "" : item.lecture.faculty} room={item.lecture.room} meet={meet} />}
+                    {!off && <ClassMeta faculty={showDivision && !showFaculty ? "" : item.lecture.faculty} room={item.lecture.room} meet={meet} />}
                   </div>
                 </div>
                 {item.lecture.reason && !off && <p className="mt-1 text-sm">{item.lecture.reason}</p>}

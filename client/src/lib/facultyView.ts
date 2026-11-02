@@ -10,6 +10,8 @@ export interface FacultyBoard {
   label: string;
   badge: "" | "Coordinator" | "All access";
   showDivision: boolean;
+  /** Cards name the teacher too. Set when the grid mixes several teachers across cohorts. */
+  showFaculty: boolean;
   lectures: PublicLecture[];
   calendar: { division?: string; faculty?: string } | null;
   sheet?: CohortChoice;
@@ -92,6 +94,7 @@ export function resolveFacultyView({
       label: signed,
       badge: "",
       showDivision: true,
+      showFaculty: false,
       lectures: ownLectures,
       calendar: signed ? { faculty: signed } : null,
       facultyFilter: signed,
@@ -170,6 +173,7 @@ export function resolveFacultyView({
     label,
     badge: canSeeAll ? "All access" : "Coordinator",
     showDivision,
+    showFaculty: active.kind === "all" || active.kind === "cohorts",
     lectures: viewLectures,
     calendar,
     sheet,
