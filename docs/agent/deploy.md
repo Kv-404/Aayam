@@ -35,6 +35,8 @@ On Vercel, SQLite is `/tmp/timetable.sqlite` and dies on cold start. `syncOnRead
 
 Do not commit PINs, staff emails, Vercel ids, or real Meet links. The repo is public.
 
+`/assets/*` is cached for a year as immutable because Vite hashes those file names. `index.html` still revalidates, so a release shows up on the next load.
+
 ## Changing the sheet
 
 `getConfig` uses `process.env.SPREADSHEET_ID` when it is set, otherwise the hardcoded fallback in `server/src/config.ts`.

@@ -59,7 +59,7 @@ export function TodayView({
               type="button"
               onClick={onPrevDay}
               aria-label="Previous day"
-              className="inline-flex size-7 items-center justify-center rounded-md border border-border/40 bg-muted/30 text-muted-foreground hover:bg-muted hover:text-foreground active:scale-95 transition-all"
+              className="inline-flex size-9 items-center justify-center rounded-md border border-border/40 bg-muted/30 text-muted-foreground hover:bg-muted hover:text-foreground active:scale-95 transition-all"
             >
               <ChevronLeft className="size-3.5" />
             </button>
@@ -67,7 +67,7 @@ export function TodayView({
               type="button"
               onClick={onNextDay}
               aria-label="Next day"
-              className="inline-flex size-7 items-center justify-center rounded-md border border-border/40 bg-muted/30 text-muted-foreground hover:bg-muted hover:text-foreground active:scale-95 transition-all"
+              className="inline-flex size-9 items-center justify-center rounded-md border border-border/40 bg-muted/30 text-muted-foreground hover:bg-muted hover:text-foreground active:scale-95 transition-all"
             >
               <ChevronRight className="size-3.5" />
             </button>
@@ -134,7 +134,7 @@ export function TodayView({
                       </p>
                       {showStatus && <StatusBadge status={item.lecture.displayStatus} label={badgeText(item.lecture.displayStatus, item.lecture.subject)} />}
                     </div>
-                    {showDivision && <p className="text-[11px] text-muted-foreground">{cohortLabel(item.lecture.division)}</p>}
+                    {showDivision && <p className="text-[11px] text-muted-foreground">{showFaculty ? cohortLabel(item.lecture.division) : `${cohortLabel(item.lecture.division)} · ${item.lecture.batch}`}</p>}
                   </div>
                   <div className="flex shrink-0 items-start gap-2">
                     {live && <NowMark />}

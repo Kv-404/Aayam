@@ -7,22 +7,37 @@ export function facultyParts(value: string) {
     .filter(Boolean);
 }
 
-function norm(value: string) {
-  return value.replace(/\s+/g, " ").trim().replace(/\.$/, "").toLowerCase();
+const titles = new Set(["dr", "prof", "mr", "mrs", "ms", "miss", "sir"]);
+
+/** Title and name words, without "(VF)" tags or full stops. */
+function personWords(value: string) {
+  const words = value
+    .toLowerCase()
+    .replace(/\(.*?\)/g, " ")
+    .replace(/\./g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  const title = titles.has(words[0] ?? "") ? words.shift()! : "";
+  return { title, words };
 }
 
-/** Same person, including a trailing initial: "Dr. Aarti P" matches "Dr. Aarti". */
+/**
+ * Same person across sheets, which spell names differently: "Dr. Aarti", "Dr. Aarti P", and
+ * "Dr. Aarti Pardesi". The first name must be written out, and later words must agree or be an initial.
+ */
 export function personMatch(a: string, b: string) {
-  const left = norm(a);
-  const right = norm(b);
-  if (!left || !right) return false;
-  if (left === right) return true;
-  const longer = left.length >= right.length ? left : right;
-  const shorter = left.length >= right.length ? right : left;
-  if (!shorter.includes(" ")) return false;
-  if (!longer.startsWith(shorter)) return false;
-  const rest = longer.slice(shorter.length).trim();
-  return /^[a-z]\.?$/.test(rest);
+  const left = personWords(a);
+  const right = personWords(b);
+  if (left.words.length === 0 || right.words.length === 0) return false;
+  if (left.title && right.title && left.title !== right.title) return false;
+  if (left.words[0] !== right.words[0]) return false;
+  for (let i = 1; i < Math.min(left.words.length, right.words.length); i++) {
+    const x = left.words[i]!;
+    const y = right.words[i]!;
+    const initial = (x.length === 1 && y.startsWith(x)) || (y.length === 1 && x.startsWith(y));
+    if (x !== y && !initial) return false;
+  }
+  return true;
 }
 
 export function lectureMatchesFaculty(cell: string, selected: string) {

@@ -2,7 +2,7 @@ import { useMemo, useState, type MouseEvent } from "react";
 import { cohortLabel, cohortsInYear, type CohortChoice, DEFAULT_COHORT_CHOICES } from "@shared/cohort";
 import { AlertCircle, ArrowLeft, ArrowRight, Check } from "lucide-react";
 import { AayamIcon } from "@/components/AayamLogo";
-import CodeSlots from "@/components/CodeSlots";
+import CodeSlots, { fittedSlotSize } from "@/components/CodeSlots";
 import { ColorSwitch } from "@/components/ColorSwitch";
 import { MeetChoice } from "@/components/MeetLink";
 import { verifyPin } from "@/lib/auth";
@@ -311,7 +311,7 @@ export function HomePage({
                   }
                 }}
                 autoFocus
-                slotSize={46}
+                slotSize={fittedSlotSize()}
                 gap={8}
                 radius={12}
               />

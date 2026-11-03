@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { AlertCircle, ArrowRight, Calendar, Home, Lock } from "lucide-react";
-import CodeSlots from "@/components/CodeSlots";
+import CodeSlots, { fittedSlotSize } from "@/components/CodeSlots";
 import { verifyPin } from "@/lib/auth";
 import {
   isBatchUnlocked,
@@ -187,7 +187,7 @@ export function AccessDenied({
               }}
               onComplete={handlePinComplete}
               autoFocus
-              slotSize={44}
+              slotSize={fittedSlotSize()}
               gap={8}
               radius={12}
             />

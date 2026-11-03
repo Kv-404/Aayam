@@ -3,7 +3,7 @@ import { cohortChoices, cohortLabel, lectureInCohort, type CohortChoice } from "
 import { findCoordinator } from "@shared/coordinators";
 import { changeMatchesFaculty, listFacultyNames } from "@shared/faculty";
 import { Bell, CalendarPlus, Check, ChevronDown, Download, FileSpreadsheet, LogOut, RefreshCw, Settings, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { FacultyLoginModal } from "@/components/FacultyLoginModal";
 import { FacultyScopeMenu } from "@/components/FacultyScopeMenu";
 import { fetchCurrentAuth, logoutFaculty } from "@/lib/auth";
@@ -60,6 +60,7 @@ export function Dashboard({
   onMeet,
   onReset,
   onScopeChange,
+  scopeAll = false,
 }: {
   data: BootstrapResponse;
   now: Date;
@@ -75,6 +76,7 @@ export function Dashboard({
   onMeet: (action: MeetAction) => void;
   onReset?: () => void;
   onScopeChange?: (scope: { division?: string; faculty?: string; all?: boolean }) => void;
+  scopeAll?: boolean;
 }) {
   const [ready, setReady] = useState(() => readSetup() && hasChosenRole());
   const [role, setRole] = useState<ViewerRole>(readRole);
@@ -99,8 +101,9 @@ export function Dashboard({
       faculty: "",
     };
   });
-  // A reload opens today's schedule in the current week. Neither choice is remembered.
-  const [view, setView] = useState("today");
+  // A reload opens the current week, and neither choice is remembered. Students land on today.
+  // Teachers land on the week, because one day can hide every other batch they teach.
+  const [view, setView] = useState(() => (readRole() === "faculty" ? "week" : "today"));
   const [weekId, setWeekId] = useState("live");
   const [notifyHintClosed, setNotifyHintClosed] = useState(readNotifyHintClosed);
   const [barMenuOpen, setBarMenuOpen] = useState(false);
@@ -185,9 +188,10 @@ export function Dashboard({
   }, []);
 
   useEffect(() => {
-    if (role !== "faculty" || !board.wide || !selectedFaculty) return;
+    // A wide view filters every year on the client, so any narrower download would hide lectures.
+    if (role !== "faculty" || !board.wide || !selectedFaculty || scopeAll) return;
     onScopeChange?.({ all: true, faculty: selectedFaculty });
-  }, [role, board.wide, selectedFaculty]);
+  }, [role, board.wide, selectedFaculty, scopeAll]);
 
   useEffect(() => {
     const nextRole = readRole();
@@ -254,7 +258,19 @@ export function Dashboard({
   const dayLectures = applyFilters(foldedPool, effective);
   const weekLectures = applyFilters(foldedPool, effective, { ignoreDay: true });
   const pinnedDay = filters.day || (selectedWeek ? days[0] ?? "" : "");
-  const todayPack = useMemo(() => resolveToday(dayLectures, zone.iso, pinnedDay), [dayLectures, zone.iso, pinnedDay]);
+  const todayPack = useMemo(
+    () => resolveToday(dayLectures, zone.iso, pinnedDay, data.weekStart, data.weekEnd),
+    [dayLectures, zone.iso, pinnedDay, data.weekStart, data.weekEnd],
+  );
+  const batchCounts = useMemo(() => {
+    if (role !== "faculty" || !board.facultyFilter || filters.division) return [];
+    const counts = new Map<string, number>();
+    for (const lecture of facultyVisible) {
+      if (lecture.kind !== "lecture") continue;
+      counts.set(lecture.batch, (counts.get(lecture.batch) ?? 0) + 1);
+    }
+    return [...counts].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [role, board.facultyFilter, filters.division, facultyVisible]);
   const requestedDay = filters.day || todayPack.lectures[0]?.weekday || zone.weekday;
   const activeDay = days.includes(requestedDay) ? requestedDay : days[0] ?? "";
   const liveScope = !selectedWeek
@@ -317,6 +333,13 @@ export function Dashboard({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [view, filters.day, zone.weekday, days, activeDay]);
+
+  // A new view or day starts at its top. Runs before the phone week view scrolls itself to today.
+  const shownOnce = useRef(false);
+  useLayoutEffect(() => {
+    if (shownOnce.current) window.scrollTo({ top: 0, behavior: "instant" });
+    shownOnce.current = true;
+  }, [view, filters.day, weekId]);
 
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
@@ -382,6 +405,7 @@ export function Dashboard({
     const person = findCoordinator(email, facultyName);
     onScopeChange?.(isAllAccess || person ? { all: true, faculty: facultyName } : { faculty: facultyName });
     setFilters((current) => ({ ...current, division: "", day: "", subject: "", faculty: "", room: "", query: "", status: "all" }));
+    setView("week");
     setLoginModalOpen(false);
   }
 
@@ -468,7 +492,7 @@ export function Dashboard({
     }));
     setReady(true);
     setFadeIn(true);
-    setView("today");
+    setView(choice.role === "faculty" ? "week" : "today");
   }
 
   function patch(partial: Partial<Filters>) {
@@ -614,7 +638,7 @@ export function Dashboard({
     if (reminders.notice) reminders.dismiss();
     else notifications.dismiss();
   };
-  const floatBottom = view === "today" ? "bottom-44" : "bottom-28";
+  const floatBottom = view === "today" ? "bottom-[calc(6.25rem+env(safe-area-inset-bottom))]" : "bottom-[calc(3.75rem+env(safe-area-inset-bottom))]";
   const dismissNotifyHint = () => {
     closeNotifyHint();
     setNotifyHintClosed(true);
@@ -648,7 +672,7 @@ export function Dashboard({
         data-open={menuOpen ? "true" : undefined}
         className={`fixed inset-0 z-25 bg-background/40 backdrop-blur-sm transition-[opacity,visibility] duration-200 ${menuOpen ? "visible opacity-100" : "invisible opacity-0"}`}
       />
-      <header className="sticky top-0 z-30 border-b border-border bg-background/90 backdrop-blur-md">
+      <header className="sticky top-0 z-30 short:relative border-b border-border bg-background/90 backdrop-blur-md">
         <div className="flex flex-col gap-2 px-3 py-2.5 sm:gap-3 sm:px-6 sm:py-3.5">
           {/* Row 1: Brand (left), Desktop Status (center), Toolbar (right) - NEVER wraps on mobile */}
           <div className="flex items-center justify-between gap-1.5 sm:gap-3 w-full min-w-0">
@@ -743,14 +767,16 @@ export function Dashboard({
                   target="_blank"
                   rel="noreferrer"
                   aria-label="Open the sheet"
-                  className="inline-flex size-8 sm:size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                  className="hidden size-9 sm:inline-flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
                 >
                   <FileSpreadsheet className="size-4" aria-hidden="true" />
                 </a>
-                <IconButton label={pending ? "Refreshing" : "Refresh"} onClick={onRefresh} disabled={pending} testId="refresh-button">
-                  <RefreshCw className={`size-4 ${pending ? "animate-spin" : ""}`} aria-hidden="true" />
-                </IconButton>
-                <AppearanceMenu theme={theme} colors={colors} bold={bold} meet={meet} subjects={subjects} notifications={notifications.optedIn} onTheme={onTheme} onColors={onColors} onBold={onBold} onMeet={onMeet} onEnable={() => void notifications.enable()} onDisable={notifications.disable} role={role} onStudentLogout={handleStudentLogout} onFacultyLogout={handleFacultyLogout} savedWeeks={savedWeeks} weekId={selectedWeek ? selectedWeek.id : "live"} onWeek={chooseWeek} />
+                <div className="hidden sm:block">
+                  <IconButton label={pending ? "Refreshing" : "Refresh"} onClick={onRefresh} disabled={pending} testId="refresh-button">
+                    <RefreshCw className={`size-4 ${pending ? "animate-spin" : ""}`} aria-hidden="true" />
+                  </IconButton>
+                </div>
+                <AppearanceMenu theme={theme} colors={colors} bold={bold} meet={meet} subjects={subjects} notifications={notifications.optedIn} onTheme={onTheme} onColors={onColors} onBold={onBold} onMeet={onMeet} onEnable={() => void notifications.enable()} onDisable={notifications.disable} role={role} sheetUrl={sheetUrl} pending={pending} onRefresh={onRefresh} onStudentLogout={handleStudentLogout} onFacultyLogout={handleFacultyLogout} savedWeeks={savedWeeks} weekId={selectedWeek ? selectedWeek.id : "live"} onWeek={chooseWeek} />
               </div>
             </div>
           </div>
@@ -776,7 +802,7 @@ export function Dashboard({
         </div>
       </header>
 
-      <main id="timetable" className={`flex-1 flex flex-col px-4 py-4 ${view === "today" ? "pb-44" : "pb-28"} sm:px-6 sm:py-5 sm:pb-5`}>
+      <main id="timetable" className={`flex-1 flex flex-col px-4 py-4 ${view === "today" ? "pb-[calc(7rem+env(safe-area-inset-bottom))]" : "pb-[calc(4.5rem+env(safe-area-inset-bottom))]"} sm:px-6 sm:py-5 sm:pb-5`}>
         <h1 className="sr-only">{role === "faculty" ? board.label : cohortLabel(selected)} timetable</h1>
         <p data-testid="sync-status" role={failing ? "alert" : "status"} className={`text-sm ${failing ? "mb-3 text-warning" : "sr-only"}`}>
           {failing ? data.sync.lastError || "Could not refresh. The last timetable is still shown." : syncedLabel(data.sync.lastSuccessAt, now)}
@@ -790,6 +816,16 @@ export function Dashboard({
             <button type="button" className="text-xs font-medium text-foreground underline-offset-4 hover:underline" onClick={() => chooseWeek("live")}>
               Back to this week
             </button>
+          </div>
+        )}
+        {view !== "updates" && batchCounts.length > 0 && (
+          <div data-testid="batch-summary" className="mb-3 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+            <span>{selectedWeek ? "That week:" : "This week:"}</span>
+            {batchCounts.map(([batch, count]) => (
+              <span key={batch} className="rounded-full bg-muted px-2 py-0.5 font-medium text-foreground">
+                {batch} · {count} {count === 1 ? "class" : "classes"}
+              </span>
+            ))}
           </div>
         )}
         <div className="flex-1">
@@ -851,9 +887,11 @@ export function Dashboard({
       </main>
       <div className={`fixed inset-x-0 bottom-0 ${barMenuOpen ? "z-40" : "z-20"} border-t border-border bg-background/95 backdrop-blur-md sm:hidden pb-[env(safe-area-inset-bottom)]`}>
         <div className="flex flex-col gap-2 px-3 py-2">
-          {weekControl(true)}
-          {view === "today" && dayControl("w-full")}
-          {viewControl("w-full")}
+          {view === "today" && <div className="short:hidden">{dayControl("w-full")}</div>}
+          <div className="flex items-center gap-2">
+            {weekControl(true)}
+            <div className="min-w-0 flex-1">{viewControl("w-full")}</div>
+          </div>
         </div>
       </div>
       {notice && (
@@ -872,10 +910,10 @@ export function Dashboard({
         <div
           role="status"
           data-testid="notify-hint"
-          className={`menu-pop-up fixed inset-x-3 ${floatBottom} z-50 flex items-center gap-2 rounded-lg border border-border bg-background py-1.5 pr-1 pl-3 text-xs shadow-lg sm:hidden`}
+          className={`menu-pop-up fixed inset-x-3 ${floatBottom} z-50 flex items-center gap-2 rounded-lg border border-border bg-background py-1 pr-1 pl-3 text-xs shadow-lg short:hidden sm:hidden`}
         >
           <Bell className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          <p className="min-w-0 flex-1 truncate text-muted-foreground">Get told when a class changes</p>
+          <p className="min-w-0 flex-1 truncate text-muted-foreground">Get class change alerts</p>
           <button
             type="button"
             className="shrink-0 rounded-md px-2 py-1 font-semibold text-foreground hover:bg-muted"
@@ -886,7 +924,7 @@ export function Dashboard({
           >
             Turn on
           </button>
-          <button type="button" aria-label="Dismiss" className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground" onClick={dismissNotifyHint}>
+          <button type="button" aria-label="Dismiss" className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground" onClick={dismissNotifyHint}>
             <X className="size-3.5" aria-hidden="true" />
           </button>
         </div>
@@ -999,7 +1037,7 @@ function CalendarMenu({ scope, label }: { scope: { division?: string; faculty?: 
         <CalendarPlus className="size-4" aria-hidden="true" />
       </button>
       {open && (
-        <div role="menu" aria-label="Add week" className="menu-pop absolute top-full right-0 z-40 mt-1 w-56 rounded-lg border border-border bg-background p-1 shadow-sm">
+        <div role="menu" aria-label="Add week" className="menu-pop absolute top-full right-0 z-40 mt-1 w-56 rounded-lg border border-border bg-background p-1 shadow-sm max-sm:fixed max-sm:inset-x-3 max-sm:top-12 max-sm:mt-0 max-sm:w-auto">
           <a role="menuitem" data-testid="calendar-download" href={calendarFeedUrl(scope, true)} download={file} onClick={() => setOpen(false)} className="flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted">
             <Download className="size-4" aria-hidden="true" />
             Download file
@@ -1062,6 +1100,9 @@ function AppearanceMenu({
   subjects,
   notifications,
   role,
+  sheetUrl,
+  pending,
+  onRefresh,
   onTheme,
   onColors,
   onBold,
@@ -1081,6 +1122,9 @@ function AppearanceMenu({
   subjects: string[];
   notifications: boolean;
   role?: ViewerRole | "";
+  sheetUrl: string;
+  pending: boolean;
+  onRefresh: () => void;
   onTheme: (theme: ThemeId) => void;
   onColors: (on: boolean) => void;
   onBold: (on: boolean) => void;
@@ -1118,6 +1162,16 @@ function AppearanceMenu({
       </IconButton>
       {open && (
         <div role="menu" aria-label="Settings" className="menu-pop absolute top-full right-0 z-40 mt-1 max-h-[min(32rem,calc(100dvh-5rem))] w-[min(22rem,calc(100vw-1.5rem))] overflow-y-auto rounded-lg border border-border bg-background p-3 shadow-md">
+          <div className="mb-3 grid grid-cols-2 gap-1.5 border-b border-border pb-3 sm:hidden">
+            <button type="button" data-testid="refresh-menu" disabled={pending} onClick={onRefresh} className="flex items-center justify-center gap-1.5 rounded-md border border-border px-2.5 py-2 text-xs hover:bg-muted disabled:opacity-50">
+              <RefreshCw className={`size-3.5 ${pending ? "animate-spin" : ""}`} aria-hidden="true" />
+              {pending ? "Refreshing" : "Refresh"}
+            </button>
+            <a href={sheetUrl} target="_blank" rel="noreferrer" data-testid="sheet-menu" className="flex items-center justify-center gap-1.5 rounded-md border border-border px-2.5 py-2 text-xs hover:bg-muted">
+              <FileSpreadsheet className="size-3.5" aria-hidden="true" />
+              Open sheet
+            </a>
+          </div>
           <p className="text-muted-foreground font-mono text-[11px] tracking-[0.22em] uppercase">Theme</p>
           <div className="mt-2 grid grid-cols-2 gap-1.5">
             {themes.map((item) => {
@@ -1284,7 +1338,7 @@ function WeekMenu({
   const options = [{ id: "live", label: liveLabel }, ...weeks.map((week) => ({ id: week.id, label: `${formatShort(week.start)} – ${formatShort(week.end)}` }))];
   const current = options.find((option) => option.id === value) ?? options[0]!;
   return (
-    <div ref={menuRef} className="relative shrink-0 self-start">
+    <div ref={menuRef} className="relative shrink-0">
       <button
         type="button"
         aria-label={`Week, ${current.label}`}
@@ -1368,10 +1422,10 @@ function StudentCohortMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((prev) => !prev)}
-        className="inline-flex max-w-full items-center gap-1 rounded-md px-1 sm:px-1.5 py-1 text-sm font-medium hover:bg-muted/50 transition-colors"
+        className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-md px-1 sm:px-1.5 py-1.5 text-sm font-medium hover:bg-muted/50 transition-colors"
       >
         <span className="min-w-0 text-left">
-          <span className="block truncate max-w-[85px] xs:max-w-[130px] sm:max-w-[200px] font-semibold text-foreground text-xs sm:text-sm">
+          <span className="block truncate sm:max-w-[200px] font-semibold text-foreground text-xs sm:text-sm">
             {selected ? cohortLabel(selected.division) : "Cohort"}
           </span>
           {selected && (
@@ -1383,7 +1437,7 @@ function StudentCohortMenu({
         <ChevronDown className="size-3 sm:size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       </button>
       {open && (
-        <div role="menu" aria-label="Cohorts in batch" className="menu-pop absolute top-full left-0 z-40 mt-1 max-h-[min(24rem,calc(100dvh-5rem))] min-w-56 overflow-y-auto rounded-lg border border-border bg-background p-1 shadow-sm">
+        <div role="menu" aria-label="Cohorts in batch" className="menu-pop absolute top-full left-0 z-40 mt-1 max-h-[min(24rem,calc(100dvh-5rem))] min-w-56 overflow-y-auto rounded-lg border border-border bg-background p-1 shadow-sm max-sm:fixed max-sm:inset-x-3 max-sm:top-12 max-sm:mt-0">
           <div className="px-3 py-1.5 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider border-b border-border mb-1">
             {selected ? `${selected.course} · ${selected.batch}` : "Your Batch"}
           </div>
@@ -1523,7 +1577,7 @@ function nextClass(lectures: PublicLecture[], today: string, minutes: number) {
   );
 }
 
-function resolveToday(lectures: PublicLecture[], today: string, day: string) {
+function resolveToday(lectures: PublicLecture[], today: string, day: string, weekStart: string | null, weekEnd: string | null) {
   if (day) {
     return { lectures: lectures.filter((lecture) => lecture.weekday === day), note: undefined as string | undefined };
   }
@@ -1533,6 +1587,14 @@ function resolveToday(lectures: PublicLecture[], today: string, day: string) {
   const gap = (date: string) => Math.abs(Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`));
   const nearest = dated.reduce<string | undefined>((best, date) => (best === undefined || gap(date) < gap(best) ? date : best), undefined);
   if (!nearest) return { lectures: [], note: "This sheet has no dated lectures." };
+  // Inside the published week, an empty today just means no class for this person or cohort.
+  if (weekStart && weekEnd && today >= weekStart && today <= weekEnd) {
+    const next = dated.filter((date) => date > today).sort()[0];
+    return {
+      lectures: lectures.filter((lecture) => lecture.date === (next ?? nearest)),
+      note: next ? "No classes today. Showing the next day with classes." : "No more classes this week. Showing the last day with classes.",
+    };
+  }
   return {
     lectures: lectures.filter((lecture) => lecture.date === nearest),
     note: "Today is outside the dates in the sheet. Showing the nearest day.",

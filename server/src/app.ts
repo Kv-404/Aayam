@@ -93,12 +93,10 @@ function buildBootstrap(
     return cohortLabel(a.division).localeCompare(cohortLabel(b.division));
   });
 
-  const parsedFaculties = listFacultyNames(allLectures.filter((lecture) => lecture.kind !== "break").map((lecture) => lecture.faculty));
-  const seenFaculties = new Set(parsedFaculties.map((f) => f.toLowerCase()));
-  const faculties = [
-    ...parsedFaculties,
-    ...DEFAULT_FACULTY_NAMES.filter((f) => !seenFaculties.has(f.toLowerCase())),
-  ].sort((a, b) => a.localeCompare(b));
+  const faculties = listFacultyNames([
+    ...allLectures.filter((lecture) => lecture.kind !== "break").map((lecture) => lecture.faculty),
+    ...DEFAULT_FACULTY_NAMES,
+  ]);
 
   const scopeOf = (rows: PublicLecture[]) => {
     if (filter?.faculty) {
