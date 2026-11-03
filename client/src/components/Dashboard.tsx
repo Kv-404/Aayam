@@ -60,6 +60,7 @@ export function Dashboard({
   onMeet,
   onReset,
   onScopeChange,
+  scopeAll = false,
 }: {
   data: BootstrapResponse;
   now: Date;
@@ -75,6 +76,7 @@ export function Dashboard({
   onMeet: (action: MeetAction) => void;
   onReset?: () => void;
   onScopeChange?: (scope: { division?: string; faculty?: string; all?: boolean }) => void;
+  scopeAll?: boolean;
 }) {
   const [ready, setReady] = useState(() => readSetup() && hasChosenRole());
   const [role, setRole] = useState<ViewerRole>(readRole);
@@ -185,9 +187,10 @@ export function Dashboard({
   }, []);
 
   useEffect(() => {
-    if (role !== "faculty" || !board.wide || !selectedFaculty) return;
+    // A wide view filters every year on the client, so any narrower download would hide lectures.
+    if (role !== "faculty" || !board.wide || !selectedFaculty || scopeAll) return;
     onScopeChange?.({ all: true, faculty: selectedFaculty });
-  }, [role, board.wide, selectedFaculty]);
+  }, [role, board.wide, selectedFaculty, scopeAll]);
 
   useEffect(() => {
     const nextRole = readRole();

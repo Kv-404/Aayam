@@ -1,6 +1,6 @@
 import type { PublicLecture } from "@shared/types";
 import { cohortLabel } from "@shared/cohort";
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useMemo, useRef } from "react";
 import { StatusBadge, badgeText } from "@/components/StatusBadge";
 import { NowMark } from "@/components/TodayView";
 import { useColors } from "@/lib/colorState";
@@ -33,6 +33,16 @@ export function WeeklyView({
   const todayBlock = useRef<HTMLDivElement>(null);
   const days = [...new Set(lectures.map((lecture) => lecture.date).filter((date): date is string => Boolean(date)))].sort((a, b) => a.localeCompare(b));
   const dayKey = days.join("|");
+  const byDate = useMemo(() => {
+    const groups = new Map<string, PublicLecture[]>();
+    for (const lecture of lectures) {
+      if (!lecture.date) continue;
+      const group = groups.get(lecture.date);
+      if (group) group.push(lecture);
+      else groups.set(lecture.date, [lecture]);
+    }
+    return groups;
+  }, [lectures]);
   useEffect(() => {
     const root = scroller.current;
     if (!root) return;
@@ -63,7 +73,7 @@ export function WeeklyView({
   if (days.length === 0) {
     return <p className="py-8 text-sm text-muted-foreground">No dated lectures match these filters.</p>;
   }
-  const forDay = (date: string) => lectures.filter((lecture) => lecture.date === date);
+  const forDay = (date: string) => byDate.get(date) ?? [];
   const offDay = (date: string) => isFoldedOffDay(forDay(date));
   // Full-day OFF cards span the first slot through the last. Their start must not label a normal class row.
   // Rows are keyed on start and end, so a class that ends at another time gets its own correct label.
@@ -269,7 +279,8 @@ function bareTime(label: string) {
   return label.replace(/\s*[AP]M$/i, "").trim();
 }
 
-function PhoneRow({ lecture, showDivision, showFaculty, now, meet }: { lecture: PublicLecture; showDivision: boolean; showFaculty: boolean; now: boolean; meet: MeetAction }) {
+// All classes can draw hundreds of cards, and the clock ticks every 15 seconds. Only a card whose props changed repaints.
+const PhoneRow = memo(function PhoneRow({ lecture, showDivision, showFaculty, now, meet }: { lecture: PublicLecture; showDivision: boolean; showFaculty: boolean; now: boolean; meet: MeetAction }) {
   const { classNameFor } = useColors();
   const cancelled = lecture.displayStatus === "cancelled" && lecture.subject !== "OFF";
   if (lecture.kind === "break") {
@@ -298,9 +309,9 @@ function PhoneRow({ lecture, showDivision, showFaculty, now, meet }: { lecture: 
       </div>
     </li>
   );
-}
+});
 
-function Cell({ lecture, showDivision, showFaculty, now, meet }: { lecture: PublicLecture; showDivision: boolean; showFaculty: boolean; now: boolean; meet: MeetAction }) {
+const Cell = memo(function Cell({ lecture, showDivision, showFaculty, now, meet }: { lecture: PublicLecture; showDivision: boolean; showFaculty: boolean; now: boolean; meet: MeetAction }) {
   const { classNameFor } = useColors();
   const cancelled = lecture.displayStatus === "cancelled" && lecture.subject !== "OFF";
   const rescheduled = lecture.displayStatus === "rescheduled";
@@ -325,7 +336,7 @@ function Cell({ lecture, showDivision, showFaculty, now, meet }: { lecture: Publ
       )}
     </div>
   );
-}
+});
 
 function ClassFoot({ faculty, room, cohort = "", meet, oneLine = false }: { faculty: string; room: string; cohort?: string; meet: MeetAction; oneLine?: boolean }) {
   const label = [cohort ? cohortLabel(cohort) : "", faculty].filter(Boolean).join(" · ");

@@ -211,10 +211,24 @@ function usePreferences() {
 function useNow() {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 15000);
-    return () => window.clearInterval(timer);
+    // A hidden tab has nothing to repaint. Coming back corrects the clock at once.
+    const tick = () => {
+      if (!document.hidden) setNow(new Date());
+    };
+    const timer = window.setInterval(tick, 15000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+    };
   }, []);
   return now;
+}
+
+/** What a signed-in teacher reads: every sheet for a wide view, or every lecture under their name. */
+function facultyReadScope(name: string): BootstrapScope {
+  const wide = readCanSeeAllFaculty() || Boolean(findCoordinator(readFacultyEmail(), name));
+  return wide ? { all: true, faculty: name } : { faculty: name };
 }
 
 export function App() {
@@ -282,9 +296,7 @@ export function App() {
     const role = readRole();
     if (role === "faculty") {
       const f = readStoredFaculty();
-      if (!f) return {};
-      const wide = readCanSeeAllFaculty() || Boolean(findCoordinator(readFacultyEmail(), f));
-      return wide ? { all: true, faculty: f } : { faculty: f };
+      return f ? facultyReadScope(f) : {};
     }
     const c = readStoredCohort();
     return c ? { division: c } : {};
@@ -354,14 +366,13 @@ export function App() {
       const activeChoices =
         queryClient.getQueryData<any>(["bootstrap", scope])?.choices ?? DEFAULT_COHORT_CHOICES;
       const parsed = readScopeFromUrl(activeChoices);
-      if (parsed) {
-        if (parsed.role === "faculty" && parsed.scope.faculty) {
-          const stored = readStoredFaculty();
-          if (readRole() === "faculty" && stored) {
-            setScope({ faculty: stored });
-            setConfigured(true);
-          }
-        } else if (parsed.scope.division) {
+      // Back or forward must not narrow a teacher to one cohort or one name.
+      const teacher = readRole() === "faculty" ? readStoredFaculty() : "";
+      if (parsed && teacher) {
+        setScope(facultyReadScope(teacher));
+        setConfigured(true);
+      } else if (parsed) {
+        if (parsed.scope.division) {
           const matched = parsed.matchedCohort ?? slugToCohort(parsed.scope.division, activeChoices);
           if (matched && isBatchUnlocked(matched.course, matched.batch)) {
             saveCohort(parsed.scope.division);
@@ -640,6 +651,7 @@ export function App() {
         onMeet={preferences.chooseMeet}
         onReset={handleReset}
         onScopeChange={handleScopeChange}
+        scopeAll={Boolean(scope.all)}
       />
     </ColorProvider>
   )];

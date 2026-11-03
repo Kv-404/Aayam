@@ -15,10 +15,11 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ["react", "react-dom", "@tanstack/react-query"],
-          motion: ["motion"],
-          icons: ["lucide-react"],
+        // Library code stays in its own files, so a release only re-downloads the app chunk.
+        manualChunks(id) {
+          if (/node_modules\/(react|react-dom|scheduler|@tanstack)\//.test(id)) return "vendor";
+          if (/node_modules\/(motion|motion-dom|motion-utils|framer-motion)\//.test(id)) return "motion";
+          if (/node_modules\/lucide-react\//.test(id)) return "icons";
         },
       },
     },
