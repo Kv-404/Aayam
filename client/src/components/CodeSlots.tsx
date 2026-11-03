@@ -24,6 +24,12 @@ const firstEmptyOf = (slots: string[]) => {
 };
 const isFull = (slots: string[]) => slots.every(Boolean);
 
+/** The largest slot that keeps six slots inside a padded card on this screen. */
+export function fittedSlotSize() {
+  if (typeof window === 'undefined') return 46;
+  return Math.min(46, Math.floor((window.innerWidth - 128) / 6));
+}
+
 export interface CodeSlotsProps {
   length?: number;
   value?: string;

@@ -70,7 +70,7 @@ There is also a row-based reader for a tab that has subject/faculty/room columns
 `shared/faculty.ts`:
 
 - Split a cell on `&`, `,`, `/`, or `and`.
-- `personMatch` treats a trailing initial as the same person (`Dr. Aarti P` and `Dr. Aarti`). A shorter name must contain a space, so `Prof. H` does not match `Prof. Harshal`.
+- `personMatch` ignores `(VF)` tags and full stops. It matches `Dr. Aarti`, `Dr. Aarti P`, and `Dr. Aarti Pardesi` as one person, because sheets spell names differently and `faculty_directory` may hold the full name. The first name must be written out, so `Prof. H` does not match `Prof. Harshal`. Later words must agree or be an initial, and two different titles never match.
 - `listFacultyNames` shows one row per person and keeps the longer form.
 - `lectureMatchesFaculty` is what the grid and `/api/calendar.ics?faculty=` both use.
 - `changeMatchesFaculty` keeps an update when the lecture id is still theirs, or the previous/next faculty field matches. A room change often has no faculty on the event, so the id check matters.

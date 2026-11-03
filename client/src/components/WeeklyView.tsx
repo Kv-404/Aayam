@@ -89,7 +89,7 @@ export function WeeklyView({
         const weekday = dayLectures[0]?.weekday ?? "";
         const off = offDay(date);
         return (
-          <section key={date} ref={date === today ? todayBlock : undefined} className={`mb-6 ${date === today ? "scroll-mt-36" : ""}`}>
+          <section key={date} ref={date === today ? todayBlock : undefined} className={`mb-6 ${date === today ? "scroll-mt-24 short:scroll-mt-2" : ""}`}>
             <h2 className="flex items-center gap-2 border-b border-border bg-background py-2">
               <span className={`text-base tracking-tight ${date === today ? "font-bold" : "font-semibold"} ${off ? "text-danger" : ""}`}>{off ? `${weekday} Off` : weekday.slice(0, 3)}</span>
               {!off && <span className={`text-sm ${date === today ? "font-semibold text-foreground" : "text-muted-foreground"}`}>{formatCalendarDate(date).replace(/^[A-Za-z]{3},?\s*/, "")}</span>}
@@ -305,7 +305,7 @@ const PhoneRow = memo(function PhoneRow({ lecture, showDivision, showFaculty, no
           {now && <NowMark />}
           {cancelled && <span className="shrink-0 text-[11px] font-semibold text-danger">Cancelled</span>}
         </div>
-        <ClassFoot faculty={showDivision && !showFaculty ? "" : lecture.faculty} room={lecture.room} cohort={showDivision ? lecture.division : ""} meet={meet} oneLine />
+        <ClassFoot faculty={showDivision && !showFaculty ? "" : lecture.faculty} room={lecture.room} cohort={showDivision ? lecture.division : ""} meet={meet} oneLine batch={showDivision && !showFaculty ? lecture.batch : ""} />
       </div>
     </li>
   );
@@ -328,7 +328,7 @@ const Cell = memo(function Cell({ lecture, showDivision, showFaculty, now, meet 
           <span className="line-through">{lecture.previous?.startLabel}</span> {lecture.startLabel}
         </p>
       )}
-      <ClassFoot faculty={showDivision && !showFaculty ? "" : lecture.faculty} room={lecture.room} cohort={showDivision ? lecture.division : ""} meet={meet} />
+      <ClassFoot faculty={showDivision && !showFaculty ? "" : lecture.faculty} room={lecture.room} cohort={showDivision ? lecture.division : ""} meet={meet} batch={showDivision && !showFaculty ? lecture.batch : ""} />
       {rescheduled && (
         <div className="mt-1">
           <StatusBadge status={lecture.displayStatus} label={badgeText(lecture.displayStatus, lecture.subject)} />
@@ -338,8 +338,8 @@ const Cell = memo(function Cell({ lecture, showDivision, showFaculty, now, meet 
   );
 });
 
-function ClassFoot({ faculty, room, cohort = "", meet, oneLine = false }: { faculty: string; room: string; cohort?: string; meet: MeetAction; oneLine?: boolean }) {
-  const label = [cohort ? cohortLabel(cohort) : "", faculty].filter(Boolean).join(" · ");
+function ClassFoot({ faculty, room, cohort = "", meet, oneLine = false, batch = "" }: { faculty: string; room: string; cohort?: string; meet: MeetAction; oneLine?: boolean; batch?: string }) {
+  const label = [cohort ? cohortLabel(cohort) : "", batch, faculty].filter(Boolean).join(" · ");
   if (!label && !room.trim()) return null;
   return (
     <div className="mt-1.5 flex items-start justify-between gap-2 text-[13px] leading-snug">

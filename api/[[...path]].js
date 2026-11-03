@@ -184,11 +184,11 @@ function parseSheetEntry(entry) {
   return { id, course, batch };
 }
 function envIdForDivision(division) {
-  const norm2 = division.toUpperCase().replace(/[^A-Z0-9]/g, "_").replace(/_+/g, "_");
+  const norm = division.toUpperCase().replace(/[^A-Z0-9]/g, "_").replace(/_+/g, "_");
   const candidates = [
-    `SPREADSHEET_${norm2}`,
-    `SPREADSHEET_ID_${norm2}`,
-    `SPREADSHEET_URL_${norm2}`
+    `SPREADSHEET_${norm}`,
+    `SPREADSHEET_ID_${norm}`,
+    `SPREADSHEET_URL_${norm}`
   ];
   for (const key of candidates) {
     const val = process.env[key]?.trim();
@@ -776,20 +776,25 @@ function icsText(value) {
 function facultyParts(value) {
   return value.split(/\s*(?:&|,|\/|\band\b)\s*/i).map((part) => part.replace(/\s+/g, " ").trim()).filter(Boolean);
 }
-function norm(value) {
-  return value.replace(/\s+/g, " ").trim().replace(/\.$/, "").toLowerCase();
+var titles = /* @__PURE__ */ new Set(["dr", "prof", "mr", "mrs", "ms", "miss", "sir"]);
+function personWords(value) {
+  const words = value.toLowerCase().replace(/\(.*?\)/g, " ").replace(/\./g, " ").split(/\s+/).filter(Boolean);
+  const title = titles.has(words[0] ?? "") ? words.shift() : "";
+  return { title, words };
 }
 function personMatch(a, b) {
-  const left = norm(a);
-  const right = norm(b);
-  if (!left || !right) return false;
-  if (left === right) return true;
-  const longer = left.length >= right.length ? left : right;
-  const shorter = left.length >= right.length ? right : left;
-  if (!shorter.includes(" ")) return false;
-  if (!longer.startsWith(shorter)) return false;
-  const rest = longer.slice(shorter.length).trim();
-  return /^[a-z]\.?$/.test(rest);
+  const left = personWords(a);
+  const right = personWords(b);
+  if (left.words.length === 0 || right.words.length === 0) return false;
+  if (left.title && right.title && left.title !== right.title) return false;
+  if (left.words[0] !== right.words[0]) return false;
+  for (let i = 1; i < Math.min(left.words.length, right.words.length); i++) {
+    const x = left.words[i];
+    const y = right.words[i];
+    const initial = x.length === 1 && y.startsWith(x) || y.length === 1 && x.startsWith(y);
+    if (x !== y && !initial) return false;
+  }
+  return true;
 }
 function lectureMatchesFaculty(cell, selected) {
   const wanted = facultyParts(selected);
@@ -3415,12 +3420,10 @@ function buildBootstrap(db2, config2, now = /* @__PURE__ */ new Date(), filter) 
     if (batch !== 0) return batch;
     return cohortLabel(a.division).localeCompare(cohortLabel(b.division));
   });
-  const parsedFaculties = listFacultyNames(allLectures.filter((lecture) => lecture.kind !== "break").map((lecture) => lecture.faculty));
-  const seenFaculties = new Set(parsedFaculties.map((f) => f.toLowerCase()));
-  const faculties = [
-    ...parsedFaculties,
-    ...DEFAULT_FACULTY_NAMES.filter((f) => !seenFaculties.has(f.toLowerCase()))
-  ].sort((a, b) => a.localeCompare(b));
+  const faculties = listFacultyNames([
+    ...allLectures.filter((lecture) => lecture.kind !== "break").map((lecture) => lecture.faculty),
+    ...DEFAULT_FACULTY_NAMES
+  ]);
   const scopeOf = (rows) => {
     if (filter?.faculty) {
       const faculty = filter.faculty;

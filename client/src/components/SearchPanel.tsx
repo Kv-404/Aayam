@@ -180,7 +180,7 @@ export function SearchPanel({
                   ))}
                 </ul>
                 <div className="flex justify-end">
-                  <button type="button" className="text-xs font-semibold text-foreground" onClick={() => setHistory(clearSearchHistory())}>
+                  <button type="button" className="py-2 text-xs font-semibold text-foreground" onClick={() => setHistory(clearSearchHistory())}>
                     Clear all
                   </button>
                 </div>

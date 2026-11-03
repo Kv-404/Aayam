@@ -16,6 +16,28 @@ describe("faculty names", () => {
     assert.equal(lectureMatchesFaculty("Prof. Harshal", "Prof. H"), false);
   });
 
+  it("finds one teacher across sheets that spell the name differently", () => {
+    for (const cell of ["Dr. Aarti", "Dr. Aarti P", "Dr. Aarti Pardesi", "Aarti Pardesi", "Dr. Aarti P (VF)"]) {
+      assert.equal(lectureMatchesFaculty(cell, "Dr. Aarti Pardesi"), true, cell);
+    }
+    assert.equal(lectureMatchesFaculty("Prof. Harshal Juikar", "Prof. Harshal"), true);
+    assert.equal(lectureMatchesFaculty("Mr. Rahul G (VF)", "Rahul Gupta (VF)"), true);
+  });
+
+  it("keeps different people apart", () => {
+    assert.equal(lectureMatchesFaculty("Dr. Aarti Pardesi", "Dr. Aarti Kulkarni"), false);
+    assert.equal(lectureMatchesFaculty("Dr. Aarti P", "Dr. Aarti K"), false);
+    assert.equal(lectureMatchesFaculty("Mr. Kumar", "Ms. Kumar"), false);
+    assert.equal(lectureMatchesFaculty("Prof. Shreya", "Prof. Sneha"), false);
+  });
+
+  it("lists one row per person with the longest spelling", () => {
+    assert.deepEqual(listFacultyNames(["Prof. Harshal", "Prof. Harshal Juikar", "Dr. Dipanjan", "Dr. Dipanjan Biswas"]), [
+      "Dr. Dipanjan Biswas",
+      "Prof. Harshal Juikar",
+    ]);
+  });
+
   it("keeps a faculty change when the lecture id now belongs to someone else", () => {
     const ids = new Set(["still-theirs"]);
     assert.equal(

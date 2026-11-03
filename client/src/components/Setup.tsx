@@ -2,7 +2,7 @@ import { cohortLabel, cohortsInYear, type CohortChoice } from "@shared/cohort";
 import { coordinatorPreviews } from "@shared/coordinators";
 import { AlertCircle, ArrowRight, Check } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import CodeSlots from "@/components/CodeSlots";
+import CodeSlots, { fittedSlotSize } from "@/components/CodeSlots";
 import { ColorSwitch } from "@/components/ColorSwitch";
 import { MeetChoice } from "@/components/MeetLink";
 import { Input } from "@/components/ui/input";
@@ -364,7 +364,7 @@ export function Setup({
                   }
                 }}
                 autoFocus
-                slotSize={46}
+                slotSize={fittedSlotSize()}
                 gap={8}
                 radius={12}
               />
