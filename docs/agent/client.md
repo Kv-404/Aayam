@@ -45,6 +45,7 @@ The header cohort menu for students lists cohorts restricted to their authentica
 | `timetable-meet` | `copy` or anything else, including absent, which means open. Do not clear it when saving setup |
 | `timetable-notify` | `"1"` after opt-in. Removed when the settings switch turns alerts off |
 | `timetable-notify-hint` | `"1"` after the phone hint is closed or used |
+| `timetable-exam-notice` | `"1"` after the AT/KT exam banner is closed. The Exams button stays |
 | `timetable-notified-ids` | JSON array of change ids already alerted |
 | `timetable-search-history` | JSON array, newest first, at most 8 searches |
 

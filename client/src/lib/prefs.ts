@@ -29,6 +29,7 @@ const facultySessionKey = "timetable-faculty-session";
 const unlockedBatchesKey = "timetable-unlocked-batches";
 const studentBatchKey = "timetable-student-batch";
 const notifyHintKey = "timetable-notify-hint";
+const examNoticeKey = "timetable-exam-notice";
 
 export type MeetAction = "open" | "copy";
 
@@ -69,6 +70,14 @@ export function readNotifyHintClosed() {
 
 export function closeNotifyHint() {
   storageSet(notifyHintKey, "1");
+}
+
+export function readExamNoticeClosed() {
+  return storageGet(examNoticeKey) === "1";
+}
+
+export function closeExamNotice() {
+  storageSet(examNoticeKey, "1");
 }
 
 export function readStoredCohort() {

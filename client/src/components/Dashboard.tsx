@@ -2,7 +2,7 @@ import type { BootstrapResponse, ChangeEvent, PublicLecture, SheetLink } from "@
 import { cohortChoices, cohortLabel, lectureInCohort, type CohortChoice } from "@shared/cohort";
 import { findCoordinator } from "@shared/coordinators";
 import { changeMatchesFaculty, listFacultyNames } from "@shared/faculty";
-import { Bell, CalendarPlus, Check, ChevronDown, Download, FileSpreadsheet, LogOut, RefreshCw, Settings, X } from "lucide-react";
+import { Bell, CalendarPlus, Check, ChevronDown, Download, FileSpreadsheet, GraduationCap, LogOut, RefreshCw, Settings, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { FacultyLoginModal } from "@/components/FacultyLoginModal";
@@ -23,7 +23,7 @@ import { useLectureReminders } from "@/hooks/useLectureReminders";
 import { appleWeekCalendarUrl, calendarFeedUrl, googleWeekCalendarUrl, outlookWeekCalendarUrl } from "@/lib/calendar";
 import { lensFromScopeId, resolveFacultyView, signInFacultyLens } from "@/lib/facultyView";
 import { useAnyMenuOpen, useMenuBackdrop } from "@/lib/menuBackdrop";
-import { clearFacultyBrowse, clearStudentAuth, closeNotifyHint, hasChosenRole, readCanSeeAllFaculty, readFacultyEmail, readFacultyLens, readFacultyPreview, readNotifyHintClosed, readRole, readSetup, readStoredCohort, readStoredFaculty, readStudentBatch, saveCanSeeAllFaculty, saveCohort, saveFaculty, saveFacultyEmail, saveFacultyLens, saveFacultyPreview, saveSetup, themes, type FacultyLens, type MeetAction, type ThemeId, type ViewerRole } from "@/lib/prefs";
+import { clearFacultyBrowse, clearStudentAuth, closeExamNotice, closeNotifyHint, hasChosenRole, readCanSeeAllFaculty, readExamNoticeClosed, readFacultyEmail, readFacultyLens, readFacultyPreview, readNotifyHintClosed, readRole, readSetup, readStoredCohort, readStoredFaculty, readStudentBatch, saveCanSeeAllFaculty, saveCohort, saveFaculty, saveFacultyEmail, saveFacultyLens, saveFacultyPreview, saveSetup, themes, type FacultyLens, type MeetAction, type ThemeId, type ViewerRole } from "@/lib/prefs";
 import { ColorEditor } from "@/components/ColorEditor";
 import { ColorSwitch } from "@/components/ColorSwitch";
 import { formatClockTime, formatCompactRange, zonedNow } from "@/lib/time";
@@ -108,6 +108,7 @@ export function Dashboard({
   const [view, setView] = useState(() => (readRole() === "faculty" ? "week" : "today"));
   const [weekId, setWeekId] = useState("live");
   const [notifyHintClosed, setNotifyHintClosed] = useState(readNotifyHintClosed);
+  const [examNoticeClosed, setExamNoticeClosed] = useState(readExamNoticeClosed);
   const [barMenuOpen, setBarMenuOpen] = useState(false);
   const [fadeIn, setFadeIn] = useState(false);
   const menuOpen = useAnyMenuOpen();
@@ -745,6 +746,18 @@ export function Dashboard({
               </div>
 
               <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+                <a
+                  href="https://exam.somyacodes.in/"
+                  target="_blank"
+                  rel="noreferrer"
+                  data-testid="exam-schedule"
+                  aria-label="AT/KT and exam schedules"
+                  title="AT/KT and exam schedules"
+                  className="inline-flex h-8 items-center gap-1 rounded-md px-1.5 text-muted-foreground hover:bg-muted hover:text-foreground sm:h-9 sm:px-2"
+                >
+                  <GraduationCap className="size-4 shrink-0" aria-hidden="true" />
+                  <span className="hidden text-xs font-medium sm:inline">Exams</span>
+                </a>
                 <SearchPanel
                   query={filters.query}
                   placeholder={searchPlaceholder}
@@ -815,6 +828,37 @@ export function Dashboard({
           )}
         </div>
       </header>
+      {!examNoticeClosed && (
+        <div
+          role="status"
+          data-testid="exam-notice"
+          className="flex items-center gap-2 border-b border-border bg-muted/60 px-3 py-2 text-sm sm:px-6"
+        >
+          <GraduationCap className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <p className="min-w-0 flex-1 leading-snug">
+            AT/KT and every exam schedule are on the exam site.
+          </p>
+          <a
+            href="https://exam.somyacodes.in/"
+            target="_blank"
+            rel="noreferrer"
+            className="shrink-0 rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background hover:opacity-90"
+          >
+            Open
+          </a>
+          <button
+            type="button"
+            aria-label="Dismiss exam notice"
+            className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+            onClick={() => {
+              closeExamNotice();
+              setExamNoticeClosed(true);
+            }}
+          >
+            <X className="size-3.5" aria-hidden="true" />
+          </button>
+        </div>
+      )}
 
       <main id="timetable" className={`flex-1 flex flex-col px-4 py-4 ${view === "today" ? "pb-[calc(7rem+env(safe-area-inset-bottom))]" : "pb-[calc(4.5rem+env(safe-area-inset-bottom))]"} sm:px-6 sm:py-5 sm:pb-5`}>
         <h1 className="sr-only">{role === "faculty" ? board.label : cohortLabel(selected)} timetable</h1>
