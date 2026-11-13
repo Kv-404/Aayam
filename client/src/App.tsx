@@ -4,7 +4,6 @@ import { coordinatorPreview, findCoordinator } from "@shared/coordinators";
 import { DEFAULT_FACULTY_NAMES } from "@shared/faculty";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useState, type ReactNode } from "react";
-import { AccessDenied } from "@/components/AccessDenied";
 import { Dashboard } from "@/components/Dashboard";
 import { FacultyLoginModal } from "@/components/FacultyLoginModal";
 import { HomePage } from "@/components/HomePage";
@@ -22,7 +21,6 @@ import {
   applyColors,
   applyTheme,
   hasChosenRole,
-  isBatchUnlocked,
   readCanSeeAllFaculty,
   readFacultyEmail,
   readFacultyLens,
@@ -287,9 +285,7 @@ export function App() {
       }
       if (urlScope.scope.division) {
         const matched = urlScope.matchedCohort ?? slugToCohort(urlScope.scope.division, DEFAULT_COHORT_CHOICES);
-        if (matched && isBatchUnlocked(matched.course, matched.batch)) {
-          saveCohort(urlScope.scope.division);
-        }
+        if (matched) saveCohort(urlScope.scope.division);
       }
       return urlScope.scope;
     }
@@ -374,9 +370,7 @@ export function App() {
       } else if (parsed) {
         if (parsed.scope.division) {
           const matched = parsed.matchedCohort ?? slugToCohort(parsed.scope.division, activeChoices);
-          if (matched && isBatchUnlocked(matched.course, matched.batch)) {
-            saveCohort(parsed.scope.division);
-          }
+          if (matched) saveCohort(parsed.scope.division);
           setScope(parsed.scope);
           setConfigured(true);
         } else {
@@ -505,45 +499,6 @@ export function App() {
           </div>
         </main>
       )];
-    }
-  }
-
-  // Access Control verification for cohort URLs
-  if (scope.division) {
-    const matchedCohort =
-      choices.find((c) => c.division.toLowerCase() === scope.division?.toLowerCase()) ??
-      slugToCohort(scope.division, choices);
-
-    const isFaculty = readRole() === "faculty" && Boolean(readStoredFaculty());
-
-    if (matchedCohort && !isFaculty) {
-      const allowed = isBatchUnlocked(matchedCohort.course, matchedCohort.batch);
-      if (!allowed) {
-        return ["access-denied", (
-          <AccessDenied
-            cohort={matchedCohort}
-            choices={choices}
-            onUnlocked={(unlockedCohort) => {
-              setScope({ division: unlockedCohort.division });
-              setConfigured(true);
-            }}
-            onGoHome={() => {
-              window.history.pushState(null, "", "/");
-              setConfigured(false);
-              setScope({});
-            }}
-            onGoToMyTimetable={(slug) => {
-              const matched = slugToCohort(slug, choices);
-              if (matched) {
-                window.history.pushState(null, "", `/${slug}`);
-                saveCohort(matched.division);
-                setScope({ division: matched.division });
-                setConfigured(true);
-              }
-            }}
-          />
-        )];
-      }
     }
   }
 

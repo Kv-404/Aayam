@@ -1,14 +1,10 @@
 import { useMemo, useState, type MouseEvent } from "react";
 import { cohortLabel, cohortsInYear, type CohortChoice, DEFAULT_COHORT_CHOICES } from "@shared/cohort";
-import { AlertCircle, ArrowLeft, ArrowRight, Check } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import { HomePitch } from "@/components/HomePitch";
-import CodeSlots, { fittedSlotSize } from "@/components/CodeSlots";
 import { ColorSwitch } from "@/components/ColorSwitch";
 import { MeetChoice } from "@/components/MeetLink";
-import { verifyPin } from "@/lib/auth";
 import {
-  clearStudentAuth,
-  isBatchUnlocked,
   readStoredCohort,
   readStudentBatch,
   saveRole,
@@ -20,7 +16,7 @@ import {
 } from "@/lib/prefs";
 import { cohortToSlug } from "@/lib/slug";
 
-type Step = "role" | "pin" | "cohort" | "theme";
+type Step = "role" | "batch" | "cohort" | "theme";
 
 const sourceUrl = "https://github.com/Kv-404/Aayam";
 
@@ -55,26 +51,30 @@ export function HomePage({
 }: HomePageProps) {
   const initialBatch = readStudentBatch();
   const savedCohort = readStoredCohort();
-  const hasSavedAccess = Boolean(
-    savedCohort &&
-    initialBatch &&
-    isBatchUnlocked(initialBatch.course, initialBatch.batch)
-  );
+  const hasSavedAccess = Boolean(savedCohort);
   const [step, setStep] = useState<Step>("role");
   const [program, setProgram] = useState(initialBatch?.course ?? "");
   const [year, setYear] = useState(initialBatch?.batch ?? "");
   const [division, setDivision] = useState("");
-  const [codeStatus, setCodeStatus] = useState<"idle" | "error" | "success">("idle");
-  const [codeError, setCodeError] = useState<string | null>(null);
-  const [codeLoading, setCodeLoading] = useState(false);
-
   const cohorts = useMemo(
     () => (program && year ? cohortsInYear(choices, program, year) : []),
     [choices, program, year],
   );
 
+  const batches = useMemo(() => {
+    const seen = new Set<string>();
+    const rows: { course: string; batch: string }[] = [];
+    for (const choice of choices) {
+      const key = `${choice.course}\0${choice.batch}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({ course: choice.course, batch: choice.batch });
+    }
+    return rows;
+  }, [choices]);
+
   const copy: Record<Exclude<Step, "role">, [string, string]> = {
-    pin: ["Enter batch PIN", "Enter the 6-digit PIN for your batch."],
+    batch: ["Select your batch", "Choose the year, then your section."],
     cohort: ["Select your section", program && year ? `${program} · ${year}` : "Choose your section."],
     theme: ["Select a theme", division ? `${cohortLabel(division)}. You can change this later.` : "You can change this later."],
   };
@@ -93,26 +93,27 @@ export function HomePage({
     }
     setProgram("");
     setYear("");
-    setStep("pin");
+    setStep("batch");
   }
 
   function goBack() {
-    setCodeStatus("idle");
-    setCodeError(null);
     if (step === "theme") {
       setStep("cohort");
+      return;
+    }
+    if (step === "cohort") {
+      setStep("batch");
       return;
     }
     setStep("role");
   }
 
-  function useDifferentPin() {
-    clearStudentAuth();
-    setProgram("");
-    setYear("");
-    setCodeStatus("idle");
-    setCodeError(null);
-    setStep("pin");
+  function chooseBatch(course: string, batch: string) {
+    setProgram(course);
+    setYear(batch);
+    saveRole("student");
+    saveStudentBatch(course, batch);
+    setStep("cohort");
   }
 
   function openCohort(next: string) {
@@ -159,77 +160,28 @@ export function HomePage({
         <h1 className="text-3xl font-medium tracking-tight">{title}</h1>
         <p className="mt-2 text-sm text-muted-foreground">{note}</p>
 
-        {step === "pin" && (
-          <div className="mt-8 flex flex-col items-center gap-6 text-center">
-            <div className="flex w-full max-w-md flex-col items-center rounded-2xl border border-border bg-card p-6 sm:p-8">
-              <CodeSlots
-                length={6}
-                status={codeStatus}
-                onChange={() => {
-                  setCodeStatus("idle");
-                  setCodeError(null);
-                }}
-                onComplete={async (code) => {
-                  setCodeLoading(true);
-                  setCodeError(null);
-                  try {
-                    const res = await verifyPin(code);
-                    setCodeLoading(false);
-                    if (res.ok && res.course && res.batch) {
-                      setProgram(res.course);
-                      setYear(res.batch);
-                      saveRole("student");
-                      saveStudentBatch(res.course, res.batch);
-                      setCodeStatus("success");
-                      window.setTimeout(() => {
-                        setStep("cohort");
-                        setCodeStatus("idle");
-                      }, 400);
-                    } else {
-                      setCodeStatus("error");
-                      setCodeError(res.error || "Invalid PIN. Check with your class representative.");
-                    }
-                  } catch {
-                    setCodeLoading(false);
-                    setCodeStatus("error");
-                    setCodeError("Could not verify the PIN. Try again.");
-                  }
-                }}
-                autoFocus
-                slotSize={fittedSlotSize()}
-                gap={8}
-                radius={12}
-              />
-
-              {codeLoading && (
-                <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
-                  <span className="size-3 animate-spin rounded-full border-2 border-foreground border-t-transparent" />
-                  <span>Checking the PIN</span>
-                </div>
-              )}
-
-              {codeError && (
-                <div className="mt-4 flex items-center gap-1.5 text-xs font-medium text-danger">
-                  <AlertCircle className="size-4 shrink-0" />
-                  <span>{codeError}</span>
-                </div>
-              )}
-
-              <p className="mt-6 text-[11px] leading-relaxed text-muted-foreground">
-                Need a PIN? Ask your class representative or email{" "}
-                <a href="mailto:2025.karamveers@isu.ac.in" className="text-foreground underline underline-offset-2">
-                  2025.karamveers@isu.ac.in
-                </a>
-              </p>
-            </div>
-          </div>
+        {step === "batch" && (
+          <ul className="mt-8 grid max-h-[50dvh] gap-2 overflow-y-auto">
+            {batches.map((item) => (
+              <li key={`${item.course}-${item.batch}`}>
+                <button
+                  type="button"
+                  onClick={() => chooseBatch(item.course, item.batch)}
+                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-border px-4 py-3 text-left text-base font-medium tracking-tight hover:bg-muted"
+                >
+                  {item.course} {item.batch}
+                  <ArrowRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
 
         {step === "cohort" && (
           <div className="mt-8 flex flex-col gap-3">
             <div className="flex justify-end px-1 text-xs text-muted-foreground">
-              <button type="button" onClick={useDifferentPin} className="hover:text-foreground">
-                Different PIN
+              <button type="button" onClick={() => setStep("batch")} className="hover:text-foreground">
+                Different batch
               </button>
             </div>
             {cohorts.length > 0 ? (

@@ -2,15 +2,12 @@ import { cohortLabel, cohortsInYear, type CohortChoice } from "@shared/cohort";
 import { coordinatorPreviews } from "@shared/coordinators";
 import { AlertCircle, ArrowRight, Check } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import CodeSlots, { fittedSlotSize } from "@/components/CodeSlots";
 import { ColorSwitch } from "@/components/ColorSwitch";
 import { MeetChoice } from "@/components/MeetLink";
 import { Input } from "@/components/ui/input";
-import { fetchGoogleClientId, loginWithGoogleCredential, verifyPin } from "@/lib/auth";
+import { fetchGoogleClientId, loginWithGoogleCredential } from "@/lib/auth";
 import { signInFacultyLens } from "@/lib/facultyView";
 import {
-  clearStudentAuth,
-  isBatchUnlocked,
   readFacultyEmail,
   readStoredCohort,
   readStudentBatch,
@@ -30,10 +27,10 @@ import {
 } from "@/lib/prefs";
 import { cohortToSlug } from "@/lib/slug";
 
-type StepId = "role" | "pin" | "cohort" | "faculty" | "theme";
+type StepId = "role" | "batch" | "cohort" | "faculty" | "theme";
 
 const facultySteps: StepId[] = ["role", "faculty", "theme"];
-const studentSteps: StepId[] = ["role", "pin", "cohort", "theme"];
+const studentSteps: StepId[] = ["role", "batch", "cohort", "theme"];
 
 export function Setup({
   choices,
@@ -78,7 +75,7 @@ export function Setup({
     initialRole === "faculty"
       ? "faculty"
       : initialRole === "student"
-      ? (savedBatch ? "cohort" : "pin")
+      ? (savedBatch ? "cohort" : "batch")
       : "role"
   );
   const [role, setRole] = useState<ViewerRole | "">(initialRole);
@@ -87,9 +84,6 @@ export function Setup({
   const [picked, setPicked] = useState(savedBatch && saved ? saved.division : "");
   const [name, setName] = useState(readFacultyEmail() && faculties.includes(faculty) ? faculty : "");
   const [query, setQuery] = useState("");
-  const [codeStatus, setCodeStatus] = useState<"idle" | "error" | "success">("idle");
-  const [codeError, setCodeError] = useState<string | null>(null);
-  const [codeLoading, setCodeLoading] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authEmail, setAuthEmail] = useState<string | null>(null);
@@ -166,7 +160,7 @@ export function Setup({
   const visibleFaculties = faculties.filter((item) => item.toLowerCase().includes(query.trim().toLowerCase()));
   const copy: Record<StepId, [string, string]> = {
     role: ["Who are you?", "Choose whether you are a Student or a Teacher."],
-    pin: ["Enter Batch PIN", "Enter your 6-digit PIN to access your batch's classes."],
+    batch: ["Select your batch", "Choose the year, then your section."],
     cohort: ["Select Your Cohort", program && year ? `${program} · ${year}` : "Choose your section / division."],
     faculty: ["Teacher Sign In", "Sign in with your official @itm.edu or @isu.ac.in Google account."],
     theme: ["Pick a theme", "Week is the grid. One day is a compact list. You can change this later."],
@@ -192,16 +186,15 @@ export function Setup({
   }
 
   function goBack() {
-    if (step === "pin") {
+    if (step === "batch") {
       setStep("role");
       return;
     }
     if (step === "cohort") {
-      clearStudentAuth();
       setProgram("");
       setYear("");
       setPicked("");
-      setStep("pin");
+      setStep("batch");
       return;
     }
     if (step === "theme") {
@@ -216,10 +209,10 @@ export function Setup({
 
   function goNext() {
     if (step === "role") {
-      setStep(role === "faculty" ? "faculty" : "pin");
+      setStep(role === "faculty" ? "faculty" : "batch");
       return;
     }
-    if (step === "pin") {
+    if (step === "batch") {
       if (program && year) setStep("cohort");
       return;
     }
@@ -238,7 +231,7 @@ export function Setup({
 
   function canAdvance() {
     if (step === "role") return Boolean(role);
-    if (step === "pin") return Boolean(program && year);
+    if (step === "batch") return Boolean(program && year);
     if (step === "cohort") return cohorts.some((choice) => choice.division === picked);
     if (step === "faculty") return Boolean(name);
     return true;
@@ -262,7 +255,7 @@ export function Setup({
         <p className="text-muted-foreground mt-2 text-sm">{note}</p>
         {step === "role" && (
           <div className="mt-8 flex flex-col gap-3">
-            {readStoredCohort() && savedBatch && isBatchUnlocked(savedBatch.course, savedBatch.batch) && (
+            {readStoredCohort() && (
               <div className="rounded-xl border border-border/70 bg-card/60 p-3.5 flex items-center justify-between">
                 <div className="flex flex-col text-left">
                   <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
@@ -290,7 +283,7 @@ export function Setup({
             )}
             <ul className="grid gap-2.5">
               {[
-                { id: "student", label: "Student", desc: "Access your batch classes with your 6-digit PIN" },
+                { id: "student", label: "Student", desc: "Pick your batch and section." },
                 { id: "faculty", label: "Teacher / Faculty", desc: "Sign in with your ITM Google account" },
               ].map((option) => {
                 const selected = role === option.id;
@@ -303,7 +296,7 @@ export function Setup({
                         const nextRole = option.id as ViewerRole;
                         setRole(nextRole);
                         saveRole(nextRole);
-                        setStep(nextRole === "faculty" ? "faculty" : (savedBatch ? "cohort" : "pin"));
+                        setStep(nextRole === "faculty" ? "faculty" : (savedBatch ? "cohort" : "batch"));
                       }}
                       className={choiceClass(selected, "items-center px-4 py-3.5 text-lg")}
                       aria-pressed={selected}
@@ -320,77 +313,28 @@ export function Setup({
             </ul>
           </div>
         )}
-        {step === "pin" && (
-          <div className="mt-8 flex flex-col items-center gap-6 text-center">
-            <div className="rounded-2xl border border-border/80 bg-card/60 p-6 sm:p-8 backdrop-blur-sm shadow-sm flex flex-col items-center max-w-md w-full">
-              <div className="mb-6 flex flex-col items-center">
-                <span className="inline-flex items-center rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
-                  Student Verification
-                </span>
-              </div>
-
-              <CodeSlots
-                length={6}
-                status={codeStatus}
-                onChange={() => {
-                  setCodeStatus("idle");
-                  setCodeError(null);
-                }}
-                onComplete={async (code) => {
-                  setCodeLoading(true);
-                  setCodeError(null);
-                  try {
-                    const res = await verifyPin(code);
-                    setCodeLoading(false);
-                    if (res.ok && res.course && res.batch) {
-                      setProgram(res.course);
-                      setYear(res.batch);
-                      saveRole("student");
-                      saveStudentBatch(res.course, res.batch);
-                      setCodeStatus("success");
-                      onPickBatch?.(res.course, res.batch);
-                      setTimeout(() => {
-                        setStep("cohort");
-                        setCodeStatus("idle");
-                      }, 400);
-                    } else {
-                      setCodeStatus("error");
-                      setCodeError(res.error || "Invalid PIN. Please check with your class representative.");
-                    }
-                  } catch {
-                    setCodeLoading(false);
-                    setCodeStatus("error");
-                    setCodeError("Failed to verify PIN. Try again.");
-                  }
-                }}
-                autoFocus
-                slotSize={fittedSlotSize()}
-                gap={8}
-                radius={12}
-              />
-
-              {codeLoading && (
-                <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground animate-pulse">
-                  <span className="size-3 rounded-full border-2 border-foreground border-t-transparent animate-spin" />
-                  <span>Verifying PIN with database...</span>
-                </div>
-              )}
-
-              {codeError && (
-                <div className="mt-4 flex items-center gap-1.5 text-xs text-red-500 font-medium">
-                  <AlertCircle className="size-4 shrink-0" />
-                  <span>{codeError}</span>
-                </div>
-              )}
-
-              <p className="mt-6 text-[11px] text-muted-foreground/80 leading-relaxed">
-                Need your batch PIN? Contact your class representative or email{" "}
-                <a href="mailto:2025.karamveers@isu.ac.in" className="text-foreground underline underline-offset-2">
-                  2025.karamveers@isu.ac.in
-                </a>
-              </p>
-            </div>
-          </div>
+        {step === "batch" && (
+          <ul className="mt-8 grid max-h-[50dvh] gap-2 overflow-y-auto">
+            {Array.from(new Map(choices.map((choice) => [`${choice.course}\0${choice.batch}`, choice])).values()).map((choice) => (
+              <li key={`${choice.course}-${choice.batch}`}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProgram(choice.course);
+                    setYear(choice.batch);
+                    saveRole("student");
+                    saveStudentBatch(choice.course, choice.batch);
+                    onPickBatch?.(choice.course, choice.batch);
+                    setStep("cohort");
+                  }}
+                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-border px-4 py-3 text-left text-base font-medium tracking-tight hover:bg-muted"
+                >
+                  {choice.course} {choice.batch}
+                  <ArrowRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
         {step === "cohort" && (
           <div className="mt-8 flex flex-col gap-3">
@@ -400,15 +344,14 @@ export function Setup({
                 <button
                   type="button"
                   onClick={() => {
-                    clearStudentAuth();
                     setProgram("");
                     setYear("");
                     setPicked("");
-                    setStep("pin");
+                    setStep("batch");
                   }}
                   className="text-xs text-primary hover:underline"
                 >
-                  Change PIN
+                  Different batch
                 </button>
               </div>
             )}

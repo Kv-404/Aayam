@@ -570,7 +570,6 @@ export function Dashboard({
     );
   }
 
-  const weekLabel = data.weekStart && data.weekEnd ? `${formatShort(data.weekStart)} – ${formatShort(data.weekEnd)}` : "This week";
   const segmentProps = {
     trackColor: "var(--muted)",
     thumbColor: "var(--foreground)",
@@ -629,10 +628,7 @@ export function Dashboard({
       {...segmentProps}
     />
   ) : null;
-  const weekControl = (opensUp = false) =>
-    savedWeeks.length > 0 ? (
-      <WeekMenu liveLabel={weekLabel} weeks={savedWeeks} value={selectedWeek ? selectedWeek.id : "live"} onChange={chooseWeek} opensUp={opensUp} onOpenChange={opensUp ? setBarMenuOpen : undefined} />
-    ) : null;
+
   const notice = reminders.notice ?? notifications.notice;
   const dismissNotice = () => {
     if (reminders.notice) reminders.dismiss();
@@ -657,7 +653,7 @@ export function Dashboard({
   );
   const headerControls = (
     <>
-      {weekControl()}
+
       {viewControl("shrink-0")}
       <NotifyControl optedIn={notifications.optedIn} pulse={reminders.pulse} onEnable={() => void notifications.enable()} />
     </>
@@ -889,7 +885,7 @@ export function Dashboard({
         <div className="flex flex-col gap-2 px-3 py-2">
           {view === "today" && <div className="short:hidden">{dayControl("w-full")}</div>}
           <div className="flex items-center gap-2">
-            {weekControl(true)}
+
             <div className="min-w-0 flex-1">{viewControl("w-full")}</div>
           </div>
         </div>
@@ -1222,44 +1218,6 @@ function AppearanceMenu({
           {colors && (
             <div className="mt-2.5 border-t border-border pt-2.5">
               <ColorEditor theme={theme} subjects={subjects} />
-            </div>
-          )}
-          {savedWeeks.length > 0 && (
-            <div className="mt-3 border-t border-border pt-2.5">
-              <p className="text-muted-foreground font-mono text-[11px] tracking-[0.22em] uppercase">Past weeks</p>
-              <div className="mt-2 space-y-1">
-                <button
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={weekId === "live"}
-                  onClick={() => onWeek("live")}
-                  className={`flex w-full items-center justify-between rounded-md border px-2.5 py-1.5 text-left text-xs ${
-                    weekId === "live" ? "border-transparent bg-foreground text-background font-medium" : "border-border text-foreground hover:bg-muted"
-                  }`}
-                >
-                  <span>This week</span>
-                  {weekId === "live" && <Check className="size-3 shrink-0" aria-hidden="true" />}
-                </button>
-                {savedWeeks.map((week) => {
-                  const selected = weekId === week.id;
-                  const label = `${formatShort(week.start)} – ${formatShort(week.end)}`;
-                  return (
-                    <button
-                      key={week.id}
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={selected}
-                      onClick={() => onWeek(week.id)}
-                      className={`flex w-full items-center justify-between rounded-md border px-2.5 py-1.5 text-left text-xs ${
-                        selected ? "border-transparent bg-foreground text-background font-medium" : "border-border text-foreground hover:bg-muted"
-                      }`}
-                    >
-                      <span className="min-w-0 truncate">{label}</span>
-                      {selected && <Check className="size-3 shrink-0" aria-hidden="true" />}
-                    </button>
-                  );
-                })}
-              </div>
             </div>
           )}
           {role === "student" && (

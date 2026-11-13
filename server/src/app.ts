@@ -20,6 +20,18 @@ import { runSync, syncInFlight, type SyncContext } from "./services/syncSchedule
 import { fetchSpreadsheet } from "./services/googleSheetsService.ts";
 import { zonedParts } from "./time.ts";
 
+function mondayOf(iso: string) {
+  const date = new Date(`${iso}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
+  return date.toISOString().slice(0, 10);
+}
+
+function plusDays(iso: string, days: number) {
+  const date = new Date(`${iso}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 function programLinkKey(course: string, batch: string) {
   return `${course.trim().toLowerCase()}\0${batch.trim().toLowerCase()}`;
 }
@@ -139,6 +151,15 @@ function buildBootstrap(
     relevantChanges = changes.filter((change) =>
       (!filter.course || change.course?.toLowerCase() === filter.course.toLowerCase())
     );
+  }
+
+  const dated = lectures.map((lecture) => lecture.date).filter((date): date is string => Boolean(date)).sort();
+  const latest = dated[dated.length - 1];
+  if (latest) {
+    const weekStartDate = mondayOf(latest);
+    const weekEndDate = plusDays(weekStartDate, 6);
+    lectures = lectures.filter((lecture) => lecture.date && lecture.date >= weekStartDate && lecture.date <= weekEndDate);
+    relevantChanges = relevantChanges.filter((change) => !change.date || (change.date >= weekStartDate && change.date <= weekEndDate));
   }
 
   const dates = lectures.map((lecture) => lecture.date).filter((date): date is string => Boolean(date)).sort();

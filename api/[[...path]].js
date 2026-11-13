@@ -3390,6 +3390,16 @@ async function fetchSheetSources(sources) {
 
 // server/src/app.ts
 var import_meta2 = {};
+function mondayOf(iso) {
+  const date = /* @__PURE__ */ new Date(`${iso}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - (date.getUTCDay() + 6) % 7);
+  return date.toISOString().slice(0, 10);
+}
+function plusDays(iso, days) {
+  const date = /* @__PURE__ */ new Date(`${iso}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
 function programLinkKey(course, batch) {
   return `${course.trim().toLowerCase()}\0${batch.trim().toLowerCase()}`;
 }
@@ -3486,6 +3496,14 @@ function buildBootstrap(db2, config2, now = /* @__PURE__ */ new Date(), filter) 
     relevantChanges = changes.filter(
       (change) => !filter.course || change.course?.toLowerCase() === filter.course.toLowerCase()
     );
+  }
+  const dated2 = lectures.map((lecture) => lecture.date).filter((date) => Boolean(date)).sort();
+  const latest = dated2[dated2.length - 1];
+  if (latest) {
+    const weekStartDate = mondayOf(latest);
+    const weekEndDate = plusDays(weekStartDate, 6);
+    lectures = lectures.filter((lecture) => lecture.date && lecture.date >= weekStartDate && lecture.date <= weekEndDate);
+    relevantChanges = relevantChanges.filter((change) => !change.date || change.date >= weekStartDate && change.date <= weekEndDate);
   }
   const dates = lectures.map((lecture) => lecture.date).filter((date) => Boolean(date)).sort();
   const liveKeys = /* @__PURE__ */ new Set();
