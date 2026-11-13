@@ -753,7 +753,7 @@ export function Dashboard({
                   data-testid="exam-schedule"
                   aria-label="AT/KT and exam schedules"
                   title="AT/KT and exam schedules"
-                  className="inline-flex h-8 items-center gap-1 rounded-md px-1.5 text-muted-foreground hover:bg-muted hover:text-foreground sm:h-9 sm:px-2"
+                  className="inline-flex h-8 items-center gap-1 rounded-md px-1.5 text-danger hover:bg-danger-soft sm:h-9 sm:px-2"
                 >
                   <GraduationCap className="size-4 shrink-0" aria-hidden="true" />
                   <span className="hidden text-xs font-medium sm:inline">Exams</span>
@@ -832,9 +832,9 @@ export function Dashboard({
         <div
           role="status"
           data-testid="exam-notice"
-          className="flex items-center gap-2 border-b border-border bg-muted/60 px-3 py-2 text-sm sm:px-6"
+          className="flex items-center gap-2 border-b border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger sm:px-6"
         >
-          <GraduationCap className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <GraduationCap className="size-4 shrink-0" aria-hidden="true" />
           <p className="min-w-0 flex-1 leading-snug">
             AT/KT and every exam schedule are on the exam site.
           </p>
@@ -842,14 +842,14 @@ export function Dashboard({
             href="https://exam.somyacodes.in/"
             target="_blank"
             rel="noreferrer"
-            className="shrink-0 rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background hover:opacity-90"
+            className="shrink-0 rounded-md bg-danger px-2.5 py-1 text-xs font-medium text-danger-foreground hover:opacity-90"
           >
             Open
           </a>
           <button
             type="button"
             aria-label="Dismiss exam notice"
-            className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-danger hover:bg-danger/10"
             onClick={() => {
               closeExamNotice();
               setExamNoticeClosed(true);

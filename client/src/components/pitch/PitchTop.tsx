@@ -75,7 +75,7 @@ export function PitchTop(actions: PitchActions): JSX.Element {
             Aayam reads the official Google Sheet and shows it for one section, or for one teacher. You get today, the week, and the changes: a cancelled class or a moved room shows up here.
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
-            <a href="https://exam.somyacodes.in/" target="_blank" rel="noreferrer" className={`inline-flex items-center justify-center gap-2 ${ghostButton}`}>
+            <a href="https://exam.somyacodes.in/" target="_blank" rel="noreferrer" className={`inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[#ff5555]/70 px-4 py-2.5 text-sm text-[#ff5555] hover:bg-[#ff5555]/10 sm:w-auto ${focusRing}`}>
               AT/KT exams
               <ArrowRight className="size-4" aria-hidden="true" />
             </a>
