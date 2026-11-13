@@ -28,7 +28,6 @@ Shared types and faculty-name matching are in `docs/agent/server.md`. Read a sec
 - Cancelled cards keep the subject colour. Graphite is only for OFF. Do not bring back a solid danger fill.
 - Production deploys from `main`. Live site: https://timetable.kv404.dev. Repo: https://github.com/Kv-404/Clg-timetable.git.
 - Students pick a batch, then a section. There is no batch PIN gate.
-- Student logout clears `timetable-student-batch`, `timetable-role`, `timetable-cohort`, and `timetable-setup`, and returns to `/`.
 - Student logout clears `timetable-student-batch`, `timetable-role`, `timetable-cohort`, `timetable-setup`, and cleans the URL to `/`.
 
 ## Commands
