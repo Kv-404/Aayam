@@ -358,6 +358,19 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
     };
   }
 
+  /** A stored batch still counts when it has no workbook id. A different workbook id is last week. */
+  function storedSheetIsCurrent(sheet: SheetSource, lectures: Array<{ spreadsheetId?: string; course: string; batch: string }>) {
+    const rows = lectures.filter((lecture) =>
+      sheet.batch
+        ? lecture.course === sheet.course && lecture.batch === sheet.batch
+        : lecture.spreadsheetId === sheet.id,
+    );
+    if (rows.length === 0) return true;
+    const ids = [...new Set(rows.map((lecture) => lecture.spreadsheetId).filter((id): id is string => Boolean(id)))];
+    if (ids.length === 0) return true;
+    return ids.includes(sheet.id);
+  }
+
   /** Answers from the saved timetable when there is one, and refreshes the sheets in the background. */
   async function syncIfStale(filter: ReadScope = {}) {
     if (!options?.syncOnRead) return;
@@ -372,9 +385,11 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
     }
     const isFresh = () => plan.sheets.every((sheet) => Date.now() - (lastSyncBySheet.get(sheet.id) ?? 0) < config.syncIntervalSeconds * 1000);
     const snapshot = loadSnapshot(db);
+    // A saved copy of an older workbook is not this week. Wait for the configured sheets.
+    const currentSheets = plan.sheets.every((sheet) => storedSheetIsCurrent(sheet, snapshot));
     const saved = plan.everything
-      ? readSyncState(db).bootstrapped && snapshot.length > 0
-      : snapshot.some((lecture) => plan.sheets.some((sheet) => lecture.spreadsheetId === sheet.id || (sheet.batch && lecture.batch === sheet.batch)));
+      ? readSyncState(db).bootstrapped && snapshot.length > 0 && currentSheets
+      : snapshot.some((lecture) => plan.sheets.some((sheet) => lecture.spreadsheetId === sheet.id || (sheet.batch && lecture.course === sheet.course && lecture.batch === sheet.batch))) && currentSheets;
     if (isFresh() && (saved || plan.everything)) return;
     if (saved) {
       const running = runSync(plan.ctx);

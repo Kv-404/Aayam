@@ -29,7 +29,7 @@ export const COHORT_TEMPLATES: CohortSheetTemplate[] = [
     course: "BTech",
     batch: "2026-30",
     divisions: ["Andrew NG", "Jerry Sanders", "Tim Cook"],
-    fallbackId: "1cG7UflUTUPVpVL3BliSYFqDkOs-QzsGyo3azE1qd3js",
+    fallbackId: "1o_sNayHt8v4WlyZUVcmPWhyjNQ6i8ONuX2zMo5czg0w",
     envKeys: [
       "SPREADSHEET_BTECH_2026_30",
       "SPREADSHEET_ID_BTECH_2026_30",
@@ -45,7 +45,7 @@ export const COHORT_TEMPLATES: CohortSheetTemplate[] = [
     course: "BTech",
     batch: "2025-29",
     divisions: ["Demis Hassabis 2025", "Jeff Bezos 2025", "Larry Page 2025", "Sam Altman 2025"],
-    fallbackId: "1qInzB5I0deY7jAKgFFFgBsd4fkSFLGqg-Fyh7Q3nXUM",
+    fallbackId: "1iglizdY-oldwwrpBDBy84EEYwtNhnv6mKkf9mFP8NZw",
     envKeys: [
       "SPREADSHEET_BTECH_2025_29",
       "SPREADSHEET_ID_BTECH_2025_29",
@@ -61,7 +61,7 @@ export const COHORT_TEMPLATES: CohortSheetTemplate[] = [
     course: "BTech",
     batch: "2024-28",
     divisions: ["Elon Musk 2024", "Jensen Huang 2024", "Mark Zuckerberg"],
-    fallbackId: "1Z8WWsv0yhiMmfZQqzzYBYrYgxq-FcDd_kbQeGcF5eDI",
+    fallbackId: "1AviRCKbw1dOTh4WKnCXACr4qAgr8Nr4h6EhrRxyuBvc",
     envKeys: [
       "SPREADSHEET_BTECH_2024_28",
       "SPREADSHEET_ID_BTECH_2024_28",
@@ -77,7 +77,7 @@ export const COHORT_TEMPLATES: CohortSheetTemplate[] = [
     course: "BTech",
     batch: "2023-27",
     divisions: ["Steve Jobs (AI/DS)", "Steve Jobs (Cyber-Sec)", "Steve Jobs"],
-    fallbackId: "1nbdHdLvtlcrhClzfcKA7bBuNXQI1q61qs-sg2RK0ra4",
+    fallbackId: "1Wy0x2Gn-maOcdN3v4xFbatDzgEHZoqaVkpY9I2ui6fc",
     envKeys: [
       "SPREADSHEET_BTECH_2023_27",
       "SPREADSHEET_ID_BTECH_2023_27",
@@ -93,7 +93,7 @@ export const COHORT_TEMPLATES: CohortSheetTemplate[] = [
     course: "MCA",
     batch: "2026-28",
     divisions: ["Geoffrey Hinton"],
-    fallbackId: "15mPKkE6CWnHRTEH2RCg1HDAwL0cTgC9AqECpv_GRt1o",
+    fallbackId: "1iuT7IHBJ12mnlqwKIHZ_GgtQdV8G-TOfOKiBPIwCTb0",
     envKeys: [
       "SPREADSHEET_MCA_2026_28",
       "SPREADSHEET_ID_MCA_2026_28",
@@ -112,7 +112,7 @@ export const WEEK_SHEETS: SheetSource[] = COHORT_TEMPLATES.map((tmpl) => ({
   divisions: tmpl.divisions,
 }));
 
-export const PRIMARY_SHEET = "1qInzB5I0deY7jAKgFFFgBsd4fkSFLGqg-Fyh7Q3nXUM";
+export const PRIMARY_SHEET = "1iglizdY-oldwwrpBDBy84EEYwtNhnv6mKkf9mFP8NZw";
 
 export function sheetForScope(
   scope: { division?: string; course?: string; batch?: string },
@@ -296,7 +296,7 @@ export function getConfig(): AppConfig {
       : (spreadsheets.find((sheet) => sheet.batch === "2025-29")?.id ?? spreadsheets[0]?.id ?? PRIMARY_SHEET),
     spreadsheetTitle:
       process.env.SPREADSHEET_TITLE?.trim() ||
-      "BTech Cohort Planning weekly | 2nd Nov to 7th Nov 2026",
+      "BTech Cohort Planning weekly | 16th Nov to 21st Nov 2026",
     collegeName: process.env.COLLEGE_NAME?.trim() || "ITM Skills University",
     schoolName: process.env.SCHOOL_NAME?.trim() || "School of FutureTech, Kharghar",
     courseName: process.env.COURSE_NAME?.trim() || "BTech",

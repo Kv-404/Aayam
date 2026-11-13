@@ -49,7 +49,7 @@ var COHORT_TEMPLATES = [
     course: "BTech",
     batch: "2026-30",
     divisions: ["Andrew NG", "Jerry Sanders", "Tim Cook"],
-    fallbackId: "1cG7UflUTUPVpVL3BliSYFqDkOs-QzsGyo3azE1qd3js",
+    fallbackId: "1o_sNayHt8v4WlyZUVcmPWhyjNQ6i8ONuX2zMo5czg0w",
     envKeys: [
       "SPREADSHEET_BTECH_2026_30",
       "SPREADSHEET_ID_BTECH_2026_30",
@@ -65,7 +65,7 @@ var COHORT_TEMPLATES = [
     course: "BTech",
     batch: "2025-29",
     divisions: ["Demis Hassabis 2025", "Jeff Bezos 2025", "Larry Page 2025", "Sam Altman 2025"],
-    fallbackId: "1qInzB5I0deY7jAKgFFFgBsd4fkSFLGqg-Fyh7Q3nXUM",
+    fallbackId: "1iglizdY-oldwwrpBDBy84EEYwtNhnv6mKkf9mFP8NZw",
     envKeys: [
       "SPREADSHEET_BTECH_2025_29",
       "SPREADSHEET_ID_BTECH_2025_29",
@@ -81,7 +81,7 @@ var COHORT_TEMPLATES = [
     course: "BTech",
     batch: "2024-28",
     divisions: ["Elon Musk 2024", "Jensen Huang 2024", "Mark Zuckerberg"],
-    fallbackId: "1Z8WWsv0yhiMmfZQqzzYBYrYgxq-FcDd_kbQeGcF5eDI",
+    fallbackId: "1AviRCKbw1dOTh4WKnCXACr4qAgr8Nr4h6EhrRxyuBvc",
     envKeys: [
       "SPREADSHEET_BTECH_2024_28",
       "SPREADSHEET_ID_BTECH_2024_28",
@@ -97,7 +97,7 @@ var COHORT_TEMPLATES = [
     course: "BTech",
     batch: "2023-27",
     divisions: ["Steve Jobs (AI/DS)", "Steve Jobs (Cyber-Sec)", "Steve Jobs"],
-    fallbackId: "1nbdHdLvtlcrhClzfcKA7bBuNXQI1q61qs-sg2RK0ra4",
+    fallbackId: "1Wy0x2Gn-maOcdN3v4xFbatDzgEHZoqaVkpY9I2ui6fc",
     envKeys: [
       "SPREADSHEET_BTECH_2023_27",
       "SPREADSHEET_ID_BTECH_2023_27",
@@ -113,7 +113,7 @@ var COHORT_TEMPLATES = [
     course: "MCA",
     batch: "2026-28",
     divisions: ["Geoffrey Hinton"],
-    fallbackId: "15mPKkE6CWnHRTEH2RCg1HDAwL0cTgC9AqECpv_GRt1o",
+    fallbackId: "1iuT7IHBJ12mnlqwKIHZ_GgtQdV8G-TOfOKiBPIwCTb0",
     envKeys: [
       "SPREADSHEET_MCA_2026_28",
       "SPREADSHEET_ID_MCA_2026_28",
@@ -129,7 +129,7 @@ var WEEK_SHEETS = COHORT_TEMPLATES.map((tmpl) => ({
   batch: tmpl.batch,
   divisions: tmpl.divisions
 }));
-var PRIMARY_SHEET = "1qInzB5I0deY7jAKgFFFgBsd4fkSFLGqg-Fyh7Q3nXUM";
+var PRIMARY_SHEET = "1iglizdY-oldwwrpBDBy84EEYwtNhnv6mKkf9mFP8NZw";
 function sheetForScope(scope, sources = sheetSources()) {
   const division = scope.division?.trim().toLowerCase();
   const batch = scope.batch?.trim().toLowerCase();
@@ -265,7 +265,7 @@ function getConfig() {
     // The sheet link falls back to the 2025-29 workbook. Sync reads every source.
     spreadsheets,
     spreadsheetId: process.env.SPREADSHEET_ID ? cleanSpreadsheetId(process.env.SPREADSHEET_ID) : spreadsheets.find((sheet) => sheet.batch === "2025-29")?.id ?? spreadsheets[0]?.id ?? PRIMARY_SHEET,
-    spreadsheetTitle: process.env.SPREADSHEET_TITLE?.trim() || "BTech Cohort Planning weekly | 2nd Nov to 7th Nov 2026",
+    spreadsheetTitle: process.env.SPREADSHEET_TITLE?.trim() || "BTech Cohort Planning weekly | 16th Nov to 21st Nov 2026",
     collegeName: process.env.COLLEGE_NAME?.trim() || "ITM Skills University",
     schoolName: process.env.SCHOOL_NAME?.trim() || "School of FutureTech, Kharghar",
     courseName: process.env.COURSE_NAME?.trim() || "BTech",
@@ -3678,6 +3678,15 @@ function createApp(db2, config2, load, options) {
       }
     };
   }
+  function storedSheetIsCurrent(sheet, lectures) {
+    const rows = lectures.filter(
+      (lecture) => sheet.batch ? lecture.course === sheet.course && lecture.batch === sheet.batch : lecture.spreadsheetId === sheet.id
+    );
+    if (rows.length === 0) return true;
+    const ids = [...new Set(rows.map((lecture) => lecture.spreadsheetId).filter((id) => Boolean(id)))];
+    if (ids.length === 0) return true;
+    return ids.includes(sheet.id);
+  }
   async function syncIfStale(filter = {}) {
     if (!options?.syncOnRead) return;
     await hydrateArchive(db2).catch(() => false);
@@ -3690,7 +3699,8 @@ function createApp(db2, config2, load, options) {
     }
     const isFresh = () => plan.sheets.every((sheet) => Date.now() - (lastSyncBySheet.get(sheet.id) ?? 0) < config2.syncIntervalSeconds * 1e3);
     const snapshot = loadSnapshot(db2);
-    const saved = plan.everything ? readSyncState(db2).bootstrapped && snapshot.length > 0 : snapshot.some((lecture) => plan.sheets.some((sheet) => lecture.spreadsheetId === sheet.id || sheet.batch && lecture.batch === sheet.batch));
+    const currentSheets = plan.sheets.every((sheet) => storedSheetIsCurrent(sheet, snapshot));
+    const saved = plan.everything ? readSyncState(db2).bootstrapped && snapshot.length > 0 && currentSheets : snapshot.some((lecture) => plan.sheets.some((sheet) => lecture.spreadsheetId === sheet.id || sheet.batch && lecture.course === sheet.course && lecture.batch === sheet.batch)) && currentSheets;
     if (isFresh() && (saved || plan.everything)) return;
     if (saved) {
       const running = runSync(plan.ctx);

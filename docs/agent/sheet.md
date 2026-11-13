@@ -1,6 +1,6 @@
 # Sheet
 
-The live sheet is public and read-only. Id fallback in `server/src/config.ts`: `1Fzv6FWD0EAWWZFcByFkEYTyIu3eMS4tM3BEkW2Gl1j8`. Title shape: `BTech Cohort Planning weekly | 2025-29 - 26th Oct to 31st Oct 2026`. Export URL is `https://docs.google.com/spreadsheets/d/{id}/export?format=xlsx`. A pasted `docs.google.com/spreadsheets` URL in the product is how a human switches the weekly source; the server only accepts an id.
+The live sheets are public and read-only. The current week is 16–21 Nov 2026. Fallbacks in `server/src/config.ts`: BTech 2026-30 `1o_sNayHt8v4WlyZUVcmPWhyjNQ6i8ONuX2zMo5czg0w`, BTech 2025-29 `1iglizdY-oldwwrpBDBy84EEYwtNhnv6mKkf9mFP8NZw`, BTech 2024-28 `1AviRCKbw1dOTh4WKnCXACr4qAgr8Nr4h6EhrRxyuBvc`, BTech 2023-27 `1Wy0x2Gn-maOcdN3v4xFbatDzgEHZoqaVkpY9I2ui6fc`, MCA 2026-28 `1iuT7IHBJ12mnlqwKIHZ_GgtQdV8G-TOfOKiBPIwCTb0`. Title shape: `BTech Cohort Planning weekly | 2025-29 - 16th Nov to 21st Nov 2026`. Export URL is `https://docs.google.com/spreadsheets/d/{id}/export?format=xlsx`. A pasted `docs.google.com/spreadsheets` URL in the product is how a human switches the weekly source; the server only accepts an id.
 
 Cohorts are columns, not tabs. Current columns are Sam Altman 2025, Jeff Bezos 2025, Larry Page 2025, and Demis Hassabis 2025. Do not hardcode that list. The client reads `lecture.division`.
 
@@ -40,7 +40,7 @@ Monday and Saturday OFF cells are white. The word `OFF` cancels the slot. The wh
 
 When someone publishes next week's sheet, its dates do not overlap this week's dates. Sync treats that as a new baseline: the old change log leaves the live Updates list, nothing on the new grid is marked cancelled, and the new grid is the starting point. The previous week stays saved, lectures and updates included, and can be opened from the week menu. Same-week edits still diff. The current batch workbooks are the fallbacks in `server/src/config.ts`.
 
-Deleting `server/data/timetable.sqlite` and restarting local dev also starts clean. Neon still has the saved weeks and the live timetable, and `mergeArchives` decides whether that history reattaches. See `docs/agent/server.md`.
+Deleting `server/data/timetable.sqlite` and restarting local dev also starts clean. Supabase still has the saved weeks and the live timetable, and `mergeArchives` decides whether that history reattaches. See `docs/agent/server.md`.
 
 ## People
 

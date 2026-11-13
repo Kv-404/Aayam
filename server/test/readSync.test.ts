@@ -157,6 +157,33 @@ describe("background sync on read", () => {
     }
   });
 
+  it("waits for the sheets when the saved copy is a different workbook", async () => {
+    const db = openDatabase(":memory:");
+    replaceLectures(db, [{ ...savedLecture(), spreadsheetId: "last-week" }]);
+    writeSyncState(db, { ...readSyncState(db), bootstrapped: true, lastSuccessAt: "2026-10-26T00:00:00.000Z" });
+    let finished = false;
+    const background: Promise<unknown>[] = [];
+    const app = createApp(db, config, async () => ({ buffer: Buffer.alloc(0) }), {
+      syncOnRead: true,
+      loadAll: async () => {
+        finished = true;
+        return [];
+      },
+      runInBackground: (work) => background.push(work),
+    });
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    try {
+      const body = await (await fetch(`http://127.0.0.1:${address && typeof address === "object" ? address.port : 0}/api/bootstrap?all=1`)).json();
+      assert.equal(finished, true);
+      assert.equal(background.length, 0);
+      assert.equal(body.sync.refreshing, false);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   it("waits for the sheets when there is no saved copy", async () => {
     const db = openDatabase(":memory:");
     const background: Promise<unknown>[] = [];
