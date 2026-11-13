@@ -4,7 +4,7 @@ Vite + React + Tailwind. Entry `client/src/main.tsx` → `App.tsx` → `Dashboar
 
 ## Boot
 
-`App.tsx` loads `GET /api/bootstrap` with React Query and refetches on `sync.intervalSeconds`, or after 4 seconds while `sync.refreshing` is true. `useNow` ticks every 15s. Theme, class colours, and bold colours apply on `documentElement` from `client/src/lib/prefs.ts`.
+`App.tsx` loads `GET /api/bootstrap` with React Query and refetches on `sync.intervalSeconds`, or after 4 seconds while `sync.refreshing` is true. Bootstrap carries the current week only. `savedWeeks` lists older weeks without their lectures. Opening one calls `GET /api/week?monday=`. `useNow` ticks every 15s. Theme, class colours, and bold colours apply on `documentElement` from `client/src/lib/prefs.ts`.
 
 A saved faculty sign-in opens that faculty's timetable when the address is `/` or `/?faculty=`, including a phone home-screen icon. The public home page stays for a visit with no faculty token. That page is the product page: what the timetable does today, how students and faculty open it, what is planned next, then institutional pricing. Motion is a short fade on scroll and is off when the user prefers reduced motion. Students pick a batch and section. Faculty sign in with Google. The icon is a standalone web app (`manifest.webmanifest`). An icon added before that file existed must be removed and added again, or the phone keeps the old empty store.
 

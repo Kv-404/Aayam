@@ -393,6 +393,38 @@ function writeSyncState(db2, state) {
     state.spreadsheetTitle
   );
 }
+function readWeekSummaries(db2) {
+  const rows = db2.prepare(`
+    SELECT id, course, batch, start_date, end_date
+    FROM week_backups
+    ORDER BY end_date DESC, start_date DESC
+  `).all();
+  return rows.map((row) => ({
+    id: row.id,
+    course: row.course,
+    batch: row.batch,
+    start: row.start_date,
+    end: row.end_date
+  }));
+}
+function readWeekBackupsByIds(db2, ids) {
+  if (ids.length === 0) return [];
+  const marks = ids.map(() => "?").join(", ");
+  const rows = db2.prepare(`
+    SELECT id, course, batch, start_date, end_date, lectures_json, changes_json
+    FROM week_backups
+    WHERE id IN (${marks})
+  `).all(...ids);
+  return rows.map((row) => ({
+    id: row.id,
+    course: row.course,
+    batch: row.batch,
+    start: row.start_date,
+    end: row.end_date,
+    lectures: JSON.parse(row.lectures_json),
+    changes: row.changes_json ? JSON.parse(row.changes_json) : []
+  }));
+}
 function readWeekBackups(db2) {
   const rows = db2.prepare(`
     SELECT id, course, batch, start_date, end_date, lectures_json, changes_json
@@ -3400,6 +3432,48 @@ function plusDays(iso, days) {
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
 }
+function summaryInScope(week, filter, choices) {
+  if (!filter || filter.faculty) return true;
+  if (filter.division) {
+    const choice = choices.find((item) => item.division === filter.division);
+    if (!choice) return true;
+    return week.course === choice.course && week.batch === choice.batch;
+  }
+  if (filter.course && week.course.toLowerCase() !== filter.course.toLowerCase()) return false;
+  if (filter.batch && week.batch.toLowerCase() !== filter.batch.toLowerCase()) return false;
+  return true;
+}
+function presentBackup(week, now, highlightHours, restoredIds) {
+  const lectures = week.lectures.map((lecture) => presentLecture(lecture, now, highlightHours)).sort(byLecture);
+  const lectureIds = new Set(lectures.map((lecture) => lecture.id));
+  const divisions = new Set(lectures.map((lecture) => lecture.division));
+  const changes = (week.changes ?? []).filter((change) => {
+    if (lectures.length === 0) return false;
+    if (change.lectureId && lectureIds.has(change.lectureId)) return true;
+    if (change.division) return divisions.has(change.division);
+    return true;
+  }).map((change) => {
+    const cancelled = Boolean(change.lectureId && restoredIds.has(change.lectureId) && change.type === "removed");
+    const subject = change.previous?.subject || "A lecture";
+    return {
+      id: change.id,
+      detectedAt: change.detectedAt,
+      type: cancelled ? "cancelled" : change.type,
+      lectureId: change.lectureId,
+      division: change.division,
+      course: change.course,
+      semester: change.semester,
+      tabName: change.tabName,
+      date: change.date,
+      weekday: change.weekday,
+      summary: cancelled ? `${subject} lecture cancelled.` : change.summary,
+      previous: change.previous,
+      next: change.next,
+      fields: change.fields ?? []
+    };
+  });
+  return { id: week.id, course: week.course, batch: week.batch, start: week.start, end: week.end, lectures, changes };
+}
 function programLinkKey(course, batch) {
   return `${course.trim().toLowerCase()}\0${batch.trim().toLowerCase()}`;
 }
@@ -3519,45 +3593,15 @@ function buildBootstrap(db2, config2, now = /* @__PURE__ */ new Date(), filter) 
     list.sort();
     liveKeys.add(`${key}\0${list[0]}\0${list[list.length - 1]}`);
   }
-  const savedWeeks = readWeekBackups(db2).filter((week) => !liveKeys.has(`${week.course}\0${week.batch}\0${week.start}\0${week.end}`)).map((week) => {
-    const weekLectures = scopeOf(week.lectures.map((lecture) => presentLecture(lecture, now, config2.highlightHours)).sort(byLecture));
-    const lectureIds = new Set(weekLectures.map((lecture) => lecture.id));
-    const divisions = new Set(weekLectures.map((lecture) => lecture.division));
-    const weekChanges = (week.changes ?? []).filter((change) => {
-      if (weekLectures.length === 0) return false;
-      if (change.lectureId && lectureIds.has(change.lectureId)) return true;
-      if (change.division) return divisions.has(change.division);
-      return true;
-    }).map((change) => {
-      const cancelled = Boolean(change.lectureId && restored.restoredIds.has(change.lectureId) && change.type === "removed");
-      const subject = change.previous?.subject || "A lecture";
-      return {
-        id: change.id,
-        detectedAt: change.detectedAt,
-        type: cancelled ? "cancelled" : change.type,
-        lectureId: change.lectureId,
-        division: change.division,
-        course: change.course,
-        semester: change.semester,
-        tabName: change.tabName,
-        date: change.date,
-        weekday: change.weekday,
-        summary: cancelled ? `${subject} lecture cancelled.` : change.summary,
-        previous: change.previous,
-        next: change.next,
-        fields: change.fields ?? []
-      };
-    });
-    return {
-      id: week.id,
-      course: week.course,
-      batch: week.batch,
-      start: week.start,
-      end: week.end,
-      lectures: weekLectures,
-      changes: weekChanges
-    };
-  }).filter((week) => week.lectures.length > 0).sort((a, b) => b.end.localeCompare(a.end) || b.start.localeCompare(a.start));
+  const savedWeeks = readWeekSummaries(db2).filter((week) => !liveKeys.has(`${week.course}\0${week.batch}\0${week.start}\0${week.end}`)).filter((week) => summaryInScope(week, filter, choices)).map((week) => ({
+    id: week.id,
+    course: week.course,
+    batch: week.batch,
+    start: week.start,
+    end: week.end,
+    lectures: [],
+    changes: []
+  })).sort((a, b) => b.end.localeCompare(a.end) || b.start.localeCompare(a.start));
   return {
     collegeName: config2.collegeName,
     schoolName: config2.schoolName,
@@ -3735,6 +3779,32 @@ function createApp(db2, config2, load, options) {
       lastSuccessAt: state.lastSuccessAt,
       lastError: state.lastError
     });
+  });
+  app2.get("/api/week", async (req, res) => {
+    const monday = typeof req.query.monday === "string" ? req.query.monday.trim() : "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(monday)) {
+      res.status(400).json({ error: "Missing week." });
+      return;
+    }
+    await hydrateArchive(db2).catch(() => false);
+    const division = (typeof req.query.division === "string" ? req.query.division : "").trim();
+    const faculty = typeof req.query.faculty === "string" ? req.query.faculty.trim() : "";
+    const course = typeof req.query.course === "string" ? req.query.course.trim() : "";
+    const batch = typeof req.query.batch === "string" ? req.query.batch.trim() : "";
+    const filter = { division, faculty, course, batch };
+    const choices = cohortChoices(loadSnapshot(db2).map((lecture) => presentLecture(lecture, /* @__PURE__ */ new Date(), config2.highlightHours)));
+    const ids = readWeekSummaries(db2).filter((week) => mondayOf(week.start) === monday).filter((week) => summaryInScope(week, filter, choices)).map((week) => week.id);
+    const now = /* @__PURE__ */ new Date();
+    const changes = listChanges(db2, 80);
+    const restoredIds = restoreRemovedLectures(loadSnapshot(db2), changes).restoredIds;
+    const opened = readWeekBackupsByIds(db2, ids).map((week) => presentBackup(week, now, config2.highlightHours, restoredIds));
+    const lectures = opened.flatMap((week) => week.lectures);
+    const weekChanges = opened.flatMap((week) => week.changes);
+    const scopedLectures = faculty ? lectures.filter((lecture) => lecture.kind !== "break" && lectureMatchesFaculty(lecture.faculty, faculty)) : division ? lectures.filter((lecture) => {
+      const choice = choices.find((item) => item.division === division);
+      return choice ? lectureInCohort(lecture, choice) : lecture.division === division;
+    }) : lectures;
+    res.json({ lectures: scopedLectures, changes: weekChanges });
   });
   app2.get("/api/bootstrap", async (req, res) => {
     const division = (typeof req.query.division === "string" ? req.query.division : typeof req.query.cohort === "string" ? req.query.cohort : "").trim();

@@ -1,4 +1,4 @@
-import type { BootstrapResponse } from "@shared/types";
+import type { BootstrapResponse, ChangeEvent, PublicLecture } from "@shared/types";
 
 const base = import.meta.env.VITE_API_URL?.replace(/\/$/, "") ?? "";
 
@@ -33,6 +33,16 @@ export function fetchBootstrap(scope?: BootstrapScope) {
   const url = new URL(`${base}/api/bootstrap`, window.location.origin);
   applyScope(url, scope);
   return fetch(url.toString(), { credentials: "include" }).then(read);
+}
+
+export function fetchSavedWeek(monday: string, scope?: BootstrapScope) {
+  const url = new URL(`${base}/api/week`, window.location.origin);
+  url.searchParams.set("monday", monday);
+  applyScope(url, scope);
+  return fetch(url.toString(), { credentials: "include" }).then(async (response) => {
+    if (!response.ok) throw new Error("That week could not be loaded.");
+    return response.json() as Promise<{ lectures: PublicLecture[]; changes: ChangeEvent[] }>;
+  });
 }
 
 export function refreshBootstrap(scope?: BootstrapScope) {

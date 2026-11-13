@@ -3,10 +3,12 @@ import { cohortChoices, cohortLabel, lectureInCohort, type CohortChoice } from "
 import { findCoordinator } from "@shared/coordinators";
 import { changeMatchesFaculty, listFacultyNames } from "@shared/faculty";
 import { Bell, CalendarPlus, Check, ChevronDown, Download, FileSpreadsheet, LogOut, RefreshCw, Settings, X } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { FacultyLoginModal } from "@/components/FacultyLoginModal";
 import { FacultyScopeMenu } from "@/components/FacultyScopeMenu";
 import { fetchCurrentAuth, logoutFaculty } from "@/lib/auth";
+import { fetchSavedWeek } from "@/lib/api";
 import { LectureRoom, MeetChoice } from "@/components/MeetLink";
 import { NotifyControl } from "@/components/NotifyControl";
 import RubberSegment from "@/components/RubberSegment";
@@ -120,14 +122,24 @@ export function Dashboard({
   );
   const selected = choice ? choice.division : cohort;
 
-  const allWeeks = useMemo(() => groupSavedWeeks(data.savedWeeks ?? []), [data.savedWeeks]);
-  const savedWeeks = (role === "student" && choice ? allWeeks.filter((week) => week.lectures.some((lecture) => lectureInCohort(lecture, choice))) : allWeeks)
-    .filter((week) => !data.weekStart || !data.weekEnd || week.end < data.weekStart || week.start > data.weekEnd);
+  const weekRows = useMemo(() => {
+    const rows = data.savedWeeks ?? [];
+    if (role === "student" && choice) return rows.filter((week) => week.course === choice.course && week.batch === choice.batch);
+    return rows;
+  }, [data.savedWeeks, role, choice]);
+  const allWeeks = useMemo(() => groupSavedWeeks(weekRows), [weekRows]);
+  const savedWeeks = allWeeks.filter((week) => !data.weekStart || !data.weekEnd || week.end < data.weekStart || week.start > data.weekEnd);
   const selectedWeek = savedWeeks.find((week) => week.id === weekId);
   useEffect(() => {
     if (weekId !== "live" && !selectedWeek) setWeekId("live");
   }, [selectedWeek, weekId]);
-  const lectureFeed = selectedWeek?.lectures ?? data.lectures;
+  const pastWeek = useQuery({
+    queryKey: ["saved-week", weekId, scopeAll ? "all" : role === "faculty" ? faculty : cohort],
+    queryFn: () => fetchSavedWeek(weekId, scopeAll ? { all: true } : role === "faculty" ? { faculty } : { division: cohort }),
+    enabled: weekId !== "live",
+    staleTime: 5 * 60 * 1000,
+  });
+  const lectureFeed = !selectedWeek ? data.lectures : pastWeek.data?.lectures ?? [];
   const board = resolveFacultyView({
     lectures: lectureFeed,
     choices,
@@ -241,7 +253,7 @@ export function Dashboard({
           : list
       : list.filter((change) => watchedDivisions.size === 0 || !change.division || watchedDivisions.has(change.division));
   const liveChanges = visibleChanges(data.changes, lectureIds(liveBoard.lectures));
-  const shownChanges = selectedWeek ? visibleChanges(selectedWeek.changes ?? [], lectureIds(facultyPool)) : liveChanges;
+  const shownChanges = selectedWeek ? visibleChanges(pastWeek.data?.changes ?? [], lectureIds(facultyPool)) : liveChanges;
   const notifications = useChangeNotifications(liveChanges);
 
   const courses = [...new Set(choices.map((item) => item.course))];
@@ -813,7 +825,11 @@ export function Dashboard({
         {selectedWeek && (
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm">
             <p>
-              Viewing {formatShort(selectedWeek.start)} – {formatShort(selectedWeek.end)}.
+              {pastWeek.isFetching && !pastWeek.data
+                ? `Loading ${formatShort(selectedWeek.start)} – ${formatShort(selectedWeek.end)}.`
+                : pastWeek.isError
+                  ? "That week could not be loaded."
+                  : `Viewing ${formatShort(selectedWeek.start)} – ${formatShort(selectedWeek.end)}.`}
             </p>
             <button type="button" className="text-xs font-medium text-foreground underline-offset-4 hover:underline" onClick={() => chooseWeek("live")}>
               Back to this week
