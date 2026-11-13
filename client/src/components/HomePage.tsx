@@ -1,7 +1,7 @@
 import { useMemo, useState, type MouseEvent } from "react";
 import { cohortLabel, cohortsInYear, type CohortChoice, DEFAULT_COHORT_CHOICES } from "@shared/cohort";
 import { AlertCircle, ArrowLeft, ArrowRight, Check } from "lucide-react";
-import { AayamIcon } from "@/components/AayamLogo";
+import { HomePitch } from "@/components/HomePitch";
 import CodeSlots, { fittedSlotSize } from "@/components/CodeSlots";
 import { ColorSwitch } from "@/components/ColorSwitch";
 import { MeetChoice } from "@/components/MeetLink";
@@ -23,25 +23,6 @@ import { cohortToSlug } from "@/lib/slug";
 type Step = "role" | "pin" | "cohort" | "theme";
 
 const sourceUrl = "https://github.com/Kv-404/Aayam";
-
-const sees = [
-  { title: "Today", note: "The day's classes in order, with the room and who is teaching." },
-  { title: "This week", note: "Those same classes as a grid, so you can see the whole week at once." },
-  { title: "What changed", note: "A cancelled class or a new room stays on the timetable. You are not looking at an old copy of the sheet." },
-];
-
-const opens = [
-  {
-    title: "Students",
-    note: "Enter the 6-digit PIN for your batch, then choose your section. The timetable shows only that section.",
-    action: "Open as student" as const,
-  },
-  {
-    title: "Faculty",
-    note: "Sign in with your @itm.edu or @isu.ac.in Google account. You see the classes you teach.",
-    action: "Faculty sign in" as const,
-  },
-];
 
 export interface HomePageProps {
   onNavigateCohort: (slug: string) => void;
@@ -158,113 +139,17 @@ export function HomePage({
 
   if (step === "role") {
     return (
-      <div className="flex min-h-dvh flex-col">
-        <header className="sticky top-0 z-30 border-b border-border bg-background/90 backdrop-blur-md">
-          <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-5 py-3 sm:px-8">
-            <AayamIcon size={22} />
-            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-              <button type="button" onClick={openStudent} className="rounded-md px-2.5 py-1.5 text-sm hover:bg-muted">
-                Student
-              </button>
-              <button type="button" onClick={() => onOpenFacultyLogin?.()} className="rounded-md bg-foreground px-2.5 py-1.5 text-sm text-background">
-                Faculty
-              </button>
-            </div>
-          </div>
-        </header>
-
-        <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-5 py-10 sm:px-8 sm:py-14">
-          <div className="grid items-center gap-10 lg:grid-cols-2">
-            <div className="rise">
-              <p className="font-mono text-[11px] tracking-[0.22em] text-muted-foreground uppercase">ITM / ISU</p>
-              <h1 className="mt-3 max-w-xl text-4xl font-medium tracking-tight sm:text-5xl">The live college timetable.</h1>
-              <p className="mt-4 max-w-md text-sm leading-relaxed text-muted-foreground">
-                This site reads the official timetable sheet and shows it for one section, or for one teacher. You get today, the week, and the changes: a cancelled class or a moved room shows up here.
-              </p>
-              <div className="mt-8 flex flex-col gap-2.5 sm:flex-row sm:flex-wrap">
-                {hasSavedAccess ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => onNavigateCohort(cohortToSlug(savedCohort))}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-foreground px-4 py-2.5 text-sm text-background sm:w-auto font-medium"
-                    >
-                      Continue to {cohortLabel(savedCohort)}
-                      <ArrowRight className="size-4" aria-hidden="true" />
-                    </button>
-                    <button type="button" onClick={openStudent} className="w-full rounded-lg border border-border px-4 py-2.5 text-sm hover:bg-muted sm:w-auto">
-                      All sections
-                    </button>
-                  </>
-                ) : (
-                  <button type="button" onClick={openStudent} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-foreground px-4 py-2.5 text-sm text-background sm:w-auto">
-                    Open as student
-                    <ArrowRight className="size-4" aria-hidden="true" />
-                  </button>
-                )}
-                <button type="button" onClick={() => onOpenFacultyLogin?.()} className="w-full rounded-lg border border-border px-4 py-2.5 text-sm hover:bg-muted sm:w-auto">
-                  Faculty sign in
-                </button>
-                <a href={sourceUrl} target="_blank" rel="noreferrer" className="inline-flex w-full items-center justify-center rounded-lg px-4 py-2.5 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline sm:w-auto">
-                  View the code
-                </a>
-              </div>
-            </div>
-            <SheetPreview />
-          </div>
-
-          <section className="mt-16">
-            <h2 className="text-lg font-medium tracking-tight">What you see</h2>
-            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-              The sheet stays the source. This page is the view of it: the day as a list, the week as a grid, and the edits that happened since the last version.
-            </p>
-            <ul className="mt-6 grid gap-3 sm:grid-cols-3">
-              {sees.map((item) => (
-                <li key={item.title} className="rounded-xl border border-border px-4 py-5">
-                  <p className="text-sm font-medium">{item.title}</p>
-                  <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{item.note}</p>
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          <section className="mt-12">
-            <h2 className="text-lg font-medium tracking-tight">How you open it</h2>
-            <ul className="mt-6 grid gap-3 sm:grid-cols-2">
-              {opens.map((item) => (
-                <li key={item.title} className="flex flex-col rounded-xl border border-border px-4 py-5">
-                  <p className="text-sm font-medium">{item.title}</p>
-                  <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{item.note}</p>
-                  <button
-                    type="button"
-                    onClick={item.action === "Open as student" ? openStudent : () => onOpenFacultyLogin?.()}
-                    className="mt-4 self-start text-sm underline underline-offset-4 hover:text-foreground"
-                  >
-                    {item.action}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        </main>
-
-        <footer className="border-t border-border">
-          <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-5 py-4 text-xs text-muted-foreground sm:px-8">
-            <p>College timetable for students and faculty.</p>
-            <div className="flex items-center gap-3">
-              <a href={sourceUrl} target="_blank" rel="noreferrer" className="underline-offset-4 hover:text-foreground hover:underline">
-                GitHub
-              </a>
-              <a href="/privacy" onClick={(event) => openPage(event, "/privacy")} className="underline-offset-4 hover:text-foreground hover:underline">
-                Privacy
-              </a>
-              <a href="/terms" onClick={(event) => openPage(event, "/terms")} className="underline-offset-4 hover:text-foreground hover:underline">
-                Terms
-              </a>
-            </div>
-          </div>
-        </footer>
-      </div>
+      <HomePitch
+        hasSavedAccess={hasSavedAccess}
+        savedLabel={savedCohort ? cohortLabel(savedCohort) : ""}
+        onContinue={() => {
+          if (savedCohort) onNavigateCohort(cohortToSlug(savedCohort));
+        }}
+        onOpenStudent={openStudent}
+        onOpenFaculty={() => onOpenFacultyLogin?.()}
+        onOpenPage={openPage}
+        sourceUrl={sourceUrl}
+      />
     );
   }
 
@@ -444,51 +329,6 @@ function choiceClass(selected: boolean, extra: string) {
 function ChoiceMark({ selected }: { selected: boolean }) {
   if (!selected) return <span className="size-5 shrink-0 rounded-full border border-current opacity-35" aria-hidden="true" />;
   return <Check className="size-5 shrink-0" aria-hidden="true" />;
-}
-
-const previewDays = ["Mon", "Tue", "Wed", "Thu", "Fri"];
-const previewRows: Array<{ time: string; cells: string[] }> = [
-  { time: "09:00", cells: ["Maths", "Physics", "", "Maths", "Lab"] },
-  { time: "10:00", cells: ["", "Lab", "Maths", "", "Physics"] },
-  { time: "11:15", cells: ["English", "", "~Physics", "Lab", ""] },
-  { time: "12:15", cells: ["Lab", "English", "", "", "Maths"] },
-];
-
-function SheetPreview() {
-  return (
-    <div className="rise overflow-hidden rounded-xl border border-border bg-card" aria-hidden="true">
-      <div className="flex items-center justify-between border-b border-border px-3 py-2 text-[11px] text-muted-foreground">
-        <span>This week</span>
-        <span className="rounded-md bg-foreground px-2 py-0.5 text-[10px] text-background">Week</span>
-      </div>
-      <div className="grid grid-cols-[2.75rem_repeat(5,minmax(0,1fr))]">
-        <div className="border-b border-border" />
-        {previewDays.map((day) => (
-          <div key={day} className="border-b border-l border-border px-1.5 py-2 text-[11px] text-muted-foreground">
-            {day}
-          </div>
-        ))}
-        {previewRows.map((row) => (
-          <div key={row.time} className="contents">
-            <div className="border-b border-border px-1 py-2.5 font-mono text-[9px] text-muted-foreground sm:text-[10px]">{row.time}</div>
-            {row.cells.map((cell, index) => {
-              const cancelled = cell.startsWith("~");
-              const label = cancelled ? cell.slice(1) : cell;
-              return (
-                <div key={`${row.time}-${index}`} className="min-w-0 border-b border-l border-border p-1">
-                  {label ? (
-                    <div className={`truncate rounded-md px-1 py-1 text-[10px] font-medium sm:text-[11px] ${cancelled ? "text-muted-foreground line-through" : "bg-muted"}`}>
-                      {label}
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 export default HomePage;
