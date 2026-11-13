@@ -9,11 +9,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@neondatabase/serverless": "^1.2.0",
     "@vercel/functions": "^3.10.5",
     "cors": "^2.8.5",
     "exceljs": "^4.4.0",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "postgres": "^3.4.9"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

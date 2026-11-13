@@ -13,8 +13,8 @@ Express API in `server/src`. Local entry `server/src/index.ts`. Vercel entry `se
 | `GET /api/calendar.ics` | `?division=` one cohort, or `?faculty=` every matching lecture. Faculty events put the cohort in `SUMMARY`. `download=1` sets Content-Disposition |
 | `GET /api/changes` | Recent change rows |
 | `GET /api/health` | 200 after a successful sync, else 503 |
-| `POST /api/auth/pin-verify` | Verify 6-digit student batch access PIN against Neon PostgreSQL `batch_access_codes` |
-| `POST /api/auth/google` | Verify Google ID token, restrict to allowed domains (`@itm.edu`, `@isu.ac.in`), match `faculty_directory` in Neon PostgreSQL, issue HttpOnly session cookie and return the same token for the client to keep |
+| `POST /api/auth/pin-verify` | Verify 6-digit student batch access PIN against Supabase Postgres `batch_access_codes` |
+| `POST /api/auth/google` | Verify Google ID token, restrict to allowed domains (`@itm.edu`, `@isu.ac.in`), match `faculty_directory` in Supabase Postgres, issue HttpOnly session cookie and return the same token for the client to keep |
 | `GET /api/auth/me` | Current authenticated faculty session. Accepts the cookie or `Authorization: Bearer` |
 | `POST /api/auth/logout` | Clear faculty session cookie |
 | `GET /api/auth/config` | Returns Google OAuth client ID |
@@ -25,7 +25,7 @@ Express API in `server/src`. Local entry `server/src/index.ts`. Vercel entry `se
 
 `server/src/services/syncScheduler.ts` is the only place that turns a download into a snapshot.
 
-1. `hydrateArchive` if this process has an empty database and `DATABASE_URL` is set.
+1. `hydrateArchive` if this process has an empty database and `DATABASE_URL` is set. That URL is the Supabase transaction pooler.
 2. Download the public xlsx (`googleSheetsService.ts`).
 3. `parseTimetableSource` then `normalizeWorkbook`.
 4. `persistCancelledRemovals` so a removal already recorded stays cancelled in the snapshot.
@@ -51,9 +51,9 @@ Change types the client may alert: `cancelled`, `restored`, `rescheduled`, `room
 
 ## Archive
 
-`durableState.ts` reads and writes Neon. Live lectures, saved weeks, and updates are rows: `timetable_lectures` (one row per lecture, `week_id = live` or a saved week), `timetable_changes` (one row per update, with `week_id`), `timetable_weeks`, and `timetable_sync`. `timetable_archive.archive` stays as the single JSON document the current production bundle still hydrates. New code merges that document with the rows. `timetableArchive.ts` merges two archives. A non-overlapping saved week is a fresh baseline: its change rows leave the live log and stay on that week. The outgoing week is kept, up to 8 past weeks per course and batch, and the published week is stored too so the next upload does not depend on a last-second copy. The client hides the published week from `savedWeeks` and lists the older ones. Same-week removals stay cancelled. `server/test/archive.test.ts`, `sync.test.ts`, and `weeks.test.ts` cover this.
+`durableState.ts` reads and writes Supabase Postgres through `postgres.ts`. Live lectures, saved weeks, and updates are rows: `timetable_lectures` (one row per lecture, `week_id = live` or a saved week), `timetable_changes` (one row per update, with `week_id`), `timetable_weeks`, and `timetable_sync`. `timetable_archive.archive` stays as the single JSON document an older bundle can still hydrate. New code merges that document with the rows. `timetableArchive.ts` merges two archives. A non-overlapping saved week is a fresh baseline: its change rows leave the live log and stay on that week. The outgoing week is kept, up to 8 past weeks per course and batch, and the published week is stored too so the next upload does not depend on a last-second copy. The client hides the published week from `savedWeeks` and lists the older ones. Same-week removals stay cancelled. `server/test/archive.test.ts`, `sync.test.ts`, and `weeks.test.ts` cover this.
 
-SQLite is `server/src/db.ts`. Local file defaults to `server/data/timetable.sqlite` (gitignored). Vercel uses `/tmp/timetable.sqlite`, wiped on cold start, then refilled from Neon.
+SQLite is `server/src/db.ts`. Local file defaults to `server/data/timetable.sqlite` (gitignored). Vercel uses `/tmp/timetable.sqlite`, wiped on cold start, then refilled from Supabase.
 
 ## Parser
 

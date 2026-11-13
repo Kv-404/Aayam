@@ -852,7 +852,37 @@ var DEFAULT_FACULTY_NAMES = [
 
 // server/src/auth.ts
 var import_node_crypto = __toESM(require("node:crypto"), 1);
-var import_serverless = require("@neondatabase/serverless");
+
+// server/src/services/postgres.ts
+var import_postgres = __toESM(require("postgres"), 1);
+var client = null;
+var clientUrl = "";
+function databaseUrl() {
+  return process.env.DATABASE_URL?.trim() || "";
+}
+function getSql() {
+  const url = databaseUrl();
+  if (!url) throw new Error("DATABASE_URL is not configured.");
+  if (!client || clientUrl !== url) {
+    const previous = client;
+    client = (0, import_postgres.default)(url, {
+      ssl: "require",
+      max: process.env.VERCEL ? 1 : 4,
+      prepare: false,
+      idle_timeout: 20,
+      connect_timeout: 20,
+      onnotice: (notice) => {
+        if (notice.code === "42P07") return;
+        console.log(notice.message);
+      }
+    });
+    clientUrl = url;
+    if (previous) void previous.end({ timeout: 1 });
+  }
+  return client;
+}
+
+// server/src/auth.ts
 var COOKIE_NAME = "timetable_faculty_session";
 var DEV_AUTH_SECRET = "timetable-insecure-dev-secret-replace-in-production";
 function isProduction() {
@@ -865,7 +895,7 @@ function getAuthSecret() {
   return DEV_AUTH_SECRET;
 }
 function getDatabaseUrl() {
-  return process.env.DATABASE_URL || "";
+  return databaseUrl();
 }
 function getAllowedDomains() {
   const raw = `${process.env.ALLOWED_EMAIL_DOMAINS || ""} ${process.env.ALLOWED_EMAIL_DOMAIN || ""} itm.edu isu.ac.in`;
@@ -978,7 +1008,7 @@ async function authenticateFacultyWithNeon(email) {
   }
   let rows;
   try {
-    const sql = (0, import_serverless.neon)(dbUrl);
+    const sql = getSql();
     rows = await sql`
       SELECT id, email, faculty_name, can_see_all_faculty, is_active 
       FROM faculty_directory 
@@ -986,7 +1016,7 @@ async function authenticateFacultyWithNeon(email) {
       LIMIT 1
     `;
   } catch (err) {
-    console.error("[auth] Neon faculty lookup error:", err);
+    console.error("[auth] Faculty lookup error:", err);
     throw new Error("Faculty directory service is temporarily unavailable.");
   }
   if (!rows || rows.length === 0) {
@@ -994,7 +1024,7 @@ async function authenticateFacultyWithNeon(email) {
   }
   const faculty = rows[0];
   try {
-    const sql = (0, import_serverless.neon)(dbUrl);
+    const sql = getSql();
     await sql`UPDATE faculty_directory SET last_login_at = NOW() WHERE id = ${faculty.id}`;
   } catch (err) {
     console.error("Failed to update last_login_at:", err);
@@ -1085,7 +1115,7 @@ async function verifyBatchPinWithNeon(pin) {
   const dbUrl = getDatabaseUrl();
   if (dbUrl) {
     try {
-      const sql = (0, import_serverless.neon)(dbUrl);
+      const sql = getSql();
       const rows = await sql`
         SELECT course, batch, pin 
         FROM batch_access_codes 
@@ -1101,7 +1131,7 @@ async function verifyBatchPinWithNeon(pin) {
       }
       return null;
     } catch (err) {
-      console.error("[pin] Neon verification error:", err);
+      console.error("[pin] Verification error:", err);
       throw err;
     }
   }
@@ -1389,15 +1419,11 @@ function persistCancelledRemovals(db2) {
   return restored;
 }
 
-// server/src/services/durableState.ts
-var import_serverless3 = require("@neondatabase/serverless");
-
 // server/src/services/neonRows.ts
-var import_serverless2 = require("@neondatabase/serverless");
 var LIVE = "live";
 var schemaReady = false;
 function neonUrl() {
-  return process.env.DATABASE_URL?.trim() || "";
+  return databaseUrl();
 }
 function chunks(rows, size) {
   const groups = [];
@@ -1731,7 +1757,7 @@ async function readNeonRows() {
   const url = neonUrl();
   if (!url) return null;
   try {
-    const sql = (0, import_serverless2.neon)(url);
+    const sql = getSql();
     await ensureSchema(sql);
     const syncRows = await sql`
       SELECT saved_at, last_success_at, last_attempt_at, last_error, bootstrapped, content_hash,
@@ -1758,34 +1784,34 @@ async function readNeonRows() {
       { lectures, changes, weeks }
     );
   } catch (error) {
-    console.error("[archive] Neon row read error:", error);
+    console.error("[archive] row read error:", error);
     return null;
   }
 }
 async function writeNeonRows(archive) {
   const url = neonUrl();
   if (!url) return false;
-  const sql = (0, import_serverless2.neon)(url);
+  const sql = getSql();
   await ensureSchema(sql);
   const rows = archiveToRows(archive);
   const weekPayload = JSON.stringify(rows.weeks);
   const tabNames = JSON.stringify(archive.sync.tabNames);
   const parseIssues = JSON.stringify(archive.sync.parseIssues);
-  await sql.transaction([
-    sql`DELETE FROM timetable_lectures`,
-    sql`DELETE FROM timetable_changes`,
-    sql`DELETE FROM timetable_weeks`,
-    sql`DELETE FROM timetable_sync`,
-    ...chunks(rows.lectures, 200).map((chunk) => insertLectures(sql, chunk)),
-    ...chunks(rows.changes, 200).map((chunk) => insertChanges2(sql, chunk)),
-    sql`
+  await sql.begin(async (tx) => {
+    await tx`DELETE FROM timetable_lectures`;
+    await tx`DELETE FROM timetable_changes`;
+    await tx`DELETE FROM timetable_weeks`;
+    await tx`DELETE FROM timetable_sync`;
+    for (const chunk of chunks(rows.lectures, 200)) await insertLectures(tx, chunk);
+    for (const chunk of chunks(rows.changes, 200)) await insertChanges2(tx, chunk);
+    await tx`
       INSERT INTO timetable_weeks (id, course, batch, start_date, end_date)
       SELECT id, course, batch, start_date, end_date
       FROM jsonb_to_recordset(${weekPayload}::jsonb) AS x(
         id text, course text, batch text, start_date text, end_date text
       )
-    `,
-    sql`
+    `;
+    await tx`
       INSERT INTO timetable_sync (
         id, saved_at, last_success_at, last_attempt_at, last_error, bootstrapped,
         content_hash, tab_names, parse_issues, spreadsheet_title
@@ -1794,8 +1820,8 @@ async function writeNeonRows(archive) {
         ${archive.sync.lastError}, ${archive.sync.bootstrapped}, ${archive.sync.contentHash},
         ${tabNames}::jsonb, ${parseIssues}::jsonb, ${archive.sync.spreadsheetTitle}
       )
-    `
-  ]);
+    `;
+  });
   return true;
 }
 
@@ -1896,7 +1922,7 @@ function uniqueChangeIds(changes) {
 var lastSignature = "";
 var hydrating = /* @__PURE__ */ new WeakMap();
 function neonUrl2() {
-  return process.env.DATABASE_URL?.trim() || "";
+  return databaseUrl();
 }
 function exportArchive(db2) {
   return {
@@ -1936,7 +1962,7 @@ async function readBlob() {
   const dbUrl = neonUrl2();
   if (!dbUrl) return null;
   try {
-    const sql = (0, import_serverless3.neon)(dbUrl);
+    const sql = getSql();
     const rows = await sql`
       SELECT archive FROM timetable_archive WHERE id = 'latest' LIMIT 1
     `;
@@ -1946,7 +1972,7 @@ async function readBlob() {
       if (isArchive(parsed)) return withWeekChanges(parsed);
     }
   } catch (err) {
-    console.error("[archive] Neon read error:", err);
+    console.error("[archive] read error:", err);
   }
   return null;
 }
@@ -1959,7 +1985,7 @@ async function readRemote() {
 async function writeBlob(archive) {
   const dbUrl = neonUrl2();
   if (!dbUrl) return;
-  const sql = (0, import_serverless3.neon)(dbUrl);
+  const sql = getSql();
   const payload = JSON.stringify(archive);
   await sql`
     INSERT INTO timetable_archive (id, archive, updated_at)
@@ -1981,7 +2007,7 @@ async function loadRemoteArchive(db2) {
   if (!archive?.sync.bootstrapped) return false;
   importArchive(db2, archive);
   lastSignature = archiveSignature(archive);
-  console.log("[sync] loaded saved timetable history from Neon");
+  console.log("[sync] loaded saved timetable history");
   return true;
 }
 async function publishArchive(db2) {
@@ -2000,13 +2026,13 @@ async function publishArchive(db2) {
   try {
     await writeNeonRows(merged);
   } catch (err) {
-    console.error("[archive] Neon row write error:", err);
+    console.error("[archive] row write error:", err);
   }
   try {
     await writeBlob(merged);
-    console.log("[sync] saved timetable history to Neon");
+    console.log("[sync] saved timetable history");
   } catch (err) {
-    console.error("[archive] Neon write error:", err);
+    console.error("[archive] write error:", err);
   }
   lastSignature = signature;
   return true;

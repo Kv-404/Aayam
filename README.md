@@ -35,13 +35,13 @@ The application features a modern multi-tier architecture designed for speed, se
 
 ### 1. Student Batch PIN Access
 - **6-digit PIN Entry**: Students enter a 6-digit access code via the `<CodeSlots />` component during setup.
-- **Neon PostgreSQL Verification**: Verification runs on `/api/auth/pin-verify`, checking against the `batch_access_codes` table (`course`, `batch`, `pin`).
+- **Supabase verification**: Verification runs on `/api/auth/pin-verify`, checking against the `batch_access_codes` table (`course`, `batch`, `pin`).
 - **Batch Scoping**: A valid PIN returns the student's authorized course and batch (e.g., BTech `2025-29`), saving it to `timetable-student-batch`. The cohort picker is strictly restricted to cohorts within that batch, preventing unauthorized cross-batch visibility.
 
 ### 2. Teacher & Faculty Sign-In
 - **Google OAuth**: Faculty authenticate via Google One Tap / Sign-In.
 - **Authorized Domain Restrictions**: Tokens are verified on `/api/auth/google`. Only institutional email addresses from authorized domains (`@itm.edu`, `@isu.ac.in`, configured via `ALLOWED_EMAIL_DOMAINS`) are permitted.
-- **Directory Authorization**: The verified email is checked against Neon PostgreSQL's `faculty_directory` table (`email`, `faculty_name`, `can_see_all_faculty`, `is_active`).
+- **Directory Authorization**: The verified email is checked against Supabase `faculty_directory` (`email`, `faculty_name`, `can_see_all_faculty`, `is_active`).
 - **Secure Sessions**: Authenticated faculty receive a tamper-proof HMAC-SHA256 session token delivered in an `HttpOnly; SameSite=Lax; Secure` cookie (`timetable_faculty_session`), supporting per-faculty views or all-faculty administrative access.
 
 ### 3. Student Logout & State Reset
@@ -141,7 +141,7 @@ The project is optimized for deployment on Vercel:
 
 1. **Client Build**: Vercel compiles the Vite client into `dist/`.
 2. **Serverless API**: The API endpoint `api/[[...path]].js` is bundled via `npm run build:api`. This bundle is committed to the repository because Vercel requires function manifests prior to the build phase.
-3. **Database & Storage**: On Vercel, SQLite runs in `/tmp/timetable.sqlite`. State survives cold starts and restarts through Neon PostgreSQL (`timetable_archive` table) or Vercel Blob.
+3. **Database & Storage**: On Vercel, SQLite runs in `/tmp/timetable.sqlite`. State survives cold starts and restarts through Supabase Postgres (`timetable_archive` and the timetable row tables).
 4. Production deploys trigger automatically from commits to the `main` branch. Day-to-day work lands on `dev`. Live site: [https://timetable.kv404.dev](https://timetable.kv404.dev).
 
 ---

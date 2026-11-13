@@ -6,14 +6,14 @@ Vite + React + Tailwind. Entry `client/src/main.tsx` → `App.tsx` → `Dashboar
 
 `App.tsx` loads `GET /api/bootstrap` with React Query and refetches on `sync.intervalSeconds`, or after 4 seconds while `sync.refreshing` is true. `useNow` ticks every 15s. Theme, class colours, and bold colours apply on `documentElement` from `client/src/lib/prefs.ts`.
 
-A saved faculty sign-in opens that faculty's timetable when the address is `/` or `/?faculty=`, including a phone home-screen icon. The public home page stays for a visit with no faculty token. The icon is a standalone web app (`manifest.webmanifest`). An icon added before that file existed must be removed and added again, or the phone keeps the old empty store.
+A saved faculty sign-in opens that faculty's timetable when the address is `/` or `/?faculty=`, including a phone home-screen icon. The public home page stays for a visit with no faculty token. That page is the product page: what the timetable does today, how students and faculty open it, what is planned next, then institutional pricing. Motion is a short fade on scroll and is off when the user prefers reduced motion. Student PIN entry and faculty sign-in stay on it. The icon is a standalone web app (`manifest.webmanifest`). An icon added before that file existed must be removed and added again, or the phone keeps the old empty store.
 
 `Dashboard.tsx` owns setup, filters, week/day/updates, and the header. It opens on Day view. Do not split that state into a new store.
 
 Setup shows when `readSetup()` is false or `hasChosenRole()` is false, or the saved cohort/faculty is no longer on the sheet.
 
 1. Who are you? Student or Teacher (`Setup.tsx`).
-2. Student: 6-digit PIN entered via `<CodeSlots />`, verified via `/api/auth/pin-verify` against Neon PostgreSQL `batch_access_codes`. Teacher: Google OAuth sign-in restricted to `@itm.edu` and `@isu.ac.in`.
+2. Student: 6-digit PIN entered via `<CodeSlots />`, verified via `/api/auth/pin-verify` against Supabase `batch_access_codes`. Teacher: Google OAuth sign-in restricted to `@itm.edu` and `@isu.ac.in`.
 3. Student: only the authenticated batch's cohorts (e.g., BTech 2025-29 lists its divisions). Teacher: Google sign-in. A coordinator opens on their cohorts. `can_see_all_faculty` opens on every class. Anyone else opens on their own name.
 4. Theme, class colours, bold colours, and whether the Meet button opens or copies.
 
@@ -94,6 +94,7 @@ The theme step is roomy cards (swatch, name, blurb) in 2, 3, or 4 columns, and t
 
 | Change | File |
 | --- | --- |
+| Public pitch home | `client/src/components/HomePitch.tsx` |
 | Setup steps | `client/src/components/Setup.tsx` |
 | Filtering, header, now line | `client/src/components/Dashboard.tsx` |
 | Week grid and phone list | `client/src/components/WeeklyView.tsx` |

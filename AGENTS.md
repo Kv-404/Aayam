@@ -17,7 +17,7 @@ Shared types and faculty-name matching are in `docs/agent/server.md`. Read a sec
 
 ## Invariants
 
-- Do not add Supabase, another database, or a write path to Google Sheets.
+- Postgres is the Supabase project. Do not add another database, or a write path to Google Sheets.
 - The sheet stays shared so anyone with the link can view. The browser never gets a Google key.
 - A lecture removed from a day that is still published stays on the grid as cancelled. It keeps its subject colour, with strikethrough and a Cancelled label. It must survive a process restart through the Neon archive.
 - A new sheet whose dates do not overlap the saved week is a fresh baseline: no added, removed, or cancelled events, and change rows from other weeks are dropped.
@@ -27,7 +27,7 @@ Shared types and faculty-name matching are in `docs/agent/server.md`. Read a sec
 - Phone timetable stays sparse: subject, cohort or faculty, compact room. Do not add extra lines to lecture cards.
 - Cancelled cards keep the subject colour. Graphite is only for OFF. Do not bring back a solid danger fill.
 - Production deploys from `main`. Live site: https://timetable.kv404.dev. Repo: https://github.com/Kv-404/Clg-timetable.git.
-- `batch_access_codes` table in Neon PostgreSQL stores batch access PINs.
+- `batch_access_codes` in Supabase Postgres stores batch access PINs.
 - Student authentication flow: PIN entered via `<CodeSlots />`, verified via `/api/auth/pin-verify`, restricts student cohort choices to that batch.
 - Student logout clears `timetable-student-batch`, `timetable-role`, `timetable-cohort`, `timetable-setup`, and cleans the URL to `/`.
 

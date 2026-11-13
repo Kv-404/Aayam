@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
-import { neon } from "@neondatabase/serverless";
 import type { Request, Response } from "express";
+import { databaseUrl, getSql } from "./services/postgres.ts";
 
 export interface FacultySessionPayload {
   email: string;
@@ -25,7 +25,7 @@ function getAuthSecret(): string | null {
 }
 
 function getDatabaseUrl(): string {
-  return process.env.DATABASE_URL || "";
+  return databaseUrl();
 }
 
 function getAllowedDomains(): string[] {
@@ -156,7 +156,7 @@ export async function authenticateFacultyWithNeon(email: string): Promise<{
   }
   let rows: any[];
   try {
-    const sql = neon(dbUrl);
+    const sql = getSql();
     rows = await sql`
       SELECT id, email, faculty_name, can_see_all_faculty, is_active 
       FROM faculty_directory 
@@ -164,7 +164,7 @@ export async function authenticateFacultyWithNeon(email: string): Promise<{
       LIMIT 1
     `;
   } catch (err) {
-    console.error("[auth] Neon faculty lookup error:", err);
+    console.error("[auth] Faculty lookup error:", err);
     throw new Error("Faculty directory service is temporarily unavailable.");
   }
   if (!rows || rows.length === 0) {
@@ -174,7 +174,7 @@ export async function authenticateFacultyWithNeon(email: string): Promise<{
 
   // Update last login
   try {
-    const sql = neon(dbUrl);
+    const sql = getSql();
     await sql`UPDATE faculty_directory SET last_login_at = NOW() WHERE id = ${faculty.id}`;
   } catch (err) {
     console.error("Failed to update last_login_at:", err);
@@ -291,7 +291,7 @@ export async function verifyBatchPinWithNeon(pin: string): Promise<{
   const dbUrl = getDatabaseUrl();
   if (dbUrl) {
     try {
-      const sql = neon(dbUrl);
+      const sql = getSql();
       const rows = await sql`
         SELECT course, batch, pin 
         FROM batch_access_codes 
@@ -307,7 +307,7 @@ export async function verifyBatchPinWithNeon(pin: string): Promise<{
       }
       return null;
     } catch (err) {
-      console.error("[pin] Neon verification error:", err);
+      console.error("[pin] Verification error:", err);
       // A database failure says nothing about the PIN. The route reports it without counting a failed attempt.
       throw err;
     }

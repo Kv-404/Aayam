@@ -1,9 +1,10 @@
-import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
+import type postgres from "postgres";
 import type { StoredChange } from "../db.ts";
 import type { StoredLecture } from "../model.ts";
+import { databaseUrl, getSql } from "./postgres.ts";
 import type { TimetableArchive } from "./timetableArchive.ts";
 
-type Sql = NeonQueryFunction<false, false>;
+type Sql = postgres.Sql | postgres.TransactionSql;
 
 const LIVE = "live";
 let schemaReady = false;
@@ -70,7 +71,7 @@ export interface NeonRows {
 }
 
 function neonUrl() {
-  return process.env.DATABASE_URL?.trim() || "";
+  return databaseUrl();
 }
 
 function chunks<T>(rows: T[], size: number) {
@@ -420,7 +421,7 @@ export async function readNeonRows(): Promise<TimetableArchive | null> {
   const url = neonUrl();
   if (!url) return null;
   try {
-    const sql = neon(url);
+    const sql = getSql();
     await ensureSchema(sql);
     const syncRows = await sql`
       SELECT saved_at, last_success_at, last_attempt_at, last_error, bootstrapped, content_hash,
@@ -457,7 +458,7 @@ export async function readNeonRows(): Promise<TimetableArchive | null> {
       { lectures, changes, weeks },
     );
   } catch (error) {
-    console.error("[archive] Neon row read error:", error);
+    console.error("[archive] row read error:", error);
     return null;
   }
 }
@@ -465,27 +466,27 @@ export async function readNeonRows(): Promise<TimetableArchive | null> {
 export async function writeNeonRows(archive: TimetableArchive) {
   const url = neonUrl();
   if (!url) return false;
-  const sql = neon(url);
+  const sql = getSql();
   await ensureSchema(sql);
   const rows = archiveToRows(archive);
   const weekPayload = JSON.stringify(rows.weeks);
   const tabNames = JSON.stringify(archive.sync.tabNames);
   const parseIssues = JSON.stringify(archive.sync.parseIssues);
-  await sql.transaction([
-    sql`DELETE FROM timetable_lectures`,
-    sql`DELETE FROM timetable_changes`,
-    sql`DELETE FROM timetable_weeks`,
-    sql`DELETE FROM timetable_sync`,
-    ...chunks(rows.lectures, 200).map((chunk) => insertLectures(sql, chunk)),
-    ...chunks(rows.changes, 200).map((chunk) => insertChanges(sql, chunk)),
-    sql`
+  await sql.begin(async (tx) => {
+    await tx`DELETE FROM timetable_lectures`;
+    await tx`DELETE FROM timetable_changes`;
+    await tx`DELETE FROM timetable_weeks`;
+    await tx`DELETE FROM timetable_sync`;
+    for (const chunk of chunks(rows.lectures, 200)) await insertLectures(tx, chunk);
+    for (const chunk of chunks(rows.changes, 200)) await insertChanges(tx, chunk);
+    await tx`
       INSERT INTO timetable_weeks (id, course, batch, start_date, end_date)
       SELECT id, course, batch, start_date, end_date
       FROM jsonb_to_recordset(${weekPayload}::jsonb) AS x(
         id text, course text, batch text, start_date text, end_date text
       )
-    `,
-    sql`
+    `;
+    await tx`
       INSERT INTO timetable_sync (
         id, saved_at, last_success_at, last_attempt_at, last_error, bootstrapped,
         content_hash, tab_names, parse_issues, spreadsheet_title
@@ -494,7 +495,7 @@ export async function writeNeonRows(archive: TimetableArchive) {
         ${archive.sync.lastError}, ${archive.sync.bootstrapped}, ${archive.sync.contentHash},
         ${tabNames}::jsonb, ${parseIssues}::jsonb, ${archive.sync.spreadsheetTitle}
       )
-    `,
-  ]);
+    `;
+  });
   return true;
 }

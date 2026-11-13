@@ -1,4 +1,3 @@
-import { neon } from "@neondatabase/serverless";
 import {
   readAllChanges,
   readLectures,
@@ -11,13 +10,14 @@ import {
   type AppDatabase,
 } from "../db.ts";
 import { readNeonRows, writeNeonRows } from "./neonRows.ts";
+import { databaseUrl, getSql } from "./postgres.ts";
 import { archiveSignature, mergeArchives, type TimetableArchive } from "./timetableArchive.ts";
 
 let lastSignature = "";
 const hydrating = new WeakMap<AppDatabase, Promise<boolean>>();
 
 function neonUrl() {
-  return process.env.DATABASE_URL?.trim() || "";
+  return databaseUrl();
 }
 
 export function exportArchive(db: AppDatabase): TimetableArchive {
@@ -62,7 +62,7 @@ async function readBlob(): Promise<TimetableArchive | null> {
   const dbUrl = neonUrl();
   if (!dbUrl) return null;
   try {
-    const sql = neon(dbUrl);
+    const sql = getSql();
     const rows = await sql`
       SELECT archive FROM timetable_archive WHERE id = 'latest' LIMIT 1
     `;
@@ -72,7 +72,7 @@ async function readBlob(): Promise<TimetableArchive | null> {
       if (isArchive(parsed)) return withWeekChanges(parsed);
     }
   } catch (err) {
-    console.error("[archive] Neon read error:", err);
+    console.error("[archive] read error:", err);
   }
   return null;
 }
@@ -87,7 +87,7 @@ async function readRemote(): Promise<TimetableArchive | null> {
 async function writeBlob(archive: TimetableArchive) {
   const dbUrl = neonUrl();
   if (!dbUrl) return;
-  const sql = neon(dbUrl);
+  const sql = getSql();
   const payload = JSON.stringify(archive);
   await sql`
     INSERT INTO timetable_archive (id, archive, updated_at)
@@ -113,7 +113,7 @@ async function loadRemoteArchive(db: AppDatabase) {
   if (!archive?.sync.bootstrapped) return false;
   importArchive(db, archive);
   lastSignature = archiveSignature(archive);
-  console.log("[sync] loaded saved timetable history from Neon");
+  console.log("[sync] loaded saved timetable history");
   return true;
 }
 
@@ -135,13 +135,13 @@ export async function publishArchive(db: AppDatabase) {
   try {
     await writeNeonRows(merged);
   } catch (err) {
-    console.error("[archive] Neon row write error:", err);
+    console.error("[archive] row write error:", err);
   }
   try {
     await writeBlob(merged);
-    console.log("[sync] saved timetable history to Neon");
+    console.log("[sync] saved timetable history");
   } catch (err) {
-    console.error("[archive] Neon write error:", err);
+    console.error("[archive] write error:", err);
   }
   lastSignature = signature;
   return true;
