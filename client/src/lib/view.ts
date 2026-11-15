@@ -133,10 +133,36 @@ export interface WeekGroup {
   changes: ChangeEvent[];
 }
 
-function mondayOf(iso: string) {
+export function mondayOf(iso: string) {
   const date = new Date(`${iso}T12:00:00Z`);
   date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
   return date.toISOString().slice(0, 10);
+}
+
+/**
+ * When lectures span multiple disparate week ranges, isolate the latest week.
+ * Lectures belonging to earlier weeks are separated so they can be archived or accessed via past weeks.
+ * Undated / recurring lectures are retained in the latest week pool.
+ */
+export function splitByLatestWeek<T extends { date: string | null }>(
+  lectures: T[],
+): { latest: T[]; earlier: T[]; latestMonday: string | null } {
+  const dated = lectures.filter((l) => Boolean(l.date));
+  if (dated.length === 0) {
+    return { latest: lectures, earlier: [], latestMonday: null };
+  }
+  const mondays = [...new Set(dated.map((l) => mondayOf(l.date!)))].sort();
+  if (mondays.length <= 1) {
+    return { latest: lectures, earlier: [], latestMonday: mondays[0] ?? null };
+  }
+  const latestMonday = mondays[mondays.length - 1]!;
+  const latest = lectures.filter((l) => !l.date || mondayOf(l.date) === latestMonday);
+  const earlier = lectures.filter((l) => l.date && mondayOf(l.date) !== latestMonday);
+  return { latest, earlier, latestMonday };
+}
+
+export function filterToLatestWeek<T extends { date: string | null }>(lectures: T[]): T[] {
+  return splitByLatestWeek(lectures).latest;
 }
 
 export function groupSavedWeeks(weeks: SavedWeek[]): WeekGroup[] {

@@ -130,4 +130,27 @@ describe("saved weeks", () => {
     assert.equal(saved?.changes[0]?.summary, "Room changed.");
     assert.equal(saved?.changes[0]?.next?.room, "Classroom - 40");
   });
+
+  it("identifies the latest week boundaries when multiple date ranges exist", () => {
+    const older = lecture("old", { date: "2026-10-26" });
+    const liveStart = lecture("live-start", { date: "2026-11-02", subject: "ML" });
+    const liveEnd = lecture("live-end", { date: "2026-11-07", subject: "Cloud" });
+    const lectures = [older, liveStart, liveEnd];
+
+    function mondayOf(iso: string) {
+      const date = new Date(`${iso}T12:00:00Z`);
+      date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
+      return date.toISOString().slice(0, 10);
+    }
+
+    const mondays = [...new Set(lectures.map((l) => mondayOf(l.date!)))].sort();
+    assert.equal(mondays.length, 2);
+    const latestMonday = mondays[mondays.length - 1];
+    assert.equal(latestMonday, "2026-11-02");
+
+    const latest = lectures.filter((l) => mondayOf(l.date!) === latestMonday);
+    assert.equal(latest.length, 2);
+    assert.equal(latest[0]?.date, "2026-11-02");
+    assert.equal(latest[1]?.date, "2026-11-07");
+  });
 });
