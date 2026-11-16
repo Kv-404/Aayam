@@ -3,6 +3,7 @@ import { cohortLabel, cohortPrograms, cohortYears, cohortsInYear, type CohortCho
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { AayamIcon } from "@/components/AayamLogo";
+import { DatabaseStatus } from "@/components/DatabaseStatus";
 import { ColorSwitch } from "@/components/ColorSwitch";
 import { MeetChoice } from "@/components/MeetLink";
 import { readStoredCohort, saveRole, saveSetup, saveStudentBatch, themes, type MeetAction, type ThemeId } from "@/lib/prefs";
@@ -138,15 +139,18 @@ export function HomePage({
 
   return (
     <main className={`relative mx-auto flex min-h-dvh w-full flex-col px-6 pt-24 pb-8 ${step === "theme" ? "max-w-4xl" : "max-w-md"}`}>
-      <div className="fixed inset-x-0 top-0 z-10 flex items-start justify-between px-5 pt-[max(0.85rem,env(safe-area-inset-top))]">
+      <div className="fixed inset-x-0 top-0 z-10 flex items-center justify-between px-5 pt-[max(0.85rem,env(safe-area-inset-top))]">
         <AayamIcon size={26} />
-        <a
-          href="/admin"
-          onClick={openAdmin}
-          className="pt-1.5 text-[11px] text-muted-foreground/70 hover:text-foreground"
-        >
-          Admin
-        </a>
+        <div className="flex items-center gap-2">
+          <DatabaseStatus />
+          <a
+            href="/admin"
+            onClick={openAdmin}
+            className="text-[11px] text-muted-foreground/70 hover:text-foreground"
+          >
+            Admin
+          </a>
+        </div>
       </div>
 
       <div className="flex flex-1 flex-col justify-center">
@@ -257,31 +261,61 @@ export function HomePage({
         </AnimatePresence>
       </div>
 
-      <div className="mt-8 flex items-center justify-between pt-4 text-sm">
-        {step === "role" ? (
-          <span />
-        ) : (
+      {step !== "role" && (
+        <div className="mt-8 flex items-center justify-between text-sm">
           <button type="button" onClick={goBack} className="inline-flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
             <ArrowLeft className="size-3.5" aria-hidden="true" />
             Back
           </button>
-        )}
-        {step === "theme" ? (
-          <button type="button" onClick={finish} className="rounded-xl bg-foreground px-4 py-2 text-sm font-medium text-background">
-            Continue
-          </button>
-        ) : (
-          <span />
-        )}
-        <span className="flex items-center gap-3 text-xs text-muted-foreground">
-          <a href="/privacy" onClick={(event) => openPage(event, "/privacy")} className="hover:text-foreground">
-            Privacy
+          {step === "theme" ? (
+            <button type="button" onClick={finish} className="rounded-xl bg-foreground px-4 py-2 text-sm font-medium text-background">
+              Continue
+            </button>
+          ) : (
+            <span />
+          )}
+        </div>
+      )}
+
+      <footer className="mt-12 flex flex-col items-center justify-center gap-2.5 border-t border-border/40 pt-6 pb-2 text-center text-xs text-muted-foreground">
+        <div className="flex items-center justify-center">
+          <DatabaseStatus showLabel />
+        </div>
+
+        <div className="flex items-center justify-center gap-3">
+          <a
+            href="/terms"
+            onClick={(event) => openPage(event, "/terms")}
+            className="hover:text-foreground underline-offset-4 hover:underline"
+          >
+            Terms of Service
           </a>
-          <a href="/terms" onClick={(event) => openPage(event, "/terms")} className="hover:text-foreground">
-            Terms
+          <span className="text-muted-foreground/40">·</span>
+          <a
+            href="/privacy"
+            onClick={(event) => openPage(event, "/privacy")}
+            className="hover:text-foreground underline-offset-4 hover:underline"
+          >
+            Privacy Policy
           </a>
-        </span>
-      </div>
+        </div>
+
+        <p className="text-muted-foreground">
+          Made by{" "}
+          <a
+            href="https://kv404.dev"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-foreground underline-offset-4 hover:underline"
+          >
+            KV
+          </a>
+        </p>
+
+        <p className="text-[11px] text-muted-foreground/75">
+          Special thanks to Soumyajit and Neil
+        </p>
+      </footer>
     </main>
   );
 }

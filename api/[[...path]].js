@@ -913,6 +913,53 @@ function getSql() {
   }
   return client;
 }
+var lastCheck = null;
+var inflightCheck = null;
+async function checkDatabaseConnection(options = {}) {
+  const { force = false, timeoutMs = 3e3 } = options;
+  const now = Date.now();
+  if (!force && lastCheck && now - lastCheck.checkedAt < 3e3) {
+    return lastCheck.status;
+  }
+  if (!force && inflightCheck) {
+    return inflightCheck;
+  }
+  const runCheck = async () => {
+    const url = databaseUrl();
+    if (!url) {
+      return { connected: false, error: "DATABASE_URL is not configured." };
+    }
+    const start = performance.now();
+    let timer;
+    try {
+      const sql = getSql();
+      const queryPromise = sql`SELECT 1 as alive`;
+      const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Database check timed out")), timeoutMs);
+        timer.unref?.();
+      });
+      await Promise.race([queryPromise, timeoutPromise]);
+      const latencyMs = Math.round(performance.now() - start);
+      return { connected: true, latencyMs };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        connected: false,
+        error: message || "Database connection failed"
+      };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+  inflightCheck = runCheck();
+  try {
+    const status = await inflightCheck;
+    lastCheck = { status, checkedAt: Date.now() };
+    return status;
+  } finally {
+    inflightCheck = null;
+  }
+}
 
 // server/src/auth.ts
 var COOKIE_NAME = "timetable_faculty_session";
@@ -1243,6 +1290,27 @@ function ensureAdminSchema() {
         public_key TEXT NOT NULL,
         private_key TEXT NOT NULL
       )
+    `;
+    await sql`ALTER TABLE admin_password ENABLE ROW LEVEL SECURITY`;
+    await sql`ALTER TABLE admin_sessions ENABLE ROW LEVEL SECURITY`;
+    await sql`ALTER TABLE timetable_sheet_links ENABLE ROW LEVEL SECURITY`;
+    await sql`ALTER TABLE student_notices ENABLE ROW LEVEL SECURITY`;
+    await sql`ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY`;
+    await sql`ALTER TABLE push_vapid ENABLE ROW LEVEL SECURITY`;
+    await sql`
+      DO $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+          REVOKE ALL ON TABLE admin_password FROM anon;
+          REVOKE ALL ON TABLE admin_sessions FROM anon;
+          REVOKE ALL ON TABLE push_vapid FROM anon;
+        END IF;
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+          REVOKE ALL ON TABLE admin_password FROM authenticated;
+          REVOKE ALL ON TABLE admin_sessions FROM authenticated;
+          REVOKE ALL ON TABLE push_vapid FROM authenticated;
+        END IF;
+      END $$;
     `;
   })().catch((error) => {
     pending = null;
@@ -4486,32 +4554,56 @@ function createApp(db2, config2, load, options) {
     const plan = syncPlan(filter, live);
     if (!plan) {
       if (filter.faculty || filter.all) {
-        const state = readSyncState(db2);
-        const age = state.lastSuccessAt ? Date.now() - new Date(state.lastSuccessAt).getTime() : Number.POSITIVE_INFINITY;
+        const state2 = readSyncState(db2);
+        const age = state2.lastSuccessAt ? Date.now() - new Date(state2.lastSuccessAt).getTime() : Number.POSITIVE_INFINITY;
         if (age > live.syncIntervalSeconds * 1e3) await runSync({ db: db2, config: live, load, loadAll: options.loadAll });
       }
       return;
     }
-    const isFresh = () => plan.sheets.every((sheet) => Date.now() - (lastSyncBySheet.get(sheet.id) ?? 0) < config2.syncIntervalSeconds * 1e3);
+    const state = readSyncState(db2);
+    const dbAge = state.lastSuccessAt ? Date.now() - new Date(state.lastSuccessAt).getTime() : Number.POSITIVE_INFINITY;
+    const isFresh = () => {
+      if (state.bootstrapped && dbAge < config2.syncIntervalSeconds * 1e3) return true;
+      return plan.sheets.every((sheet) => Date.now() - (lastSyncBySheet.get(sheet.id) ?? 0) < config2.syncIntervalSeconds * 1e3);
+    };
     const snapshot = loadSnapshot(db2);
     const currentSheets = plan.sheets.every((sheet) => storedSheetIsCurrent(sheet, snapshot));
     const saved = plan.everything ? readSyncState(db2).bootstrapped && snapshot.length > 0 && currentSheets : snapshot.some((lecture) => plan.sheets.some((sheet) => lecture.spreadsheetId === sheet.id || sheet.batch && lecture.course === sheet.course && lecture.batch === sheet.batch)) && currentSheets;
     if (isFresh() && (saved || plan.everything)) return;
     if (saved) {
-      const running = runSync(plan.ctx);
+      const running = runSync(plan.ctx).then(() => {
+        for (const s of plan.sheets) lastSyncBySheet.set(s.id, Date.now());
+      }).catch((err) => {
+        console.error("[sync]", err instanceof Error ? err.message : err);
+        for (const s of plan.sheets) lastSyncBySheet.set(s.id, Date.now());
+      });
       options.runInBackground?.(running);
       return;
     }
-    await runSync(plan.ctx);
-    if (!isFresh()) await runSync(plan.ctx);
+    try {
+      await runSync(plan.ctx);
+    } finally {
+      for (const s of plan.sheets) lastSyncBySheet.set(s.id, Date.now());
+    }
   }
-  app2.get("/api/health", (_req, res) => {
+  app2.get("/api/health", async (req, res) => {
     const state = readSyncState(db2);
+    const checkDb = req.query.db === "1" || req.query.db === "true";
+    let dbStatus;
+    if (checkDb) {
+      dbStatus = await checkDatabaseConnection();
+    }
     res.status(state.lastSuccessAt ? 200 : 503).json({
       ok: Boolean(state.lastSuccessAt),
       lastSuccessAt: state.lastSuccessAt,
-      lastError: state.lastError
+      lastError: state.lastError,
+      ...dbStatus ? { db: dbStatus } : {}
     });
+  });
+  app2.get("/api/db-status", async (req, res) => {
+    const force = req.query.fresh === "1" || req.query.fresh === "true";
+    const status = await checkDatabaseConnection({ force });
+    res.status(status.connected ? 200 : 503).json(status);
   });
   app2.get("/api/week", async (req, res) => {
     const monday = typeof req.query.monday === "string" ? req.query.monday.trim() : "";

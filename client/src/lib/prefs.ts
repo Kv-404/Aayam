@@ -218,6 +218,44 @@ export function clearStudentAuth() {
     localStorage.removeItem(cohortKey);
     localStorage.removeItem(roleKey);
     localStorage.removeItem(setupKey);
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && (k.startsWith("timetable-snapshot:division:") || k.startsWith("timetable-snapshot:batch:"))) {
+        localStorage.removeItem(k);
+      }
+    }
+  } catch {}
+}
+
+const snapshotPrefix = "timetable-snapshot:";
+
+export function scopeSnapshotKey(scope: { division?: string; faculty?: string; course?: string; batch?: string; all?: boolean }): string {
+  if (scope.all) return `${snapshotPrefix}all`;
+  if (scope.faculty) return `${snapshotPrefix}faculty:${scope.faculty.toLowerCase().trim()}`;
+  if (scope.division) return `${snapshotPrefix}division:${scope.division.toLowerCase().trim()}`;
+  if (scope.course || scope.batch) return `${snapshotPrefix}batch:${(scope.course ?? "").toLowerCase().trim()}:${(scope.batch ?? "").toLowerCase().trim()}`;
+  return `${snapshotPrefix}default`;
+}
+
+export function readCachedBootstrap<T = any>(scope: { division?: string; faculty?: string; course?: string; batch?: string; all?: boolean }): T | undefined {
+  if (typeof window === "undefined") return undefined;
+  const key = scopeSnapshotKey(scope);
+  const raw = storageGet(key);
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.lectures) && parsed.lectures.length > 0) {
+      return parsed as T;
+    }
+  } catch {}
+  return undefined;
+}
+
+export function saveCachedBootstrap(scope: { division?: string; faculty?: string; course?: string; batch?: string; all?: boolean }, data: any) {
+  if (typeof window === "undefined" || !data || !Array.isArray(data.lectures) || data.lectures.length === 0) return;
+  const key = scopeSnapshotKey(scope);
+  try {
+    storageSet(key, JSON.stringify(data));
   } catch {}
 }
 

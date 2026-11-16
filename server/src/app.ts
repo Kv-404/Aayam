@@ -6,7 +6,7 @@ import express from "express";
 import { calendarFile } from "../../shared/calendar.ts";
 import { batchYear, cohortChoices, cohortLabel, DEFAULT_COHORT_CHOICES, lectureInCohort, type CohortChoice } from "../../shared/cohort.ts";
 import { changeMatchesFaculty, DEFAULT_FACULTY_NAMES, lectureMatchesFaculty, listFacultyNames } from "../../shared/faculty.ts";
-import type { BootstrapResponse, ChangeEvent, PublicLecture, SavedWeek, SheetLink } from "../../shared/types.ts";
+import type { BootstrapResponse, ChangeEvent, DatabaseConnectionStatus, PublicLecture, SavedWeek, SheetLink } from "../../shared/types.ts";
 import { registerAdminRoutes } from "./adminRoutes.ts";
 import { sheetForScope, spreadsheetUrl, type AppConfig, type SheetSource } from "./config.ts";
 import { readSyncState, readWeekBackupsByIds, readWeekSummaries, type AppDatabase, type WeekBackupRecord } from "./db.ts";
@@ -18,6 +18,7 @@ import { persistCancelledRemovals } from "./services/persistCancelled.ts";
 import { restoreRemovedLectures } from "./services/restoreRemoved.ts";
 import { loadSnapshot } from "./services/timetableSnapshotService.ts";
 import { hydrateArchive } from "./services/durableState.ts";
+import { checkDatabaseConnection } from "./services/postgres.ts";
 import { runSync, syncInFlight, type SyncContext } from "./services/syncScheduler.ts";
 import { fetchSpreadsheet } from "./services/googleSheetsService.ts";
 import { noticesForScope } from "./services/notices.ts";
@@ -468,7 +469,12 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
       }
       return;
     }
-    const isFresh = () => plan.sheets.every((sheet) => Date.now() - (lastSyncBySheet.get(sheet.id) ?? 0) < config.syncIntervalSeconds * 1000);
+    const state = readSyncState(db);
+    const dbAge = state.lastSuccessAt ? Date.now() - new Date(state.lastSuccessAt).getTime() : Number.POSITIVE_INFINITY;
+    const isFresh = () => {
+      if (state.bootstrapped && dbAge < config.syncIntervalSeconds * 1000) return true;
+      return plan.sheets.every((sheet) => Date.now() - (lastSyncBySheet.get(sheet.id) ?? 0) < config.syncIntervalSeconds * 1000);
+    };
     const snapshot = loadSnapshot(db);
     // A saved copy of an older workbook is not this week. Wait for the configured sheets.
     const currentSheets = plan.sheets.every((sheet) => storedSheetIsCurrent(sheet, snapshot));
@@ -477,22 +483,44 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
       : snapshot.some((lecture) => plan.sheets.some((sheet) => lecture.spreadsheetId === sheet.id || (sheet.batch && lecture.course === sheet.course && lecture.batch === sheet.batch))) && currentSheets;
     if (isFresh() && (saved || plan.everything)) return;
     if (saved) {
-      const running = runSync(plan.ctx);
+      const running = runSync(plan.ctx)
+        .then(() => {
+          for (const s of plan.sheets) lastSyncBySheet.set(s.id, Date.now());
+        })
+        .catch((err) => {
+          console.error("[sync]", err instanceof Error ? err.message : err);
+          for (const s of plan.sheets) lastSyncBySheet.set(s.id, Date.now());
+        });
       options.runInBackground?.(running);
       return;
     }
     // Nothing to show yet, so this request has to wait for the sheet.
-    await runSync(plan.ctx);
-    if (!isFresh()) await runSync(plan.ctx);
+    try {
+      await runSync(plan.ctx);
+    } finally {
+      for (const s of plan.sheets) lastSyncBySheet.set(s.id, Date.now());
+    }
   }
 
-  app.get("/api/health", (_req, res) => {
+  app.get("/api/health", async (req, res) => {
     const state = readSyncState(db);
+    const checkDb = req.query.db === "1" || req.query.db === "true";
+    let dbStatus: DatabaseConnectionStatus | undefined;
+    if (checkDb) {
+      dbStatus = await checkDatabaseConnection();
+    }
     res.status(state.lastSuccessAt ? 200 : 503).json({
       ok: Boolean(state.lastSuccessAt),
       lastSuccessAt: state.lastSuccessAt,
       lastError: state.lastError,
+      ...(dbStatus ? { db: dbStatus } : {}),
     });
+  });
+
+  app.get("/api/db-status", async (req, res) => {
+    const force = req.query.fresh === "1" || req.query.fresh === "true";
+    const status = await checkDatabaseConnection({ force });
+    res.status(status.connected ? 200 : 503).json(status);
   });
   app.get("/api/week", async (req, res) => {
     const monday = typeof req.query.monday === "string" ? req.query.monday.trim() : "";

@@ -1,4 +1,5 @@
 import postgres from "postgres";
+import type { DatabaseConnectionStatus } from "../../../shared/types.ts";
 
 let client: postgres.Sql | null = null;
 let clientUrl = "";
@@ -29,3 +30,60 @@ export function getSql() {
   }
   return client;
 }
+
+let lastCheck: { status: DatabaseConnectionStatus; checkedAt: number } | null = null;
+let inflightCheck: Promise<DatabaseConnectionStatus> | null = null;
+
+export function resetDatabaseStatusCache() {
+  lastCheck = null;
+  inflightCheck = null;
+}
+
+export async function checkDatabaseConnection(options: { force?: boolean; timeoutMs?: number } = {}): Promise<DatabaseConnectionStatus> {
+  const { force = false, timeoutMs = 3000 } = options;
+  const now = Date.now();
+  if (!force && lastCheck && now - lastCheck.checkedAt < 3000) {
+    return lastCheck.status;
+  }
+  if (!force && inflightCheck) {
+    return inflightCheck;
+  }
+
+  const runCheck = async (): Promise<DatabaseConnectionStatus> => {
+    const url = databaseUrl();
+    if (!url) {
+      return { connected: false, error: "DATABASE_URL is not configured." };
+    }
+    const start = performance.now();
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const sql = getSql();
+      const queryPromise = sql`SELECT 1 as alive`;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Database check timed out")), timeoutMs);
+        timer.unref?.();
+      });
+      await Promise.race([queryPromise, timeoutPromise]);
+      const latencyMs = Math.round(performance.now() - start);
+      return { connected: true, latencyMs };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        connected: false,
+        error: message || "Database connection failed",
+      };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+
+  inflightCheck = runCheck();
+  try {
+    const status = await inflightCheck;
+    lastCheck = { status, checkedAt: Date.now() };
+    return status;
+  } finally {
+    inflightCheck = null;
+  }
+}
+

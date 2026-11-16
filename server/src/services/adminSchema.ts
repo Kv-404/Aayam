@@ -57,6 +57,27 @@ export function ensureAdminSchema(): Promise<void> {
         private_key TEXT NOT NULL
       )
     `;
+    await sql`ALTER TABLE admin_password ENABLE ROW LEVEL SECURITY`;
+    await sql`ALTER TABLE admin_sessions ENABLE ROW LEVEL SECURITY`;
+    await sql`ALTER TABLE timetable_sheet_links ENABLE ROW LEVEL SECURITY`;
+    await sql`ALTER TABLE student_notices ENABLE ROW LEVEL SECURITY`;
+    await sql`ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY`;
+    await sql`ALTER TABLE push_vapid ENABLE ROW LEVEL SECURITY`;
+    await sql`
+      DO $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+          REVOKE ALL ON TABLE admin_password FROM anon;
+          REVOKE ALL ON TABLE admin_sessions FROM anon;
+          REVOKE ALL ON TABLE push_vapid FROM anon;
+        END IF;
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+          REVOKE ALL ON TABLE admin_password FROM authenticated;
+          REVOKE ALL ON TABLE admin_sessions FROM authenticated;
+          REVOKE ALL ON TABLE push_vapid FROM authenticated;
+        END IF;
+      END $$;
+    `;
   })().catch((error: unknown) => {
     pending = null;
     throw error;

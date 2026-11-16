@@ -23,6 +23,7 @@ import {
   applyColors,
   applyTheme,
   hasChosenRole,
+  readCachedBootstrap,
   readCanSeeAllFaculty,
   readFacultyEmail,
   readFacultyLens,
@@ -35,6 +36,7 @@ import {
   readStoredMeet,
   readStoredTheme,
   readStudentBatch,
+  saveCachedBootstrap,
   saveCanSeeAllFaculty,
   saveCohort,
   saveFaculty,
@@ -430,20 +432,50 @@ export function App() {
     }
   }
 
+  const [refreshPollingCount, setRefreshPollingCount] = useState(0);
+
   const query = useQuery({
     queryKey: ["bootstrap", scope],
     queryFn: () => fetchBootstrap(scope),
+    initialData: () => readCachedBootstrap(scope),
     placeholderData: keepPreviousData,
     staleTime: 15 * 1000,
     gcTime: 10 * 60 * 1000,
     enabled: Boolean(configured || scope.division || scope.faculty || scope.all || (scope.course && scope.batch)),
-    // While the server refreshes in the background, ask again soon to pick up the new copy.
-    refetchInterval: (result) => (result.state.data?.sync.refreshing ? 4 : result.state.data?.sync.intervalSeconds ?? 45) * 1000,
+    // While the server refreshes in the background, ask again soon to pick up the new copy (limited to 5 rapid checks to prevent infinite polling)
+    refetchInterval: (result) => {
+      const isRefreshing = Boolean(result.state.data?.sync?.refreshing);
+      if (isRefreshing && refreshPollingCount < 5) {
+        return 4000;
+      }
+      return (result.state.data?.sync?.intervalSeconds ?? 45) * 1000;
+    },
   });
+
+  useEffect(() => {
+    if (query.data?.sync?.refreshing) {
+      setRefreshPollingCount((prev) => prev + 1);
+    } else {
+      setRefreshPollingCount(0);
+    }
+  }, [query.data?.sync?.refreshing, query.dataUpdatedAt]);
+
+  useEffect(() => {
+    if (query.data && query.data.lectures && query.data.lectures.length > 0) {
+      saveCachedBootstrap(scope, query.data);
+    }
+  }, [query.data, scope]);
 
   const refresh = useMutation({
     mutationFn: () => refreshBootstrap(scope),
-    onSuccess: (data) => queryClient.setQueryData(["bootstrap", scope], data),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["bootstrap", scope], data);
+      saveCachedBootstrap(scope, data);
+    },
+    onError: (err) => {
+      console.warn("Manual refresh failed, falling back to background query:", err);
+      void query.refetch();
+    },
   });
 
   // Back to the timetable's own address, so a reload stays on it.

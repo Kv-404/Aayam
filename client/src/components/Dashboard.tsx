@@ -8,6 +8,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { createPortal } from "react-dom";
 import { FacultyLoginModal } from "@/components/FacultyLoginModal";
 import { FacultyScopeMenu } from "@/components/FacultyScopeMenu";
+import { DatabaseStatus } from "@/components/DatabaseStatus";
 import { fetchCurrentAuth, logoutFaculty } from "@/lib/auth";
 import { fetchSavedWeek } from "@/lib/api";
 import { LectureRoom, MeetChoice } from "@/components/MeetLink";
@@ -778,7 +779,7 @@ export function Dashboard({
                   className="inline-flex h-8 items-center gap-1 rounded-md px-1.5 text-muted-foreground hover:bg-muted hover:text-foreground sm:h-9 sm:px-2"
                 >
                   <GraduationCap className="size-4 shrink-0" aria-hidden="true" />
-                  <span className="text-xs font-medium">Exam</span>
+                  <span className="hidden sm:inline text-xs font-medium">Exam</span>
                 </a>
                 <a
                   href={sheetUrl}
@@ -786,10 +787,13 @@ export function Dashboard({
                   rel="noreferrer"
                   aria-label={selectedWeek ? "Open that week's sheet" : "Open the sheet"}
                   title={selectedWeek ? "Open that week's sheet" : "Open the sheet"}
-                  className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground sm:size-9"
+                  className="hidden sm:inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground sm:size-9"
                 >
                   <FileSpreadsheet className="size-4" aria-hidden="true" />
                 </a>
+                <div className="hidden sm:block">
+                  <DatabaseStatus />
+                </div>
                 <button
                   type="button"
                   aria-label={pending ? "Refreshing" : "Refresh"}
@@ -934,7 +938,7 @@ export function Dashboard({
           <TabsContent value="today" className="rise mt-0">
             <div onPointerDown={handlePointerDown} onPointerUp={handlePointerUp} onPointerCancel={() => { drag.current = null; }} onWheel={handleWheel} className="min-h-[40vh] touch-pan-y">
               <TodayView
-                key={filters.day || todayPack.lectures[0]?.date || zone.weekday}
+                key={activeDay}
                 lectures={todayPack.lectures}
                 today={zone.iso}
                 minutes={zone.minutes}
@@ -1320,6 +1324,38 @@ function AppearanceMenu({
                   </button>
                 );
               })}
+            </div>
+          </div>
+          <div className="mt-5 border-t border-border pt-3">
+            <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Actions</p>
+            <div className="mt-2 flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  onRefresh();
+                }}
+                disabled={pending}
+                className="flex w-full items-center justify-between rounded-xl border border-border bg-background/50 px-3.5 py-2.5 text-xs font-medium hover:bg-muted disabled:opacity-50 transition-colors cursor-pointer"
+              >
+                <span className="flex items-center gap-2">
+                  <RefreshCw className={`size-3.5 ${pending ? "animate-spin text-primary" : "text-muted-foreground"}`} aria-hidden="true" />
+                  <span>{pending ? "Refreshing timetable..." : "Refresh timetable"}</span>
+                </span>
+                {pending && <span className="text-[11px] text-muted-foreground">Syncing...</span>}
+              </button>
+              {sheetUrl && (
+                <a
+                  href={sheetUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex w-full items-center justify-between rounded-xl border border-border bg-background/50 px-3.5 py-2.5 text-xs font-medium hover:bg-muted transition-colors"
+                >
+                  <span className="flex items-center gap-2">
+                    <FileSpreadsheet className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                    <span>Open spreadsheet</span>
+                  </span>
+                </a>
+              )}
             </div>
           </div>
           {role === "student" && (

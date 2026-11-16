@@ -134,3 +134,9 @@ export interface BootstrapResponse {
   /** Messages an admin sent. Present for a student scope. */
   notices?: StudentNotice[];
 }
+
+export interface DatabaseConnectionStatus {
+  connected: boolean;
+  latencyMs?: number;
+  error?: string;
+}
