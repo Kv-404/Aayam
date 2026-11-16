@@ -5,20 +5,21 @@ import { changeMatchesFaculty, listFacultyNames } from "@shared/faculty";
 import { Bell, CalendarPlus, Check, ChevronDown, Download, FileSpreadsheet, GraduationCap, LogOut, RefreshCw, Settings, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { FacultyLoginModal } from "@/components/FacultyLoginModal";
 import { FacultyScopeMenu } from "@/components/FacultyScopeMenu";
 import { fetchCurrentAuth, logoutFaculty } from "@/lib/auth";
 import { fetchSavedWeek } from "@/lib/api";
 import { LectureRoom, MeetChoice } from "@/components/MeetLink";
-import { NotifyControl } from "@/components/NotifyControl";
 import RubberSegment from "@/components/RubberSegment";
 import { RecentChanges } from "@/components/RecentChanges";
 import { SearchPanel } from "@/components/SearchPanel";
+import { StudentNoticeBar } from "@/components/StudentNotice";
 import { Setup } from "@/components/Setup";
 import { TodayView } from "@/components/TodayView";
 import { WeeklyView } from "@/components/WeeklyView";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
-import { useChangeNotifications } from "@/hooks/useNotifications";
+import { syncPushSubscription, useChangeNotifications } from "@/hooks/useNotifications";
 import { useLectureReminders } from "@/hooks/useLectureReminders";
 import { appleWeekCalendarUrl, calendarFeedUrl, googleWeekCalendarUrl, outlookWeekCalendarUrl } from "@/lib/calendar";
 import { lensFromScopeId, resolveFacultyView, signInFacultyLens } from "@/lib/facultyView";
@@ -103,13 +104,15 @@ export function Dashboard({
       faculty: "",
     };
   });
-  // A reload opens the current week, and neither choice is remembered. Students land on today.
-  // Teachers land on the week, because one day can hide every other batch they teach.
-  const [view, setView] = useState(() => (readRole() === "faculty" ? "week" : "today"));
+  // Desktop opens on the week. A phone opens on the day. Faculty always open on the week.
+  const [view, setView] = useState(() => {
+    if (readRole() === "faculty") return "week";
+    if (typeof window !== "undefined" && window.matchMedia("(min-width: 640px)").matches) return "week";
+    return "today";
+  });
   const [weekId, setWeekId] = useState("live");
   const [notifyHintClosed, setNotifyHintClosed] = useState(readNotifyHintClosed);
   const [examNoticeClosed, setExamNoticeClosed] = useState(readExamNoticeClosed);
-  const [barMenuOpen, setBarMenuOpen] = useState(false);
   const [fadeIn, setFadeIn] = useState(false);
   const menuOpen = useAnyMenuOpen();
   const zone = zonedNow(now, data.timezone);
@@ -256,6 +259,10 @@ export function Dashboard({
   const liveChanges = visibleChanges(data.changes, lectureIds(liveBoard.lectures));
   const shownChanges = selectedWeek ? visibleChanges(pastWeek.data?.changes ?? [], lectureIds(facultyPool)) : liveChanges;
   const notifications = useChangeNotifications(liveChanges);
+  useEffect(() => {
+    if (role !== "student" || !notifications.optedIn) return;
+    void syncPushSubscription();
+  }, [role, notifications.optedIn]);
 
   const courses = [...new Set(choices.map((item) => item.course))];
   const batches = [...new Set(choices.filter((item) => item.course === filters.course).map((item) => item.batch))];
@@ -304,7 +311,7 @@ export function Dashboard({
   }
   const failing = Boolean(data.sync.lastError);
   const activeSheet = role === "student" ? choice : facultyChoice;
-  const sheetUrl = sheetUrlFor(data.sheets, activeSheet, data.spreadsheetUrl);
+  const sheetUrl = (selectedWeek && pastWeek.data?.spreadsheetUrl) || sheetUrlFor(data.sheets, activeSheet, data.spreadsheetUrl);
 
   function navigateDay(direction: -1 | 1) {
     if (days.length <= 1) return;
@@ -355,28 +362,32 @@ export function Dashboard({
     shownOnce.current = true;
   }, [view, filters.day, weekId]);
 
-  const touchStartX = useRef<number | null>(null);
-  const touchStartY = useRef<number | null>(null);
+  const drag = useRef<{ x: number; y: number; id: number } | null>(null);
+  const wheelLock = useRef(0);
 
-  function handleTouchStart(e: React.TouchEvent) {
-    touchStartX.current = e.touches[0]?.clientX ?? null;
-    touchStartY.current = e.touches[0]?.clientY ?? null;
+  function swipeDay(deltaX: number, deltaY: number) {
+    if (Math.abs(deltaX) > 48 && Math.abs(deltaX) > Math.abs(deltaY) * 1.4) navigateDay(deltaX < 0 ? 1 : -1);
   }
 
-  function handleTouchEnd(e: React.TouchEvent) {
-    if (touchStartX.current == null || touchStartY.current == null) return;
-    const deltaX = (e.changedTouches[0]?.clientX ?? 0) - touchStartX.current;
-    const deltaY = (e.changedTouches[0]?.clientY ?? 0) - touchStartY.current;
-    touchStartX.current = null;
-    touchStartY.current = null;
+  function handlePointerDown(event: React.PointerEvent) {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest("a, button, input, textarea, select")) return;
+    drag.current = { x: event.clientX, y: event.clientY, id: event.pointerId };
+  }
 
-    if (Math.abs(deltaX) > 45 && Math.abs(deltaX) > Math.abs(deltaY) * 1.4) {
-      if (deltaX < 0) {
-        navigateDay(1);
-      } else {
-        navigateDay(-1);
-      }
-    }
+  function handlePointerUp(event: React.PointerEvent) {
+    const start = drag.current;
+    if (!start || start.id !== event.pointerId) return;
+    drag.current = null;
+    swipeDay(event.clientX - start.x, event.clientY - start.y);
+  }
+
+  function handleWheel(event: React.WheelEvent) {
+    if (Date.now() < wheelLock.current) return;
+    if (Math.abs(event.deltaX) < 24 || Math.abs(event.deltaX) < Math.abs(event.deltaY)) return;
+    wheelLock.current = Date.now() + 450;
+    navigateDay(event.deltaX > 0 ? 1 : -1);
   }
 
   function choose(division: string) {
@@ -642,18 +653,14 @@ export function Dashboard({
       {...segmentProps}
     />
   ) : null;
-  const weekLabel = data.weekStart && data.weekEnd ? `${formatShort(data.weekStart)} – ${formatShort(data.weekEnd)}` : "This week";
-  const weekControl = (opensUp = false) =>
-    savedWeeks.length > 0 ? (
-      <WeekMenu liveLabel={weekLabel} weeks={savedWeeks} value={selectedWeek ? selectedWeek.id : "live"} onChange={chooseWeek} opensUp={opensUp} onOpenChange={opensUp ? setBarMenuOpen : undefined} />
-    ) : null;
-
   const notice = reminders.notice ?? notifications.notice;
   const dismissNotice = () => {
     if (reminders.notice) reminders.dismiss();
     else notifications.dismiss();
   };
-  const floatBottom = view === "today" ? "bottom-[calc(6.25rem+env(safe-area-inset-bottom))]" : "bottom-[calc(3.75rem+env(safe-area-inset-bottom))]";
+  const floatBottom = "bottom-[calc(3.75rem+env(safe-area-inset-bottom))]";
+  const phoneDays = view === "today" ? dayControl("w-full") : null;
+  const desktopDays = view === "today" ? dayControl("w-full max-w-xl") : null;
   const dismissNotifyHint = () => {
     closeNotifyHint();
     setNotifyHintClosed(true);
@@ -670,14 +677,6 @@ export function Dashboard({
       emptyNote={liveMarks ? "No upcoming classes" : ""}
     />
   );
-  const headerControls = (
-    <>
-      {weekControl()}
-      {viewControl("shrink-0")}
-      <NotifyControl optedIn={notifications.optedIn} pulse={reminders.pulse} onEnable={() => void notifications.enable()} />
-    </>
-  );
-
   return (
     <Tabs value={view} onValueChange={setView} className={`min-h-dvh flex flex-col ${fadeIn ? "page-fade" : ""}`}>
       {/* Under the header, whose menus stay sharp. A click here closes them through their outside-click listeners. */}
@@ -688,10 +687,8 @@ export function Dashboard({
         className={`fixed inset-0 z-25 bg-background/40 backdrop-blur-sm transition-[opacity,visibility] duration-200 ${menuOpen ? "visible opacity-100" : "invisible opacity-0"}`}
       />
       <header className="sticky top-0 z-30 short:relative border-b border-border bg-background/90 backdrop-blur-md">
-        <div className="flex flex-col gap-2 px-3 py-2.5 sm:gap-3 sm:px-6 sm:py-3.5">
-          {/* Row 1: Brand (left), Desktop Status (center), Toolbar (right) - NEVER wraps on mobile */}
-          <div className="flex items-center justify-between gap-1.5 sm:gap-3 w-full min-w-0">
-            {/* Left: Brand + Identity (Cohort / Faculty) */}
+        <div className="flex flex-col gap-2 px-3 py-2 sm:px-5 sm:py-2.5">
+          <div className="flex items-center gap-2 w-full min-w-0">
             <div className="min-w-0 flex items-center gap-1.5 sm:gap-2 shrink">
               <a
                 href="/"
@@ -733,31 +730,52 @@ export function Dashboard({
               )}
             </div>
 
-            {/* Center on the widest screens: HeaderStatus. Faculty menus are wider, so they need more room. */}
-            <div className={`hidden ${role === "faculty" ? "2xl:flex" : "xl:flex"} flex-1 items-center justify-center min-w-0 px-2 max-w-lg mx-auto`}>
-              {statusLine}
+            <div className="hidden min-w-0 flex-1 items-center justify-center px-3 lg:flex">
+              {desktopDays ?? statusLine}
             </div>
 
-            {/* Right: View Switcher (widest screens) + Actions Toolbar */}
-            <div className="relative z-30 flex shrink-0 items-center gap-1 sm:gap-2">
-              <div className="hidden xl:flex xl:items-center xl:gap-2">
-                {headerControls}
-                <div className="h-4 w-px bg-border/60 mx-0.5" aria-hidden="true" />
+            <div className="relative z-30 ml-auto flex shrink-0 items-center gap-1">
+              <div className="hidden items-center sm:flex">
+                {viewControl("shrink-0")}
               </div>
-
-              <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+              <div className="flex shrink-0 items-center gap-0.5">
                 <a
                   href="https://exam.somyacodes.in/"
                   target="_blank"
                   rel="noreferrer"
                   data-testid="exam-schedule"
-                  aria-label="AT/KT and exam schedules"
-                  title="AT/KT and exam schedules"
-                  className="inline-flex h-8 items-center gap-1 rounded-md px-1.5 text-danger hover:bg-danger-soft sm:h-9 sm:px-2"
+                  aria-label="University exams"
+                  title="University exams"
+                  className="inline-flex h-8 items-center gap-1 rounded-md px-1.5 text-muted-foreground hover:bg-muted hover:text-foreground sm:h-9 sm:px-2"
                 >
                   <GraduationCap className="size-4 shrink-0" aria-hidden="true" />
-                  <span className="hidden text-xs font-medium sm:inline">Exams</span>
+                  <span className="text-xs font-medium">Exam</span>
                 </a>
+                <a
+                  href={sheetUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={selectedWeek ? "Open that week's sheet" : "Open the sheet"}
+                  title={selectedWeek ? "Open that week's sheet" : "Open the sheet"}
+                  className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground sm:size-9"
+                >
+                  <FileSpreadsheet className="size-4" aria-hidden="true" />
+                </a>
+                <button
+                  type="button"
+                  aria-label={pending ? "Refreshing" : "Refresh"}
+                  title={pending ? "Refreshing" : "Refresh"}
+                  data-testid="refresh-button"
+                  disabled={pending}
+                  onClick={onRefresh}
+                  className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50 sm:size-9"
+                >
+                  <RefreshCw className={`size-4 ${pending ? "animate-spin" : ""}`} aria-hidden="true" />
+                </button>
+                <CalendarMenu
+                  scope={role === "faculty" ? board.calendar ?? { faculty: selectedFaculty } : { division: selected }}
+                  label={role === "faculty" ? board.label : cohortLabel(selected)}
+                />
                 <SearchPanel
                   query={filters.query}
                   placeholder={searchPlaceholder}
@@ -783,51 +801,14 @@ export function Dashboard({
                   }}
                   onClear={() => patch({ division: "", day: "", subject: "", faculty: "", room: "", status: "all", query: "" })}
                 />
-                {role !== "faculty" || board.calendar ? (
-                  <CalendarMenu
-                    scope={role === "faculty" ? board.calendar ?? { faculty: selectedFaculty } : { division: selected }}
-                    label={role === "faculty" ? board.label : cohortLabel(selected)}
-                  />
-                ) : null}
-                <a
-                  href={sheetUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label="Open the sheet"
-                  className="hidden size-9 sm:inline-flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                >
-                  <FileSpreadsheet className="size-4" aria-hidden="true" />
-                </a>
-                <div className="hidden sm:block">
-                  <IconButton label={pending ? "Refreshing" : "Refresh"} onClick={onRefresh} disabled={pending} testId="refresh-button">
-                    <RefreshCw className={`size-4 ${pending ? "animate-spin" : ""}`} aria-hidden="true" />
-                  </IconButton>
-                </div>
                 <AppearanceMenu theme={theme} colors={colors} bold={bold} meet={meet} subjects={subjects} notifications={notifications.optedIn} onTheme={onTheme} onColors={onColors} onBold={onBold} onMeet={onMeet} onEnable={() => void notifications.enable()} onDisable={notifications.disable} role={role} sheetUrl={sheetUrl} pending={pending} onRefresh={onRefresh} onStudentLogout={handleStudentLogout} onFacultyLogout={handleFacultyLogout} savedWeeks={savedWeeks} weekId={selectedWeek ? selectedWeek.id : "live"} onWeek={chooseWeek} />
               </div>
             </div>
           </div>
-
-          {/* Phone: HeaderStatus on its own line */}
-          <div className="sm:hidden w-full">{statusLine}</div>
-
-          {/* Tablet and small laptop: controls and status drop to their own row, so the top row never overlaps */}
-          <div className="hidden sm:flex xl:hidden flex-wrap items-center gap-2">
-            {headerControls}
-            <div className="min-w-64 flex-1">{statusLine}</div>
-          </div>
-          {role === "faculty" && <div className="hidden xl:block 2xl:hidden">{statusLine}</div>}
-
-          {/* Row 2 on Desktop for Day View: day selector */}
-          {view === "today" && days.length > 0 && activeDay && (
-            <div className="hidden sm:flex sm:items-center sm:justify-start pt-2 border-t border-border/30">
-              <div className="flex min-w-0 items-center gap-3">
-                {dayControl("max-w-xl")}
-              </div>
-            </div>
-          )}
+          <div className="w-full lg:hidden">{phoneDays ?? statusLine}</div>
         </div>
       </header>
+      {role === "student" ? <StudentNoticeBar notices={data.notices ?? []} optedIn={notifications.optedIn} /> : null}
       {!examNoticeClosed && (
         <div
           role="status"
@@ -860,7 +841,7 @@ export function Dashboard({
         </div>
       )}
 
-      <main id="timetable" className={`flex-1 flex flex-col px-4 py-4 ${view === "today" ? "pb-[calc(7rem+env(safe-area-inset-bottom))]" : "pb-[calc(4.5rem+env(safe-area-inset-bottom))]"} sm:px-6 sm:py-5 sm:pb-5`}>
+      <main id="timetable" className="flex flex-1 flex-col px-4 py-4 pb-[calc(4.5rem+env(safe-area-inset-bottom))] sm:px-6 sm:py-5 sm:pb-5">
         <h1 className="sr-only">{role === "faculty" ? board.label : cohortLabel(selected)} timetable</h1>
         <p data-testid="sync-status" role={failing ? "alert" : "status"} className={`text-sm ${failing ? "mb-3 text-warning" : "sr-only"}`}>
           {failing ? data.sync.lastError || "Could not refresh. The last timetable is still shown." : syncedLabel(data.sync.lastSuccessAt, now)}
@@ -892,7 +873,7 @@ export function Dashboard({
         )}
         <div className="flex-1">
           <TabsContent value="today" className="rise mt-0">
-            <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd} className="min-h-[40vh]">
+            <div onPointerDown={handlePointerDown} onPointerUp={handlePointerUp} onPointerCancel={() => { drag.current = null; }} onWheel={handleWheel} className="min-h-[40vh] touch-pan-y">
               <TodayView
                 key={filters.day || todayPack.lectures[0]?.date || zone.weekday}
                 lectures={todayPack.lectures}
@@ -947,13 +928,9 @@ export function Dashboard({
           </a>
         </footer>
       </main>
-      <div className={`fixed inset-x-0 bottom-0 ${barMenuOpen ? "z-40" : "z-20"} border-t border-border bg-background/95 backdrop-blur-md sm:hidden pb-[env(safe-area-inset-bottom)]`}>
-        <div className="flex flex-col gap-2 px-3 py-2">
-          {view === "today" && <div className="short:hidden">{dayControl("w-full")}</div>}
-          <div className="flex items-center gap-2">
-            {weekControl(true)}
-            <div className="min-w-0 flex-1">{viewControl("w-full")}</div>
-          </div>
+      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background/95 backdrop-blur-md sm:hidden pb-[env(safe-area-inset-bottom)]">
+        <div className="px-3 py-2">
+          {viewControl("w-full")}
         </div>
       </div>
       {notice && (
@@ -1042,23 +1019,28 @@ function AuthenticatedFacultyBadge({
 
 function CalendarMenu({ scope, label }: { scope: { division?: string; faculty?: string }; label: string }) {
   const [open, setOpen] = useState(false);
-  const [calendarNotice, setCalendarNotice] = useState<{ type: "google" | "proton"; copied: boolean } | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [anchor, setAnchor] = useState({ top: 56, right: 12 });
   const feed = calendarFeedUrl(scope, false, true);
   const file = `${label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "timetable"}.ics`;
-  const showing = open || Boolean(calendarNotice);
-  useMenuBackdrop(showing);
+
+  function place() {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setAnchor({ top: rect.bottom + 8, right: Math.max(12, window.innerWidth - rect.right) });
+  }
+
   useEffect(() => {
-    if (!showing) return;
-    function close() {
-      setOpen(false);
-      setCalendarNotice(null);
-    }
+    if (!open) return;
     function onPointer(event: MouseEvent) {
-      if (!menuRef.current?.contains(event.target as Node)) close();
+      const node = event.target as Node;
+      if (buttonRef.current?.contains(node) || panelRef.current?.contains(node)) return;
+      setOpen(false);
     }
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") close();
+      if (event.key === "Escape") setOpen(false);
     }
     window.addEventListener("mousedown", onPointer);
     window.addEventListener("keydown", onKey);
@@ -1066,87 +1048,65 @@ function CalendarMenu({ scope, label }: { scope: { division?: string; faculty?: 
       window.removeEventListener("mousedown", onPointer);
       window.removeEventListener("keydown", onKey);
     };
-  }, [showing]);
+  }, [open]);
 
-  async function copyFeed() {
+  async function addToCalendar(url: string) {
     try {
       await navigator.clipboard.writeText(feed);
-      return true;
+      setNotice("The calendar link is copied. Paste it if the calendar does not ask for it.");
     } catch {
-      return false;
+      setNotice(feed);
     }
-  }
-
-  // Open the tab inside the click, or phone browsers block it as a popup.
-  async function addToCalendar(type: "google" | "proton", url: string) {
-    const copying = copyFeed();
     window.open(url, "_blank", "noopener");
-    setOpen(false);
-    setCalendarNotice({ type, copied: await copying });
   }
 
   return (
-    <div ref={menuRef} className="relative">
+    <div className="relative">
       <button
+        ref={buttonRef}
         type="button"
-        data-testid="calendar-week"
-        aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`Add ${label}'s week to a calendar`}
-        onClick={() => setOpen((current) => !current)}
-        className="inline-flex size-8 sm:size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+        data-testid="calendar-week"
+        onClick={() => {
+          if (!open) place();
+          setOpen((current) => !current);
+        }}
+        className={`inline-flex size-8 items-center justify-center rounded-md sm:size-9 ${open ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
       >
         <CalendarPlus className="size-4" aria-hidden="true" />
       </button>
       {open && (
-        <div role="menu" aria-label="Add week" className="menu-pop absolute top-full right-0 z-40 mt-1 w-56 rounded-lg border border-border bg-background p-1 shadow-sm max-sm:fixed max-sm:inset-x-3 max-sm:top-12 max-sm:mt-0 max-sm:w-auto">
-          <a role="menuitem" data-testid="calendar-download" href={calendarFeedUrl(scope, true)} download={file} onClick={() => setOpen(false)} className="flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted">
-            <Download className="size-4" aria-hidden="true" />
-            Download file
-          </a>
-          <button type="button" role="menuitem" data-testid="calendar-google" onClick={() => void addToCalendar("google", googleWeekCalendarUrl(scope))} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted">
-            <CalendarPlus className="size-4" aria-hidden="true" />
-            Google Calendar
-          </button>
-          <a role="menuitem" data-testid="calendar-apple" href={appleWeekCalendarUrl(scope)} onClick={() => setOpen(false)} className="flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted">
-            <CalendarPlus className="size-4" aria-hidden="true" />
-            Apple Calendar
-          </a>
-          <a role="menuitem" data-testid="calendar-outlook" href={outlookWeekCalendarUrl(scope, label)} target="_blank" rel="noreferrer" onClick={() => setOpen(false)} className="flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted">
-            <CalendarPlus className="size-4" aria-hidden="true" />
-            Outlook
-          </a>
-          <button type="button" role="menuitem" data-testid="calendar-proton" onClick={() => void addToCalendar("proton", "https://calendar.proton.me")} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted">
-            <CalendarPlus className="size-4" aria-hidden="true" />
-            Proton Calendar
-          </button>
-        </div>
-      )}
-      {calendarNotice && (
-        <div role="status" data-testid={calendarNotice.type === "google" ? "google-note" : "proton-note"} className="absolute top-full right-0 z-40 mt-1 w-80 rounded-lg border border-border bg-background p-3 text-sm shadow-sm max-sm:fixed max-sm:inset-x-3 max-sm:top-12 max-sm:mt-0 max-sm:w-auto">
-          <p className="font-medium text-foreground">
-            {calendarNotice.copied ? "Link copied." : "Copy this link."}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
-            {calendarNotice.type === "google"
-              ? "If Google Calendar doesn't prompt automatically: in Google Calendar, click '+' next to 'Other calendars' > 'From URL', and paste this link."
-              : "In Proton Calendar, click + next to My calendars, choose Add calendar from URL, and paste it."}
-          </p>
-          <p className="mt-2 break-all font-mono text-[11px] text-muted-foreground bg-muted p-1.5 rounded">{feed}</p>
-          <div className="mt-2 flex items-center justify-between">
-            <button
-              type="button"
-              className="text-xs text-foreground font-medium hover:underline"
-              onClick={async () => {
-                const copied = await copyFeed();
-                setCalendarNotice((current) => (current ? { ...current, copied } : current));
-              }}
-            >
-              Copy link
-            </button>
-            <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={() => setCalendarNotice(null)}>
-              Close
-            </button>
+        <div
+          ref={panelRef}
+          role="menu"
+          aria-label="Add this week"
+          className="tools-pop fixed z-50 w-[min(22rem,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-border/60 bg-background/75 shadow-2xl backdrop-blur-xl"
+          style={{ top: anchor.top, right: anchor.right }}
+        >
+          <div className="grid gap-0.5 p-1.5">
+            <p className="px-2 py-1 text-xs text-muted-foreground">Add this week</p>
+                <a role="menuitem" data-testid="calendar-download" href={calendarFeedUrl(scope, true)} download={file} onClick={() => setOpen(false)} className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm hover:bg-muted">
+                  <Download className="size-4" aria-hidden="true" />
+                  Download the week
+                </a>
+                <button type="button" role="menuitem" data-testid="calendar-google" onClick={() => void addToCalendar(googleWeekCalendarUrl(scope))} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm hover:bg-muted">
+                  <CalendarPlus className="size-4" aria-hidden="true" />
+                  Google Calendar
+                </button>
+                <a role="menuitem" data-testid="calendar-apple" href={appleWeekCalendarUrl(scope)} onClick={() => setOpen(false)} className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm hover:bg-muted">
+                  <CalendarPlus className="size-4" aria-hidden="true" />
+                  Apple Calendar
+                </a>
+                <a role="menuitem" data-testid="calendar-outlook" href={outlookWeekCalendarUrl(scope, label)} target="_blank" rel="noreferrer" onClick={() => setOpen(false)} className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm hover:bg-muted">
+                  <CalendarPlus className="size-4" aria-hidden="true" />
+                  Outlook
+                </a>
+                <button type="button" role="menuitem" data-testid="calendar-proton" onClick={() => void addToCalendar("https://calendar.proton.me")} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm hover:bg-muted">
+                  <CalendarPlus className="size-4" aria-hidden="true" />
+                  Proton Calendar
+                </button>
+                {notice ? <p className="mt-1 break-all px-2 pb-1 text-xs text-muted-foreground">{notice}</p> : null}
           </div>
         </div>
       )}
@@ -1204,38 +1164,35 @@ function AppearanceMenu({
   useMenuBackdrop(open);
   useEffect(() => {
     if (!open) return;
-    function onPointer(event: MouseEvent) {
-      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
-    }
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") setOpen(false);
     }
-    window.addEventListener("mousedown", onPointer);
     window.addEventListener("keydown", onKey);
     return () => {
-      window.removeEventListener("mousedown", onPointer);
+      document.body.style.overflow = previous;
       window.removeEventListener("keydown", onKey);
     };
   }, [open]);
+  const weeks = [{ id: "live", label: "This week" }, ...savedWeeks.map((week) => ({ id: week.id, label: `${formatShort(week.start)} – ${formatShort(week.end)}` }))];
   return (
     <div ref={menuRef} className="relative">
       <IconButton label="Settings" pressed={open} onClick={() => setOpen((current) => !current)} testId="appearance-button">
         <Settings className="size-4" aria-hidden="true" />
       </IconButton>
-      {open && (
-        <div role="menu" aria-label="Settings" className="menu-pop absolute top-full right-0 z-40 mt-1 max-h-[min(32rem,calc(100dvh-5rem))] w-[min(22rem,calc(100vw-1.5rem))] overflow-y-auto rounded-lg border border-border bg-background p-3 shadow-md">
-          <div className="mb-3 grid grid-cols-2 gap-1.5 border-b border-border pb-3 sm:hidden">
-            <button type="button" data-testid="refresh-menu" disabled={pending} onClick={onRefresh} className="flex items-center justify-center gap-1.5 rounded-md border border-border px-2.5 py-2 text-xs hover:bg-muted disabled:opacity-50">
-              <RefreshCw className={`size-3.5 ${pending ? "animate-spin" : ""}`} aria-hidden="true" />
-              {pending ? "Refreshing" : "Refresh"}
+      {open && createPortal(
+        <div className="settings-glass fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Settings">
+          <button type="button" className="absolute inset-0 bg-black/20" aria-label="Close settings" onClick={() => setOpen(false)} />
+          <div className="absolute top-3 right-3 bottom-3 flex w-[min(26rem,calc(100vw-1.5rem))] flex-col overflow-y-auto rounded-3xl border border-border bg-background p-5 shadow-2xl sm:top-4 sm:right-4 sm:bottom-auto sm:max-h-[min(40rem,calc(100dvh-2rem))] sm:p-6">
+          <div className="mb-8 flex items-center justify-between">
+            <h2 className="text-2xl font-medium tracking-tight">Settings</h2>
+            <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="inline-flex size-10 items-center justify-center rounded-full border border-white/15 bg-background/40 text-foreground hover:bg-background/70">
+              <X className="size-4" aria-hidden="true" />
             </button>
-            <a href={sheetUrl} target="_blank" rel="noreferrer" data-testid="sheet-menu" className="flex items-center justify-center gap-1.5 rounded-md border border-border px-2.5 py-2 text-xs hover:bg-muted">
-              <FileSpreadsheet className="size-3.5" aria-hidden="true" />
-              Open sheet
-            </a>
           </div>
-          <p className="text-muted-foreground font-mono text-[11px] tracking-[0.22em] uppercase">Theme</p>
-          <div className="mt-2 grid grid-cols-2 gap-1.5">
+          <p className="text-sm text-muted-foreground">Theme</p>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
             {themes.map((item) => {
               const selected = theme === item.id;
               return (
@@ -1245,19 +1202,17 @@ function AppearanceMenu({
                   role="menuitemradio"
                   aria-checked={selected}
                   onClick={() => onTheme(item.id)}
-                  className={`flex items-center justify-between rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors ${
-                    selected ? "border-transparent bg-foreground text-background font-medium" : "border-border hover:bg-muted text-foreground"
+                  className={`flex flex-col items-start gap-2 rounded-2xl border px-3 py-3 text-left transition-colors ${
+                    selected ? "border-transparent bg-foreground text-background" : "border-white/10 bg-background/40 hover:bg-background/70"
                   }`}
                 >
-                  <span className="flex items-center gap-1.5 min-w-0">
-                    <span className="flex gap-0.5 shrink-0" aria-hidden="true">
-                      {item.swatch.map((color) => (
-                        <span key={color} className="size-2 rounded-full border border-black/10" style={{ background: color }} />
-                      ))}
-                    </span>
-                    <span className="truncate">{item.name}</span>
+                  <span className="flex gap-1" aria-hidden="true">
+                    {item.swatch.map((color) => (
+                      <span key={color} className="size-3 rounded-full border border-black/10" style={{ background: color }} />
+                    ))}
                   </span>
-                  {selected && <Check className="size-3 shrink-0 ml-1" aria-hidden="true" />}
+                  <span className="text-sm font-medium">{item.name}</span>
+                  <span className={`text-xs ${selected ? "text-background/70" : "text-muted-foreground"}`}>{item.blurb}</span>
                 </button>
               );
             })}
@@ -1286,44 +1241,28 @@ function AppearanceMenu({
               <ColorEditor theme={theme} subjects={subjects} />
             </div>
           )}
-          {savedWeeks.length > 0 && (
-            <div className="mt-3 border-t border-border pt-2.5">
-              <p className="text-muted-foreground font-mono text-[11px] tracking-[0.22em] uppercase">Past weeks</p>
-              <div className="mt-2 space-y-1">
-                <button
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={weekId === "live"}
-                  onClick={() => onWeek("live")}
-                  className={`flex w-full items-center justify-between rounded-md border px-2.5 py-1.5 text-left text-xs ${
-                    weekId === "live" ? "border-transparent bg-foreground text-background font-medium" : "border-border text-foreground hover:bg-muted"
-                  }`}
-                >
-                  <span>This week</span>
-                  {weekId === "live" && <Check className="size-3 shrink-0" aria-hidden="true" />}
-                </button>
-                {savedWeeks.map((week) => {
-                  const selected = weekId === week.id;
-                  const label = `${formatShort(week.start)} – ${formatShort(week.end)}`;
-                  return (
-                    <button
-                      key={week.id}
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={selected}
-                      onClick={() => onWeek(week.id)}
-                      className={`flex w-full items-center justify-between rounded-md border px-2.5 py-1.5 text-left text-xs ${
-                        selected ? "border-transparent bg-foreground text-background font-medium" : "border-border text-foreground hover:bg-muted"
-                      }`}
-                    >
-                      <span className="min-w-0 truncate">{label}</span>
-                      {selected && <Check className="size-3 shrink-0" aria-hidden="true" />}
-                    </button>
-                  );
-                })}
-              </div>
+          <div className="mt-6">
+            <p className="text-sm text-muted-foreground">Weeks</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {weeks.map((week) => {
+                const selected = weekId === week.id;
+                return (
+                  <button
+                    key={week.id}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => {
+                      onWeek(week.id);
+                      setOpen(false);
+                    }}
+                    className={`rounded-full px-3 py-1.5 text-sm ${selected ? "bg-foreground text-background" : "bg-background/50 text-foreground hover:bg-background/80"}`}
+                  >
+                    {week.label}
+                  </button>
+                );
+              })}
             </div>
-          )}
+          </div>
           {role === "student" && (
             <div className="mt-3 border-t border-border pt-2.5">
               <button
@@ -1340,7 +1279,7 @@ function AppearanceMenu({
             </div>
           )}
           {role === "faculty" && (
-            <div className="mt-3 border-t border-border pt-2.5 sm:hidden">
+            <div className="mt-3 border-t border-border pt-2.5">
               <button
                 type="button"
                 onClick={() => {
@@ -1355,91 +1294,8 @@ function AppearanceMenu({
             </div>
           )}
         </div>
-      )}
-    </div>
-  );
-}
-
-function WeekMenu({
-  liveLabel,
-  weeks,
-  value,
-  onChange,
-  opensUp,
-  onOpenChange,
-}: {
-  liveLabel: string;
-  weeks: WeekGroup[];
-  value: string;
-  onChange: (id: string) => void;
-  opensUp: boolean;
-  onOpenChange?: (open: boolean) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-  useMenuBackdrop(open);
-  useEffect(() => {
-    onOpenChange?.(open);
-    return () => onOpenChange?.(false);
-  }, [open]);
-  useEffect(() => {
-    if (!open) return;
-    function onPointer(event: MouseEvent) {
-      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
-    }
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
-    window.addEventListener("mousedown", onPointer);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onPointer);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-  const options = [{ id: "live", label: liveLabel }, ...weeks.map((week) => ({ id: week.id, label: `${formatShort(week.start)} – ${formatShort(week.end)}` }))];
-  const current = options.find((option) => option.id === value) ?? options[0]!;
-  return (
-    <div ref={menuRef} className="relative shrink-0">
-      <button
-        type="button"
-        aria-label={`Week, ${current.label}`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        data-testid="week-menu"
-        onClick={() => setOpen((prev) => !prev)}
-        className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-xs font-medium whitespace-nowrap text-foreground transition-colors hover:bg-muted"
-      >
-        {current.label}
-        <ChevronDown className={`size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 ${open ? "rotate-180" : ""}`} aria-hidden="true" />
-      </button>
-      {open && (
-        <div
-          role="menu"
-          aria-label="Choose a week"
-          className={`absolute left-0 z-40 max-h-[min(20rem,calc(100dvh-8rem))] min-w-44 overflow-y-auto rounded-lg border border-border bg-background p-1 shadow-md ${opensUp ? "menu-pop-up bottom-full mb-1" : "menu-pop top-full mt-1"}`}
-        >
-          {options.map((option) => {
-            const selected = option.id === value;
-            return (
-              <button
-                key={option.id}
-                type="button"
-                role="menuitemradio"
-                aria-checked={selected}
-                data-testid={`week-${option.id}`}
-                onClick={() => {
-                  onChange(option.id);
-                  setOpen(false);
-                }}
-                className={`flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-sm whitespace-nowrap transition-colors hover:bg-muted ${selected ? "bg-muted/60 font-medium" : ""}`}
-              >
-                <span>{option.label}</span>
-                {selected && <Check className="size-4 shrink-0 text-foreground" aria-hidden="true" />}
-              </button>
-            );
-          })}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

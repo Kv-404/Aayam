@@ -1,6 +1,7 @@
 import type { ChangeEvent } from "@shared/types";
 import { useEffect, useState } from "react";
 import { alertCopy, takeAlerts } from "@/lib/notifyChanges";
+import { readStoredCohort, readStudentBatch } from "@/lib/prefs";
 
 const seenKey = "timetable-notified-ids";
 const optInKey = "timetable-notify";
@@ -65,6 +66,52 @@ function registration() {
   return registrationTask;
 }
 
+function urlBase64ToUint8Array(value: string) {
+  const padding = "=".repeat((4 - (value.length % 4)) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let index = 0; index < raw.length; index += 1) out[index] = raw.charCodeAt(index);
+  return out;
+}
+
+/** Registers this browser for admin messages. Students who have not allowed alerts are skipped. */
+export async function syncPushSubscription() {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted" || !readOptIn()) return;
+  const worker = await registration();
+  if (!worker?.pushManager) return;
+  try {
+    const response = await fetch("/api/push/public-key");
+    if (!response.ok) return;
+    const payload = (await response.json()) as { publicKey?: string | null };
+    const publicKey = payload.publicKey ?? "";
+    if (!publicKey) return;
+    let subscription = await worker.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await worker.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+    }
+    const json = subscription.toJSON();
+    if (!json.endpoint || !json.keys?.p256dh || !json.keys.auth) return;
+    const batch = readStudentBatch();
+    await fetch("/api/push/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        endpoint: json.endpoint,
+        keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
+        course: batch?.course ?? "",
+        batch: batch?.batch ?? "",
+        division: readStoredCohort(),
+      }),
+    });
+  } catch {
+    // The message still appears on the timetable.
+  }
+}
+
 export async function showSystem(title: string, body: string, tag: string) {
   if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
   const worker = await registration();
@@ -124,6 +171,7 @@ export function useChangeNotifications(changes: ChangeEvent[]) {
       const text = "Notifications are on. You'll be told when a class changes.";
       setNotice(text);
       void showSystem("Timetable", text, "timetable-on");
+      void syncPushSubscription();
       return;
     }
     if (next === "denied") {

@@ -1,12 +1,14 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { DEFAULT_COHORT_CHOICES, type CohortChoice } from "@shared/cohort";
+import { cohortLabel, DEFAULT_COHORT_CHOICES, type CohortChoice } from "@shared/cohort";
 import { coordinatorPreview, findCoordinator } from "@shared/coordinators";
 import { DEFAULT_FACULTY_NAMES } from "@shared/faculty";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useState, type ReactNode } from "react";
+import { AdminPage } from "@/components/AdminPage";
 import { Dashboard } from "@/components/Dashboard";
 import { FacultyLoginModal } from "@/components/FacultyLoginModal";
 import { HomePage } from "@/components/HomePage";
+import { PitchPage } from "@/components/PitchPage";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { PrivacyPolicy } from "@/components/PrivacyPolicy";
 import { Setup } from "@/components/Setup";
@@ -32,6 +34,7 @@ import {
   readStoredFaculty,
   readStoredMeet,
   readStoredTheme,
+  readStudentBatch,
   saveCanSeeAllFaculty,
   saveCohort,
   saveFaculty,
@@ -54,8 +57,15 @@ function readScopeFromUrl(choices: CohortChoice[]): {
   isUnknownSlug?: boolean;
 } | null {
   if (typeof window === "undefined") return null;
-  const p = window.location.pathname.toLowerCase();
-  if (p === "/terms" || p === "/terms-of-service" || p === "/privacy" || p === "/privacy-policy") {
+  const p = window.location.pathname.toLowerCase().replace(/\/+$/, "") || "/";
+  if (
+    p === "/terms" ||
+    p === "/terms-of-service" ||
+    p === "/privacy" ||
+    p === "/privacy-policy" ||
+    p === "/pitch" ||
+    p === "/admin"
+  ) {
     return null;
   }
   const params = new URLSearchParams(window.location.search);
@@ -100,6 +110,15 @@ function readScopeFromUrl(choices: CohortChoice[]): {
   return null;
 }
 
+function pathRoute(pathname: string) {
+  const p = pathname.toLowerCase().replace(/\/+$/, "") || "/";
+  if (p === "/privacy" || p === "/privacy-policy") return "/privacy";
+  if (p === "/terms" || p === "/terms-of-service") return "/terms";
+  if (p === "/pitch") return "/pitch";
+  if (p === "/admin") return "/admin";
+  return "/";
+}
+
 function isPublicHome() {
   if (typeof window === "undefined") return false;
   const path = window.location.pathname;
@@ -140,10 +159,8 @@ function syncUrl(scope: BootstrapScope) {
   if (typeof window === "undefined") return;
   const url = new URL(window.location.href);
   const p = url.pathname.toLowerCase();
-  if (p === "/terms" || p === "/terms-of-service" || p === "/privacy" || p === "/privacy-policy") {
-    if (url.search) {
-      window.history.replaceState(null, "", url.pathname);
-    }
+  if (pathRoute(p) !== "/") {
+    if (url.search) window.history.replaceState(null, "", url.pathname);
     return;
   }
 
@@ -235,20 +252,11 @@ export function App() {
   const now = useNow();
   const queryClient = useQueryClient();
   const [facultyModalOpen, setFacultyModalOpen] = useState(false);
-  const [route, setRoute] = useState(() => {
-    if (typeof window === "undefined") return "/";
-    const p = window.location.pathname.toLowerCase();
-    if (p === "/privacy" || p === "/privacy-policy") return "/privacy";
-    if (p === "/terms" || p === "/terms-of-service") return "/terms";
-    return "/";
-  });
+  const [route, setRoute] = useState(() => (typeof window === "undefined" ? "/" : pathRoute(window.location.pathname)));
 
   useEffect(() => {
     function handleLocation() {
-      const p = window.location.pathname.toLowerCase();
-      if (p === "/privacy" || p === "/privacy-policy") setRoute("/privacy");
-      else if (p === "/terms" || p === "/terms-of-service") setRoute("/terms");
-      else setRoute("/");
+      setRoute(pathRoute(window.location.pathname));
     }
     window.addEventListener("popstate", handleLocation);
     return () => window.removeEventListener("popstate", handleLocation);
@@ -342,16 +350,9 @@ export function App() {
 
   useEffect(() => {
     function onPopState() {
-      const p = window.location.pathname.toLowerCase();
-      if (p === "/privacy" || p === "/privacy-policy") {
-        setRoute("/privacy");
-        return;
-      }
-      if (p === "/terms" || p === "/terms-of-service") {
-        setRoute("/terms");
-        return;
-      }
-      setRoute("/");
+      const next = pathRoute(window.location.pathname);
+      setRoute(next);
+      if (next !== "/") return;
 
       if (isPublicHome()) {
         setConfigured(false);
@@ -473,6 +474,55 @@ export function App() {
     )];
   }
 
+  if (route === "/pitch") {
+    const saved = readStoredCohort();
+    return ["pitch", (
+      <PitchPage
+        hasSavedAccess={Boolean(saved)}
+        savedLabel={saved ? cohortLabel(saved) : ""}
+        onContinue={() => {
+          if (!saved) return;
+          saveCohort(saved);
+          saveRole("student");
+          window.history.pushState(null, "", `/${cohortToSlug(saved)}`);
+          setScope({ division: saved });
+          setConfigured(true);
+          setRoute("/");
+        }}
+        onOpenStudent={() => {
+          window.history.pushState(null, "", "/?enter=student");
+          setConfigured(false);
+          setScope({});
+          setRoute("/");
+        }}
+        onOpenFaculty={() => {
+          window.history.pushState(null, "", "/?enter=faculty");
+          setConfigured(false);
+          setScope({});
+          setRoute("/");
+        }}
+        onOpenPage={(event, url) => {
+          event.preventDefault();
+          window.history.pushState(null, "", url);
+          setRoute(pathRoute(url));
+        }}
+      />
+    )];
+  }
+
+  if (route === "/admin") {
+    return ["admin", (
+      <AdminPage
+        onHome={() => {
+          window.history.pushState(null, "", "/");
+          setConfigured(false);
+          setScope({});
+          setRoute("/");
+        }}
+      />
+    )];
+  }
+
   const choices = query.data?.choices && query.data.choices.length > 0 ? query.data.choices : DEFAULT_COHORT_CHOICES;
   const faculties = query.data?.faculties && query.data.faculties.length > 0 ? query.data.faculties : DEFAULT_FACULTY_NAMES;
 
@@ -513,26 +563,32 @@ export function App() {
     return ["home", (
       <ColorProvider theme={preferences.theme}>
         <HomePage
-          choices={choices}
+          choices={DEFAULT_COHORT_CHOICES}
           theme={preferences.theme}
+          onTheme={preferences.chooseTheme}
           colors={preferences.colors}
           bold={preferences.bold}
           meet={preferences.meet}
-          onTheme={preferences.chooseTheme}
           onColors={preferences.chooseColors}
           onBold={preferences.chooseBold}
           onMeet={preferences.chooseMeet}
+          onPrefetchBatch={(course, batch) => setScope({ course, batch })}
           onOpenFacultyLogin={() => setFacultyModalOpen(true)}
           onNavigateCohort={(slug) => {
-            const matched = slugToCohort(slug, choices);
+            const matched = slugToCohort(slug, DEFAULT_COHORT_CHOICES);
             const targetDiv = matched?.division ?? slug;
             saveCohort(targetDiv);
             saveRole("student");
+            const saved = readStudentBatch();
             const targetSlug = matched ? cohortToSlug(matched.division) : slug;
             if (typeof window !== "undefined") {
               window.history.pushState(null, "", `/${targetSlug}`);
             }
-            setScope({ division: targetDiv });
+            setScope({
+              division: targetDiv,
+              course: matched?.course ?? saved?.course,
+              batch: matched?.batch ?? saved?.batch,
+            });
             setConfigured(true);
           }}
           onNavigateUrl={(url) => {

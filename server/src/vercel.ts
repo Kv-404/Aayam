@@ -4,6 +4,7 @@ import { openDatabase } from "./db.ts";
 import { loadEnvFiles } from "./env.ts";
 import { createApp } from "./app.ts";
 import { fetchSheetSources, fetchSpreadsheet } from "./services/googleSheetsService.ts";
+import { resolveSheetSources } from "./services/sheetOverrides.ts";
 
 // Vercel entry. The process is not always on, so a request starts a sync when its
 // sheets are older than the interval. It answers from the saved copy, and waitUntil
@@ -15,7 +16,7 @@ const databasePath = process.env.VERCEL ? "/tmp/timetable.sqlite" : config.datab
 const db = openDatabase(databasePath);
 const app = createApp(db, { ...config, databasePath }, () => fetchSpreadsheet(config), {
   syncOnRead: Boolean(process.env.VERCEL),
-  loadAll: () => fetchSheetSources(config.spreadsheets),
+  loadAll: () => resolveSheetSources(config.spreadsheets).then(fetchSheetSources),
   runInBackground: waitUntil,
 });
 

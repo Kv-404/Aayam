@@ -18,6 +18,10 @@ Express API in `server/src`. Local entry `server/src/index.ts`. Vercel entry `se
 | `GET /api/auth/me` | Current authenticated faculty session. Accepts the cookie or `Authorization: Bearer` |
 | `POST /api/auth/logout` | Clear faculty session cookie |
 | `GET /api/auth/config` | Returns Google OAuth client ID |
+| `POST /api/admin/login` | Check the admin password. The only read of `admin_password.password_hash` is `readAdminPasswordHash`. The response never includes the hash. Session cookie `aayam_admin` is HttpOnly |
+| `POST /api/admin/sheets` | Signed-in admin replaces one batch's spreadsheet id in `timetable_sheet_links`, then syncs that sheet. A sheet that cannot be read is not kept |
+| `POST /api/admin/notices` | Signed-in admin stores a student notice and sends a web push to matching subscriptions |
+| `GET /api/push/public-key` | Public half of the VAPID key. The private half stays in `push_vapid` |
 
 `buildBootstrap` presents each stored lecture through `presentLecture`, restores removed lectures as cancelled, and sorts by date, time, division, subject. `BootstrapResponse` is `shared/types.ts`. The client must not depend on fields that are not on that type.
 

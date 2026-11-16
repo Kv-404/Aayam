@@ -5,6 +5,33 @@ import { programKey } from "../program.ts";
 
 const CAP = 8;
 
+function daySpan(start: string, end: string) {
+  const startMs = Date.parse(`${start}T12:00:00Z`);
+  const endMs = Date.parse(`${end}T12:00:00Z`);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return 0;
+  return Math.round((endMs - startMs) / 86_400_000);
+}
+
+function weekMonday(iso: string) {
+  const date = new Date(`${iso}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
+  return date.toISOString().slice(0, 10);
+}
+
+/** A stored row that covers two weeks is dropped when that Monday already has a one-week copy. */
+export function preferOneWeekCopies<T extends { id: string; course: string; batch: string; start: string; end: string }>(weeks: T[]): T[] {
+  return weeks.filter((week) => {
+    if (daySpan(week.start, week.end) <= 6) return true;
+    const monday = weekMonday(week.start);
+    return !weeks.some((other) =>
+      other.id !== week.id
+      && programKey(other.course, other.batch) === programKey(week.course, week.batch)
+      && weekMonday(other.start) === monday
+      && daySpan(other.start, other.end) <= 6,
+    );
+  });
+}
+
 function dated(lectures: Array<{ date: string | null }>) {
   return lectures.map((lecture) => lecture.date).filter((date): date is string => Boolean(date)).sort();
 }

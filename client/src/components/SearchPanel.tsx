@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
 import { TimetableFilters } from "@/components/TimetableFilters";
 import { Input } from "@/components/ui/input";
@@ -44,7 +44,7 @@ export function SearchPanel({
 }) {
   const [open, setOpen] = useState(false);
   const [history, setHistory] = useState(readSearchHistory);
-  const [panelTop, setPanelTop] = useState(0);
+  const [anchor, setAnchor] = useState({ top: 56, left: 12, right: 12 });
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -52,15 +52,22 @@ export function SearchPanel({
   // Results update as you type, so the blur lifts once there is something to look at.
   useMenuBackdrop(open && !filtersOn && query.trim() === "");
 
-  function place() {
-    const bottom = buttonRef.current?.getBoundingClientRect().bottom;
-    if (bottom == null) return;
-    const next = bottom + 4;
-    setPanelTop((current) => (current === next ? current : next));
+  function measureTop() {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    const wide = window.innerWidth >= 640;
+    if (!rect) {
+      setAnchor({ top: 56, left: 12, right: 12 });
+      return;
+    }
+    setAnchor({
+      top: rect.bottom + 8,
+      left: wide ? Math.max(12, rect.right - 320) : 12,
+      right: wide ? Math.max(12, window.innerWidth - rect.right) : 12,
+    });
   }
 
   function toggle() {
-    if (!open) place();
+    if (!open) measureTop();
     setOpen((current) => !current);
   }
 
@@ -82,7 +89,7 @@ export function SearchPanel({
           return;
         }
         event.preventDefault();
-        place();
+        measureTop();
         setOpen(true);
       }
     }
@@ -93,7 +100,6 @@ export function SearchPanel({
   useEffect(() => {
     if (!open) return;
     inputRef.current?.focus();
-    place();
     function onPointer(event: MouseEvent) {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     }
@@ -102,13 +108,9 @@ export function SearchPanel({
     }
     window.addEventListener("mousedown", onPointer);
     window.addEventListener("keydown", onKey);
-    window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, true);
     return () => {
       window.removeEventListener("mousedown", onPointer);
       window.removeEventListener("keydown", onKey);
-      window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", place, true);
     };
   }, [open]);
 
@@ -130,13 +132,12 @@ export function SearchPanel({
         <Search className="size-4" aria-hidden="true" />
       </button>
       <div
-        className={`fixed inset-x-4 z-40 mt-0 grid w-auto overflow-hidden top-[var(--search-panel-top)] transition-[grid-template-rows,opacity] duration-200 sm:absolute sm:top-full sm:right-0 sm:left-auto sm:mt-1 sm:w-80 ${open ? "grid-rows-[1fr] opacity-100" : "pointer-events-none grid-rows-[0fr] opacity-0"}`}
-        style={{ "--search-panel-top": `${panelTop}px` } as CSSProperties}
+        className={`fixed z-40 origin-top rounded-lg border border-border bg-background shadow-md transition duration-200 ease-out ${open ? "translate-y-0 opacity-100" : "pointer-events-none -translate-y-1 opacity-0"}`}
+        style={{ top: anchor.top, left: anchor.left, right: anchor.right }}
         aria-hidden={open ? undefined : true}
         inert={open ? undefined : true}
       >
-        <div className="min-h-0 overflow-hidden">
-          <div className="max-h-[min(32rem,calc(100dvh-5rem))] space-y-3 overflow-y-auto rounded-lg border border-border bg-background p-3 shadow-sm">
+        <div className="max-h-[min(32rem,calc(100dvh-5rem))] space-y-3 overflow-y-auto p-3">
             <Input
               ref={inputRef}
               value={query}
@@ -201,7 +202,6 @@ export function SearchPanel({
               onClear={onClear}
             />
           </div>
-        </div>
       </div>
     </div>
   );

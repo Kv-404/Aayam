@@ -51,4 +51,6 @@ Do not set Production `SPREADSHEET_ID` while an old deployment can still be warm
 
 The new sheet's dates must not overlap the saved week, or last week's rows will diff as cancellations and additions. Overlap of zero dates is a fresh baseline.
 
+An admin can paste a new link at `/admin` instead. The server stores that spreadsheet id in `timetable_sheet_links` and reads it on the next sync, ahead of these fallbacks. The admin password is a scrypt hash in `admin_password`, set once from `ADMIN_PASSWORD` when that table is empty, or written straight into the database. Do not commit the password, the hash, or a VAPID private key. After the hash is stored, remove `ADMIN_PASSWORD` from the host so the plaintext is not sitting in the environment.
+
 README says a Vercel cold start is a fresh baseline and that you should set `SPREADSHEET_ID` on the project. That is out of date. The blob is the baseline, and production takes the id from the bundle.

@@ -25,6 +25,8 @@ export interface SyncContext {
   load: () => Promise<{ buffer: Buffer }>;
   loadAll?: () => Promise<WorkbookFile[]>;
   now?: Date;
+  /** Admin pointed this program at a sheet. Its lectures become that sheet's dates and times. */
+  replaceProgram?: { course: string; batch: string };
 }
 
 export interface SyncOutcome {
@@ -104,6 +106,16 @@ async function performSync(ctx: SyncContext): Promise<SyncOutcome> {
       const normalized = normalizeWorkbook(parsed, { courseFallback: file.course, spreadsheetId: file.spreadsheetId || undefined });
       groups.push({ file, parsed, normalized });
     }
+    const replaceKey = ctx.replaceProgram ? programKey(ctx.replaceProgram.course, ctx.replaceProgram.batch) : "";
+    if (ctx.replaceProgram) {
+      for (const group of groups) {
+        group.normalized.batch = ctx.replaceProgram.batch;
+        for (const lecture of group.normalized.lectures) {
+          lecture.course = ctx.replaceProgram.course;
+          lecture.batch = ctx.replaceProgram.batch;
+        }
+      }
+    }
     persistCancelledRemovals(ctx.db);
     const previous = loadSnapshot(ctx.db);
     const retainedLectures: NormalizedLecture[] = [];
@@ -158,15 +170,24 @@ async function performSync(ctx: SyncContext): Promise<SyncOutcome> {
     }
 
     const freshWeek = current.bootstrapped && replacesPublishedWeek(previous, retained.lectures);
+    const previousForDiff = replaceKey
+      ? previous.filter((lecture) => programKey(lecture.course, lecture.batch) !== replaceKey)
+      : previous;
     const stored = current.bootstrapped && !freshWeek
-      ? compareSnapshots(previous, retained.lectures, {
+      ? compareSnapshots(previousForDiff, retained.lectures, {
           now,
           previousTabs: current.tabNames,
           nextTabs: tabNames,
           bootstrapped: true,
         })
       : { lectures: initialSnapshot(retained.lectures), events: [] };
-    const events = dropFreshProgramAdditions(previous, stored.lectures, stored.events);
+    const freshIds = replaceKey
+      ? new Set(retained.lectures.filter((lecture) => programKey(lecture.course, lecture.batch) === replaceKey).map((lecture) => lecture.id))
+      : null;
+    const events = dropFreshProgramAdditions(previous, stored.lectures, stored.events).filter((event) => {
+      if (!freshIds || event.type !== "added" || !event.lectureId) return true;
+      return !freshIds.has(event.lectureId);
+    });
 
     ctx.db.exec("BEGIN");
     try {

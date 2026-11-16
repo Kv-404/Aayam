@@ -21,12 +21,13 @@ function applyScope(url: URL, scope?: BootstrapScope) {
     url.searchParams.set("all", "1");
     return;
   }
-  if (scope?.faculty) url.searchParams.set("faculty", scope.faculty);
-  else if (scope?.division) url.searchParams.set("division", scope.division);
-  else {
-    if (scope?.course) url.searchParams.set("course", scope.course);
-    if (scope?.batch) url.searchParams.set("batch", scope.batch);
+  if (scope?.faculty) {
+    url.searchParams.set("faculty", scope.faculty);
+    return;
   }
+  if (scope?.division) url.searchParams.set("division", scope.division);
+  if (scope?.course) url.searchParams.set("course", scope.course);
+  if (scope?.batch) url.searchParams.set("batch", scope.batch);
 }
 
 export function fetchBootstrap(scope?: BootstrapScope) {
@@ -41,7 +42,7 @@ export function fetchSavedWeek(monday: string, scope?: BootstrapScope) {
   applyScope(url, scope);
   return fetch(url.toString(), { credentials: "include" }).then(async (response) => {
     if (!response.ok) throw new Error("That week could not be loaded.");
-    return response.json() as Promise<{ lectures: PublicLecture[]; changes: ChangeEvent[] }>;
+    return response.json() as Promise<{ lectures: PublicLecture[]; changes: ChangeEvent[]; spreadsheetUrl?: string | null }>;
   });
 }
 

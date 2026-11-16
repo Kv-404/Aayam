@@ -5,7 +5,7 @@ import { openDatabase } from "./db.ts";
 import { loadEnvFiles } from "./env.ts";
 import { createApp } from "./app.ts";
 import { fetchSheetSources, fetchSpreadsheet } from "./services/googleSheetsService.ts";
-import { startScheduler } from "./services/syncScheduler.ts";
+import { resolveSheetSources } from "./services/sheetOverrides.ts";
 
 loadEnvFiles();
 const config = getConfig();
@@ -14,9 +14,9 @@ const databasePath = path.isAbsolute(config.databasePath)
   : path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", config.databasePath);
 const db = openDatabase(databasePath);
 const load = () => fetchSpreadsheet(config);
-const loadAll = () => fetchSheetSources(config.spreadsheets);
+const loadAll = () => resolveSheetSources(config.spreadsheets).then(fetchSheetSources);
+// A request syncs the sheet it asks for. A student batch does not start the other years.
 const app = createApp(db, config, load, { loadAll, syncOnRead: true });
-startScheduler({ db, config, load, loadAll });
 
 app.listen(config.port, () => {
   console.log(`Timetable portal API listening on http://localhost:${config.port}`);

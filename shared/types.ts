@@ -102,6 +102,14 @@ export interface SavedWeek {
   changes: ChangeEvent[];
 }
 
+/** A message an admin sent to students. */
+export interface StudentNotice {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: string;
+}
+
 export interface BootstrapResponse {
   collegeName: string;
   schoolName: string;
@@ -123,4 +131,6 @@ export interface BootstrapResponse {
   faculties?: string[];
   lectures: PublicLecture[];
   changes: ChangeEvent[];
+  /** Messages an admin sent. Present for a student scope. */
+  notices?: StudentNotice[];
 }

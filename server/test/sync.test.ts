@@ -215,5 +215,61 @@ describe("sync", () => {
     assert.ok(lectures.some((l) => l.division === "Sam Altman 2025"));
     assert.ok(lectures.some((l) => l.division === "Mark Zuckerberg"));
   });
+
+  it("replaces a batch with the dates and times on the sheet an admin saved", async () => {
+    const db = openDatabase(":memory:");
+    const other = await workbookBuffer((sheet) => {
+      sheet.getCell("A1").value = "BTECH BATCH 2026-30";
+      sheet.getCell("A2").value = "17/11/2026 (Tuesday)";
+      sheet.getCell("A4").value = "9:00 AM - 10:00 AM";
+      sheet.getCell("B3").value = "Andrew NG";
+      sheet.getCell("B4").value = "Physics";
+    });
+    const previous = await workbookBuffer((sheet) => {
+      sheet.getCell("A1").value = "BTECH BATCH 2025-29";
+      sheet.getCell("A2").value = "17/11/2026 (Tuesday)";
+      sheet.getCell("A4").value = "10:00 AM - 11:00 AM";
+      sheet.getCell("B3").value = "Sam Altman 2025";
+      sheet.getCell("B4").value = "Old Subject";
+    });
+    const uploaded = await workbookBuffer((sheet) => {
+      sheet.getCell("A1").value = "BTECH BATCH 2025-29";
+      sheet.getCell("A2").value = "24/11/2026 (Tuesday)";
+      sheet.getCell("A4").value = "2:10 PM - 3:10 PM";
+      sheet.getCell("B3").value = "Sam Altman 2025";
+      sheet.getCell("B4").value = "Operating Systems";
+    });
+
+    await runSync({
+      db,
+      config: { courseName: "BTech", dateOrder: "DMY", spreadsheetTitle: "Other", syncIntervalSeconds: 45, spreadsheetId: "other" },
+      load: async () => ({ buffer: other }),
+      loadAll: async () => [{ buffer: other, course: "BTech", spreadsheetId: "other" }],
+    });
+    await runSync({
+      db,
+      config: { courseName: "BTech", dateOrder: "DMY", spreadsheetTitle: "Old", syncIntervalSeconds: 45, spreadsheetId: "old-sheet" },
+      load: async () => ({ buffer: previous }),
+      loadAll: async () => [{ buffer: previous, course: "BTech", spreadsheetId: "old-sheet" }],
+    });
+    const replaced = await runSync({
+      db,
+      config: { courseName: "BTech", dateOrder: "DMY", spreadsheetTitle: "New", syncIntervalSeconds: 45, spreadsheetId: "new-sheet" },
+      load: async () => ({ buffer: uploaded }),
+      loadAll: async () => [{ buffer: uploaded, course: "BTech", spreadsheetId: "new-sheet" }],
+      replaceProgram: { course: "BTech", batch: "2025-29" },
+    });
+
+    assert.equal(replaced.ok, true);
+    const lectures = readLectures(db);
+    const year = lectures.filter((lecture) => lecture.batch === "2025-29" && lecture.kind === "lecture");
+    assert.equal(year.length, 1);
+    assert.equal(year[0]?.subject, "Operating Systems");
+    assert.equal(year[0]?.date, "2026-11-24");
+    assert.equal(year[0]?.startMinutes, 14 * 60 + 10);
+    assert.equal(year[0]?.endMinutes, 15 * 60 + 10);
+    assert.equal(year[0]?.sourceStatus === "cancelled", false);
+    assert.ok(lectures.some((lecture) => lecture.division === "Andrew NG" && lecture.subject === "Physics" && lecture.date === "2026-11-17"));
+  });
 });
 

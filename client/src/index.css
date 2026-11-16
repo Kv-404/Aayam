@@ -538,6 +538,25 @@ select {
   animation: page-fade 0.24s ease-out;
 }
 
+.settings-glass {
+  animation: page-fade 0.22s ease-out;
+}
+
+@keyframes tools-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.tools-pop {
+  animation: tools-pop 0.2s ease-out;
+}
+
 ::selection {
   background-color: color-mix(in oklab, var(--base-foreground) 82%, transparent);
   color: var(--base);

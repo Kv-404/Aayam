@@ -1,38 +1,38 @@
-import { useMemo, useState, type MouseEvent } from "react";
-import { cohortLabel, cohortsInYear, type CohortChoice, DEFAULT_COHORT_CHOICES } from "@shared/cohort";
-import { ArrowLeft, ArrowRight, Check } from "lucide-react";
-import { HomePitch } from "@/components/HomePitch";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import { cohortLabel, cohortPrograms, cohortYears, cohortsInYear, type CohortChoice, DEFAULT_COHORT_CHOICES } from "@shared/cohort";
+import { ArrowLeft, ArrowRight } from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AayamIcon } from "@/components/AayamLogo";
 import { ColorSwitch } from "@/components/ColorSwitch";
 import { MeetChoice } from "@/components/MeetLink";
-import {
-  readStoredCohort,
-  readStudentBatch,
-  saveRole,
-  saveSetup,
-  saveStudentBatch,
-  themes,
-  type MeetAction,
-  type ThemeId,
-} from "@/lib/prefs";
+import { readStoredCohort, saveRole, saveSetup, saveStudentBatch, themes, type MeetAction, type ThemeId } from "@/lib/prefs";
 import { cohortToSlug } from "@/lib/slug";
 
-type Step = "role" | "batch" | "cohort" | "theme";
-
-const sourceUrl = "https://github.com/Kv-404/Aayam";
+type Step = "role" | "program" | "batch" | "cohort" | "theme";
 
 export interface HomePageProps {
   onNavigateCohort: (slug: string) => void;
   choices?: CohortChoice[];
   onOpenFacultyLogin?: () => void;
   onNavigateUrl?: (url: string) => void;
+  /** Starts that batch's sheet while the section list is still on screen. */
+  onPrefetchBatch?: (course: string, batch: string) => void;
   theme: ThemeId;
+  onTheme: (theme: ThemeId) => void;
   colors: boolean;
   bold: boolean;
   meet: MeetAction;
-  onTheme: (theme: ThemeId) => void;
   onColors: (on: boolean) => void;
   onBold: (on: boolean) => void;
   onMeet: (action: MeetAction) => void;
+}
+
+function programLabel(course: string) {
+  return course.trim().toLowerCase() === "btech" ? "B.Tech" : course;
+}
+
+function batchLabel(batch: string) {
+  return batch.replace("-", "–");
 }
 
 export function HomePage({
@@ -40,93 +40,32 @@ export function HomePage({
   choices = DEFAULT_COHORT_CHOICES,
   onOpenFacultyLogin,
   onNavigateUrl,
+  onPrefetchBatch,
   theme,
+  onTheme,
   colors,
   bold,
   meet,
-  onTheme,
   onColors,
   onBold,
   onMeet,
 }: HomePageProps) {
-  const initialBatch = readStudentBatch();
+  const calm = useReducedMotion();
   const savedCohort = readStoredCohort();
-  const hasSavedAccess = Boolean(savedCohort);
-  const [step, setStep] = useState<Step>("role");
-  const [program, setProgram] = useState(initialBatch?.course ?? "");
-  const [year, setYear] = useState(initialBatch?.batch ?? "");
-  const [division, setDivision] = useState("");
-  const cohorts = useMemo(
-    () => (program && year ? cohortsInYear(choices, program, year) : []),
-    [choices, program, year],
-  );
+  const [enter] = useState(() => (typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("enter") ?? ""));
+  const [step, setStep] = useState<Step>(enter === "student" ? "program" : "role");
+  const [program, setProgram] = useState("");
+  const [batch, setBatch] = useState("");
+  const [cohort, setCohort] = useState("");
 
-  const batches = useMemo(() => {
-    const seen = new Set<string>();
-    const rows: { course: string; batch: string }[] = [];
-    for (const choice of choices) {
-      const key = `${choice.course}\0${choice.batch}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      rows.push({ course: choice.course, batch: choice.batch });
-    }
-    return rows;
-  }, [choices]);
+  useEffect(() => {
+    if (enter === "faculty") onOpenFacultyLogin?.();
+    if (enter) window.history.replaceState(null, "", "/");
+  }, [enter, onOpenFacultyLogin]);
 
-  const copy: Record<Exclude<Step, "role">, [string, string]> = {
-    batch: ["Select your batch", "Choose the year, then your section."],
-    cohort: ["Select your section", program && year ? `${program} · ${year}` : "Choose your section."],
-    theme: ["Select a theme", division ? `${cohortLabel(division)}. You can change this later.` : "You can change this later."],
-  };
-  const [title, note] = step === "role" ? ["", ""] : copy[step];
-
-  function openStudent() {
-    const batch = readStudentBatch();
-    if (batch) {
-      const own = cohortsInYear(choices, batch.course, batch.batch);
-      if (own.length > 0) {
-        setProgram(batch.course);
-        setYear(batch.batch);
-        setStep("cohort");
-        return;
-      }
-    }
-    setProgram("");
-    setYear("");
-    setStep("batch");
-  }
-
-  function goBack() {
-    if (step === "theme") {
-      setStep("cohort");
-      return;
-    }
-    if (step === "cohort") {
-      setStep("batch");
-      return;
-    }
-    setStep("role");
-  }
-
-  function chooseBatch(course: string, batch: string) {
-    setProgram(course);
-    setYear(batch);
-    saveRole("student");
-    saveStudentBatch(course, batch);
-    setStep("cohort");
-  }
-
-  function openCohort(next: string) {
-    setDivision(next);
-    setStep("theme");
-  }
-
-  function saveTheme() {
-    if (!division) return;
-    saveRole("student");
-    saveSetup({ role: "student", cohort: division, faculty: "", theme });
-    onNavigateCohort(cohortToSlug(division));
-  }
+  const programs = useMemo(() => cohortPrograms(choices), [choices]);
+  const batches = useMemo(() => (program ? cohortYears(choices, program) : []), [choices, program]);
+  const cohorts = useMemo(() => (program && batch ? cohortsInYear(choices, program, batch) : []), [choices, program, batch]);
 
   function openPage(event: MouseEvent, url: string) {
     event.preventDefault();
@@ -138,149 +77,226 @@ export function HomePage({
     window.dispatchEvent(new PopStateEvent("popstate"));
   }
 
-  if (step === "role") {
-    return (
-      <HomePitch
-        hasSavedAccess={hasSavedAccess}
-        savedLabel={savedCohort ? cohortLabel(savedCohort) : ""}
-        onContinue={() => {
-          if (savedCohort) onNavigateCohort(cohortToSlug(savedCohort));
-        }}
-        onOpenStudent={openStudent}
-        onOpenFaculty={() => onOpenFacultyLogin?.()}
-        onOpenPage={openPage}
-        sourceUrl={sourceUrl}
-      />
-    );
+  function openAdmin(event: MouseEvent) {
+    openPage(event, "/admin");
   }
 
+  function chooseProgram(course: string) {
+    setProgram(course);
+    setBatch("");
+    setStep("batch");
+  }
+
+  function chooseBatch(next: string) {
+    setBatch(next);
+    saveRole("student");
+    saveStudentBatch(program, next);
+    onPrefetchBatch?.(program, next);
+    setStep("cohort");
+  }
+
+  function chooseCohort(division: string) {
+    setCohort(division);
+    saveRole("student");
+    saveStudentBatch(program, batch);
+    setStep("theme");
+  }
+
+  function finish() {
+    saveRole("student");
+    saveStudentBatch(program, batch);
+    saveSetup({ role: "student", cohort, faculty: "", theme });
+    onNavigateCohort(cohortToSlug(cohort));
+  }
+
+  function goBack() {
+    if (step === "theme") {
+      setStep("cohort");
+      return;
+    }
+    if (step === "cohort") {
+      setStep("batch");
+      return;
+    }
+    if (step === "batch") {
+      setStep("program");
+      return;
+    }
+    setStep("role");
+  }
+
+  const heading =
+    step === "role" ? "I am" : step === "program" ? "Which course?" : step === "batch" ? "Which batch?" : step === "cohort" ? "Which cohort?" : "Pick a theme";
+  const note =
+    step === "program"
+      ? "B.Tech or MCA."
+      : step === "batch"
+        ? programLabel(program)
+        : step === "cohort" || step === "theme"
+          ? `${programLabel(program)} · ${batchLabel(batch)}${step === "theme" && cohort ? ` · ${cohortLabel(cohort)}` : ""}`
+          : "";
+
   return (
-    <main className={`mx-auto flex min-h-dvh w-full flex-col px-5 py-5 sm:px-6 ${step === "theme" ? "max-w-3xl" : "max-w-lg"}`}>
-      <div key={step} className={`rise flex flex-col ${step === "theme" ? "py-4 sm:py-6" : "flex-1 justify-center"}`}>
-        <h1 className="text-3xl font-medium tracking-tight">{title}</h1>
-        <p className="mt-2 text-sm text-muted-foreground">{note}</p>
+    <main className={`relative mx-auto flex min-h-dvh w-full flex-col px-6 pt-24 pb-8 ${step === "theme" ? "max-w-4xl" : "max-w-md"}`}>
+      <div className="fixed inset-x-0 top-0 z-10 flex items-start justify-between px-5 pt-[max(0.85rem,env(safe-area-inset-top))]">
+        <AayamIcon size={26} />
+        <a
+          href="/admin"
+          onClick={openAdmin}
+          className="pt-1.5 text-[11px] text-muted-foreground/70 hover:text-foreground"
+        >
+          Admin
+        </a>
+      </div>
 
-        {step === "batch" && (
-          <ul className="mt-8 grid max-h-[50dvh] gap-2 overflow-y-auto">
-            {batches.map((item) => (
-              <li key={`${item.course}-${item.batch}`}>
-                <button
-                  type="button"
-                  onClick={() => chooseBatch(item.course, item.batch)}
-                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-border px-4 py-3 text-left text-base font-medium tracking-tight hover:bg-muted"
+      <div className="flex flex-1 flex-col justify-center">
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={step}
+            initial={calm ? { opacity: 0 } : { opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={calm ? { opacity: 0 } : { opacity: 0, y: -8 }}
+            transition={{ duration: calm ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <h1 className="text-4xl font-medium tracking-tight">{heading}</h1>
+            {note ? <p className="mt-2 text-sm text-muted-foreground">{note}</p> : null}
+
+            {step === "role" && (
+              <div className="mt-8 grid gap-3">
+                <Choice label="Student" onClick={() => setStep("program")} />
+                <Choice label="Faculty" onClick={() => onOpenFacultyLogin?.()} />
+                {savedCohort ? (
+                  <button
+                    type="button"
+                    onClick={() => onNavigateCohort(cohortToSlug(savedCohort))}
+                    className="mt-2 text-left text-sm text-muted-foreground hover:text-foreground"
+                  >
+                    Continue to {cohortLabel(savedCohort)}
+                  </button>
+                ) : null}
+                <a
+                  href="https://exam.somyacodes.in/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-6 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
                 >
-                  {item.course} {item.batch}
-                  <ArrowRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+                  University exam schedule
+                </a>
+              </div>
+            )}
 
-        {step === "cohort" && (
-          <div className="mt-8 flex flex-col gap-3">
-            <div className="flex justify-end px-1 text-xs text-muted-foreground">
-              <button type="button" onClick={() => setStep("batch")} className="hover:text-foreground">
-                Different batch
-              </button>
-            </div>
-            {cohorts.length > 0 ? (
-              <ul className="grid max-h-[50dvh] gap-2 overflow-y-auto">
-                {cohorts.map((choice) => (
-                  <li key={choice.division}>
-                    <button
-                      type="button"
-                      onClick={() => openCohort(choice.division)}
-                      className="flex w-full items-center justify-between gap-3 rounded-lg border border-border px-4 py-3 text-left text-base font-medium tracking-tight hover:bg-muted"
-                    >
-                      {cohortLabel(choice.division)}
-                      <ArrowRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                    </button>
+            {step === "program" && (
+              <ul className="mt-8 grid gap-3">
+                {programs.map((course) => (
+                  <li key={course}>
+                    <Choice label={programLabel(course)} onClick={() => chooseProgram(course)} />
                   </li>
                 ))}
               </ul>
-            ) : (
-              <p className="rounded-lg border border-border px-4 py-3 text-sm text-muted-foreground">
-                No sections are listed for this batch yet.
-              </p>
             )}
-          </div>
-        )}
 
-        {step === "theme" && (
-          <>
-            <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {themes.map((item) => {
-                const selected = theme === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    aria-pressed={selected}
-                    onClick={() => onTheme(item.id)}
-                    className={choiceClass(selected, "flex-col items-stretch px-3 py-3")}
-                  >
-                    <span className="flex items-center justify-between gap-2">
-                      <span className="flex shrink-0 gap-1" aria-hidden="true">
-                        {item.swatch.map((color) => (
-                          <span key={color} className="size-3 rounded-full border border-black/10" style={{ background: color }} />
-                        ))}
-                      </span>
-                      <ChoiceMark selected={selected} />
-                    </span>
-                    <span className="text-sm font-medium">{item.name}</span>
-                    <span className={`text-xs ${selected ? "text-background/70" : "text-muted-foreground"}`}>{item.blurb}</span>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="mt-6 grid gap-2">
-              <ColorSwitch on={colors} onChange={onColors} />
-              {colors && <ColorSwitch on={bold} onChange={onBold} title="Bold colours" testId="bold-toggle" />}
-              <MeetChoice action={meet} onChange={onMeet} />
-            </div>
-          </>
-        )}
+            {step === "batch" && (
+              <ul className="mt-8 grid gap-3">
+                {batches.map((item) => (
+                  <li key={item}>
+                    <Choice label={batchLabel(item)} onClick={() => chooseBatch(item)} />
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {step === "theme" && (
+              <>
+              <ul className="mt-8 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {themes.map((item) => {
+                  const selected = theme === item.id;
+                  return (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => onTheme(item.id)}
+                        className={`flex w-full flex-col items-start gap-2 rounded-2xl border px-3 py-3 text-left transition-colors duration-200 ${
+                          selected ? "border-transparent bg-foreground text-background" : "border-border hover:bg-muted"
+                        }`}
+                      >
+                        <span className="flex gap-1" aria-hidden="true">
+                          {item.swatch.map((color) => (
+                            <span key={color} className="size-3 rounded-full border border-black/10" style={{ background: color }} />
+                          ))}
+                        </span>
+                        <span className="text-sm font-medium">{item.name}</span>
+                        <span className={`text-xs ${selected ? "text-background/70" : "text-muted-foreground"}`}>{item.blurb}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+              <div className="mt-6 grid gap-2">
+                <ColorSwitch on={colors} onChange={onColors} />
+                {colors ? <ColorSwitch on={bold} onChange={onBold} title="Bold colours" testId="bold-toggle" /> : null}
+                <MeetChoice action={meet} onChange={onMeet} />
+              </div>
+              </>
+            )}
+
+            {step === "cohort" && (
+              <ul className="mt-8 grid max-h-[50dvh] gap-3 overflow-y-auto">
+                {cohorts.length > 0 ? (
+                  cohorts.map((choice) => (
+                    <li key={choice.division}>
+                      <Choice label={cohortLabel(choice.division)} onClick={() => chooseCohort(choice.division)} />
+                    </li>
+                  ))
+                ) : (
+                  <li className="rounded-2xl border border-border px-5 py-4 text-sm text-muted-foreground">No sections for this year yet.</li>
+                )}
+              </ul>
+            )}
+          </motion.div>
+        </AnimatePresence>
       </div>
 
-      <div className={`flex items-center justify-between border-t border-border ${step === "theme" ? "mt-6 pt-4" : "mt-8 pt-4"}`}>
-        <button type="button" onClick={goBack} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
-          <ArrowLeft className="size-3.5" aria-hidden="true" />
-          Back
-        </button>
-        {step === "theme" && (
-          <button type="button" onClick={saveTheme} disabled={!division} className="rounded-md bg-foreground px-4 py-2 text-sm text-background disabled:opacity-40">
-            Save
+      <div className="mt-8 flex items-center justify-between pt-4 text-sm">
+        {step === "role" ? (
+          <span />
+        ) : (
+          <button type="button" onClick={goBack} className="inline-flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
+            <ArrowLeft className="size-3.5" aria-hidden="true" />
+            Back
           </button>
         )}
+        {step === "theme" ? (
+          <button type="button" onClick={finish} className="rounded-xl bg-foreground px-4 py-2 text-sm font-medium text-background">
+            Continue
+          </button>
+        ) : (
+          <span />
+        )}
+        <span className="flex items-center gap-3 text-xs text-muted-foreground">
+          <a href="/privacy" onClick={(event) => openPage(event, "/privacy")} className="hover:text-foreground">
+            Privacy
+          </a>
+          <a href="/terms" onClick={(event) => openPage(event, "/terms")} className="hover:text-foreground">
+            Terms
+          </a>
+        </span>
       </div>
-
-      <footer className={`flex items-center justify-center gap-3 border-t border-border/40 text-center text-xs text-muted-foreground ${step === "theme" ? "mt-6 pt-4" : "mt-8 pt-4"}`}>
-        <a href={sourceUrl} target="_blank" rel="noreferrer" className="underline-offset-4 hover:text-foreground hover:underline">
-          GitHub
-        </a>
-        <span aria-hidden="true">•</span>
-        <a href="/privacy" onClick={(event) => openPage(event, "/privacy")} className="underline-offset-4 hover:text-foreground hover:underline">
-          Privacy Policy
-        </a>
-        <span aria-hidden="true">•</span>
-        <a href="/terms" onClick={(event) => openPage(event, "/terms")} className="underline-offset-4 hover:text-foreground hover:underline">
-          Terms of Service
-        </a>
-      </footer>
     </main>
   );
 }
 
-function choiceClass(selected: boolean, extra: string) {
-  return `flex w-full justify-between gap-3 rounded-lg border text-left tracking-tight ${extra} ${
-    selected ? "border-transparent bg-foreground text-background" : "border-border hover:bg-muted"
-  }`;
-}
-
-function ChoiceMark({ selected }: { selected: boolean }) {
-  if (!selected) return <span className="size-5 shrink-0 rounded-full border border-current opacity-35" aria-hidden="true" />;
-  return <Check className="size-5 shrink-0" aria-hidden="true" />;
+function Choice({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center justify-between gap-3 rounded-2xl border border-border px-5 py-4 text-left text-lg font-medium tracking-tight transition-colors duration-200 hover:bg-muted"
+    >
+      {label}
+      <ArrowRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+    </button>
+  );
 }
 
 export default HomePage;

@@ -15,64 +15,71 @@ export function TermsOfService({ onBack }: { onBack?: () => void }) {
           </button>
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <FileText className="size-4 text-primary" />
-            <span>Last updated: October 2026</span>
+            <span>Last updated: 16 November 2026</span>
           </div>
         </div>
 
-        <article className="prose prose-neutral dark:prose-invert max-w-none space-y-6 text-sm leading-relaxed">
+        <article className="max-w-none space-y-6 text-sm leading-relaxed">
           <header>
             <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">Terms of Service</h1>
             <p className="mt-2 text-muted-foreground">
-              Welcome to Aayam · आयाम (<a href="https://aayam.kv404.dev" className="text-primary underline">aayam.kv404.dev</a>). By using our application, you agree to these Terms of Service.
+              These terms cover use of Aayam (आयाम) at <a href="https://aayam.kv404.dev" className="text-primary underline">aayam.kv404.dev</a>. Using the timetable means you accept them.
             </p>
           </header>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">1. Description of Service</h2>
+            <h2 className="text-lg font-semibold text-foreground">1. What Aayam is</h2>
             <p className="text-muted-foreground">
-              Aayam (आयाम) is an automated, real-time college schedule viewer that aggregates published course timetables from official institutional planning sheets for students and faculty.
+              Aayam shows the college timetable. The original record is the official Google Sheet for a course and batch. The server downloads that sheet and shows a copy: the subject, faculty name, room, time, date, and any cancellation the sheet marks. Aayam does not edit the sheet. If the sheet and this page disagree, the sheet and the college’s own notice are the record.
             </p>
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">2. Authorized Use &amp; Account Access</h2>
-            <ul className="list-disc pl-5 space-y-1.5 text-muted-foreground">
+            <h2 className="text-lg font-semibold text-foreground">2. Who can open it</h2>
+            <ul className="list-disc space-y-1.5 pl-5 text-muted-foreground">
               <li>
-                <strong className="text-foreground">Student Access:</strong> Student schedule views are publicly accessible for all active academic cohorts and divisions.
+                <strong className="text-foreground">Students</strong> pick a course, then a batch such as 2025–29, then a section. That opens the sheet for that batch. There is no student account and no batch PIN.
               </li>
               <li>
-                <strong className="text-foreground">Faculty &amp; Coordinator Access:</strong> Faculty schedule views require authentication using an official Google Workspace account under approved domains (<code>@itm.edu</code> or <code>@isu.ac.in</code>). Attempting unauthorized access or spoofing credentials is strictly prohibited.
+                <strong className="text-foreground">Faculty</strong> sign in with a Google account on <code>@itm.edu</code> or <code>@isu.ac.in</code> that is listed in the faculty directory. That view reads every sheet, so the lectures under that name can be shown together.
               </li>
             </ul>
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">3. Accuracy of Schedules &amp; Disclaimers</h2>
+            <h2 className="text-lg font-semibold text-foreground">3. The college’s timetable</h2>
             <p className="text-muted-foreground">
-              The service synchronizes data directly from official college planning spreadsheets. While we strive to maintain instant and accurate change tracking (including lecture relocations, cancellations, and holiday notices), official institutional announcements from course administration always supersede the timetable view.
+              The words in the sheet, including subject names, faculty names, and room numbers, are the college’s. Aayam is allowed to display that published timetable. You may use it to see when and where a class is. You may not present a changed copy as the official sheet.
             </p>
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">4. Acceptable Use Policy</h2>
+            <h2 className="text-lg font-semibold text-foreground">4. Acceptable use</h2>
             <p className="text-muted-foreground">
-              Users agree not to disrupt or burden the system through automated scraping, denial-of-service attempts, or reverse engineering of backend synchronization endpoints.
+              Do not overload the sync, scrape the sheets through this service in bulk, try to sign in as someone else, or try to obtain the operator password. A student request is for one batch. Asking it to pull every batch is outside how the service is offered.
             </p>
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">5. Modifications to Service and Terms</h2>
+            <h2 className="text-lg font-semibold text-foreground">5. Notices</h2>
             <p className="text-muted-foreground">
-              We reserve the right to modify or discontinue features, update schedule configurations, or revise these terms to align with institutional policies. Continued use of the service signifies acceptance of revised terms.
+              The college operator may send a short notice to a course, a batch, or every student.
             </p>
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">6. Contact</h2>
-            <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground space-y-1">
-              <p><strong className="text-foreground">Timetable Administrator:</strong> Karamveer Singh</p>
-              <p><strong className="text-foreground">Email:</strong> <a href="mailto:Kv404@protonmail.com" className="text-primary underline">Kv404@protonmail.com</a> &middot; <a href="mailto:2025.karamveers@isu.ac.in" className="text-primary underline">2025.karamveers@isu.ac.in</a></p>
-              <p><strong className="text-foreground">Website:</strong> <a href="https://timetable.kv404.dev" className="text-primary underline">https://timetable.kv404.dev</a></p>
+            <h2 className="text-lg font-semibold text-foreground">6. Changes</h2>
+            <p className="text-muted-foreground">
+              The sheets change when the college updates them. These terms can change too. The date at the top of this page is the date of the current text. Continuing to use Aayam after that date means you accept the updated terms.
+            </p>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold text-foreground">7. Contact</h2>
+            <div className="space-y-1 rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+              <p><strong className="text-foreground">Timetable administrator:</strong> Karamveer Singh</p>
+              <p><strong className="text-foreground">Email:</strong> <a href="mailto:Kv404@protonmail.com" className="text-primary underline">Kv404@protonmail.com</a> · <a href="mailto:2025.karamveers@isu.ac.in" className="text-primary underline">2025.karamveers@isu.ac.in</a></p>
+              <p><strong className="text-foreground">Website:</strong> <a href="https://aayam.kv404.dev" className="text-primary underline">https://aayam.kv404.dev</a></p>
             </div>
           </section>
         </article>

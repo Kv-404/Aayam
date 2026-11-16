@@ -139,9 +139,22 @@ function mondayOf(iso: string) {
   return date.toISOString().slice(0, 10);
 }
 
+function daySpan(start: string, end: string) {
+  const startMs = Date.parse(`${start}T12:00:00Z`);
+  const endMs = Date.parse(`${end}T12:00:00Z`);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return 0;
+  return Math.round((endMs - startMs) / 86_400_000);
+}
+
 export function groupSavedWeeks(weeks: SavedWeek[]): WeekGroup[] {
+  // A row that covers two weeks is an old overlap. Keep the real one-week copy beside it.
+  const usable = weeks.filter((week) => {
+    if (daySpan(week.start, week.end) <= 6) return true;
+    const monday = mondayOf(week.start);
+    return !weeks.some((other) => other.id !== week.id && mondayOf(other.start) === monday && daySpan(other.start, other.end) <= 6);
+  });
   const groups = new Map<string, WeekGroup>();
-  for (const week of weeks) {
+  for (const week of usable) {
     const id = mondayOf(week.start);
     const group = groups.get(id);
     if (!group) {
