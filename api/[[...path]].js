@@ -596,8 +596,8 @@ var import_node_url = require("node:url");
 var import_meta = {};
 function applyEnvFile(file) {
   if (!import_node_fs2.default.existsSync(file)) return;
-  const text2 = import_node_fs2.default.readFileSync(file, "utf8");
-  for (const line of text2.split("\n")) {
+  const text3 = import_node_fs2.default.readFileSync(file, "utf8");
+  for (const line of text3.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
     const eq = trimmed.indexOf("=");
@@ -716,12 +716,12 @@ function calendarFile(lectures, timeZone, calendarName = "Timetable", options) {
     "REFRESH-INTERVAL;VALUE=DURATION:PT1H",
     "X-PUBLISHED-TTL:PT1H"
   ];
-  const stamp = formatUtc(/* @__PURE__ */ new Date());
+  const stamp2 = formatUtc(/* @__PURE__ */ new Date());
   for (const lecture of events) {
     lines.push(
       "BEGIN:VEVENT",
       `UID:${icsText(lecture.id)}@timetable`,
-      `DTSTAMP:${stamp}`,
+      `DTSTAMP:${stamp2}`,
       `DTSTART:${googleStamp(lecture.date, lecture.startMinutes, timeZone)}`,
       `DTEND:${googleStamp(lecture.date, lecture.endMinutes, timeZone)}`,
       `SUMMARY:${icsText(options?.includeCohort ? `${eventTitle(lecture)} \xB7 ${cohortName(lecture.division)}` : eventTitle(lecture))}`,
@@ -1185,6 +1185,668 @@ function clearSessionCookie(res) {
   res.setHeader("Set-Cookie", cookieString);
 }
 
+// server/src/services/adminAuth.ts
+var import_node_crypto2 = __toESM(require("node:crypto"), 1);
+
+// server/src/services/adminSchema.ts
+var pending = null;
+function ensureAdminSchema() {
+  if (pending) return pending;
+  const work = (async () => {
+    const sql = getSql();
+    await sql`
+      CREATE TABLE IF NOT EXISTS admin_password (
+        id SMALLINT PRIMARY KEY CHECK (id = 1),
+        password_hash TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `;
+    await sql`
+      CREATE TABLE IF NOT EXISTS admin_sessions (
+        token_hash TEXT PRIMARY KEY,
+        expires_at TIMESTAMPTZ NOT NULL
+      )
+    `;
+    await sql`
+      CREATE TABLE IF NOT EXISTS timetable_sheet_links (
+        course TEXT NOT NULL,
+        batch TEXT NOT NULL,
+        spreadsheet_id TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (course, batch)
+      )
+    `;
+    await sql`
+      CREATE TABLE IF NOT EXISTS student_notices (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        course TEXT,
+        batch TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `;
+    await sql`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        endpoint TEXT PRIMARY KEY,
+        p256dh TEXT NOT NULL,
+        auth_key TEXT NOT NULL,
+        course TEXT,
+        batch TEXT,
+        division TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `;
+    await sql`
+      CREATE TABLE IF NOT EXISTS push_vapid (
+        id SMALLINT PRIMARY KEY CHECK (id = 1),
+        public_key TEXT NOT NULL,
+        private_key TEXT NOT NULL
+      )
+    `;
+  })().catch((error) => {
+    pending = null;
+    throw error;
+  });
+  pending = work;
+  return work;
+}
+
+// server/src/services/adminAuth.ts
+var SCRYPT_N = 16384;
+var SCRYPT_R = 8;
+var SCRYPT_P = 1;
+var KEY_LEN = 32;
+var COOKIE = "aayam_admin";
+var SESSION_SECONDS = 12 * 60 * 60;
+var adminLoginLimiter = new PinRateLimiter(5, 15 * 60 * 1e3);
+function scrypt(password, salt, keylen, params) {
+  return new Promise((resolve, reject) => {
+    import_node_crypto2.default.scrypt(password, salt, keylen, params, (error, key) => {
+      if (error) reject(error);
+      else resolve(key);
+    });
+  });
+}
+async function hashPassword(password) {
+  const salt = import_node_crypto2.default.randomBytes(16);
+  const key = await scrypt(password, salt, KEY_LEN, { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P });
+  return `scrypt$${SCRYPT_N}$${SCRYPT_R}$${SCRYPT_P}$${salt.toString("base64url")}$${key.toString("base64url")}`;
+}
+function parseHash(stored) {
+  if (!stored) return null;
+  const parts = stored.split("$");
+  if (parts.length !== 6 || parts[0] !== "scrypt") return null;
+  const N = Number(parts[1]);
+  const r = Number(parts[2]);
+  const p = Number(parts[3]);
+  if (!Number.isInteger(N) || !Number.isInteger(r) || !Number.isInteger(p)) return null;
+  if (N < 16384 || N > 262144 || r < 8 || r > 16 || p < 1 || p > 2) return null;
+  let salt;
+  let key;
+  try {
+    salt = Buffer.from(parts[4] ?? "", "base64url");
+    key = Buffer.from(parts[5] ?? "", "base64url");
+  } catch {
+    return null;
+  }
+  if (salt.length < 16 || key.length < 16) return null;
+  return { params: { N, r, p }, salt, key };
+}
+var dummyHash = null;
+function dummyPasswordHash() {
+  dummyHash ??= hashPassword(import_node_crypto2.default.randomBytes(32).toString("hex"));
+  return dummyHash;
+}
+async function verifyPassword(password, stored) {
+  const parsed = parseHash(stored);
+  const target = parsed ?? parseHash(await dummyPasswordHash());
+  if (!target) return false;
+  let actual;
+  try {
+    actual = await scrypt(password, target.salt, target.key.length, target.params);
+  } catch {
+    return false;
+  }
+  const same = actual.length === target.key.length && import_node_crypto2.default.timingSafeEqual(actual, target.key);
+  return Boolean(parsed) && same;
+}
+async function readAdminPasswordHash() {
+  await ensureAdminSchema();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT password_hash FROM admin_password WHERE id = 1
+  `;
+  const value = rows[0]?.password_hash;
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+async function setAdminPasswordHash(passwordHash) {
+  await ensureAdminSchema();
+  const sql = getSql();
+  await sql`
+    INSERT INTO admin_password (id, password_hash, updated_at)
+    VALUES (1, ${passwordHash}, now())
+    ON CONFLICT (id) DO UPDATE
+      SET password_hash = EXCLUDED.password_hash, updated_at = now()
+  `;
+}
+async function bootstrapAdminPasswordFromEnv() {
+  const existing = await readAdminPasswordHash();
+  if (existing) return;
+  const password = process.env.ADMIN_PASSWORD?.trim() ?? "";
+  if (password.length < 12 || password.length > 200) return;
+  await setAdminPasswordHash(await hashPassword(password));
+}
+async function passwordMatches(password) {
+  if (password.length < 1 || password.length > 200) return false;
+  const stored = await readAdminPasswordHash();
+  return verifyPassword(password, stored);
+}
+async function createAdminSession() {
+  await ensureAdminSchema();
+  const token = import_node_crypto2.default.randomBytes(32).toString("base64url");
+  const tokenHash = import_node_crypto2.default.createHash("sha256").update(token).digest("hex");
+  const sql = getSql();
+  await sql`
+    INSERT INTO admin_sessions (token_hash, expires_at)
+    VALUES (${tokenHash}, now() + interval '12 hours')
+  `;
+  return token;
+}
+async function adminSessionValid(token) {
+  if (!token || token.length < 20 || token.length > 200) return false;
+  await ensureAdminSchema();
+  const tokenHash = import_node_crypto2.default.createHash("sha256").update(token).digest("hex");
+  const sql = getSql();
+  const rows = await sql`
+    SELECT expires_at FROM admin_sessions WHERE token_hash = ${tokenHash}
+  `;
+  const expires = rows[0]?.expires_at;
+  if (!expires) return false;
+  if (new Date(expires).getTime() <= Date.now()) {
+    await sql`DELETE FROM admin_sessions WHERE token_hash = ${tokenHash}`;
+    return false;
+  }
+  return true;
+}
+async function deleteAdminSession(token) {
+  if (!token) return;
+  await ensureAdminSchema();
+  const tokenHash = import_node_crypto2.default.createHash("sha256").update(token).digest("hex");
+  const sql = getSql();
+  await sql`DELETE FROM admin_sessions WHERE token_hash = ${tokenHash}`;
+}
+async function deleteAdminSessions() {
+  await ensureAdminSchema();
+  const sql = getSql();
+  await sql`DELETE FROM admin_sessions`;
+}
+function secureSuffix() {
+  return process.env.NODE_ENV === "production" || process.env.VERCEL ? "; Secure" : "";
+}
+function setAdminCookie(res, token) {
+  const expires = new Date(Date.now() + SESSION_SECONDS * 1e3).toUTCString();
+  res.setHeader(
+    "Set-Cookie",
+    `${COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${SESSION_SECONDS}; Expires=${expires}; HttpOnly; SameSite=Strict${secureSuffix()}`
+  );
+}
+function clearAdminCookie(res) {
+  res.setHeader(
+    "Set-Cookie",
+    `${COOKIE}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Strict${secureSuffix()}`
+  );
+}
+function adminTokenFromRequest(req) {
+  return parseCookies(req.headers.cookie)[COOKIE] ?? "";
+}
+function hasAdminHeader(req) {
+  return req.get("x-aayam-admin") === "1";
+}
+
+// server/src/services/notices.ts
+var import_node_crypto3 = __toESM(require("node:crypto"), 1);
+function subscriptionMatches(sub, notice) {
+  const wantCourse = notice.course?.trim().toLowerCase() ?? "";
+  const wantBatch = notice.batch?.trim().toLowerCase() ?? "";
+  const gotCourse = sub.course?.trim().toLowerCase() ?? "";
+  const gotBatch = sub.batch?.trim().toLowerCase() ?? "";
+  if (wantCourse && gotCourse !== wantCourse) return false;
+  if (wantBatch && gotBatch !== wantBatch) return false;
+  return true;
+}
+function stamp(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? (/* @__PURE__ */ new Date()).toISOString() : date.toISOString();
+}
+async function listMatchingNotices(course, batch) {
+  if (!databaseUrl()) return [];
+  await ensureAdminSchema();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT id, title, body, created_at
+    FROM student_notices
+    WHERE created_at > now() - interval '14 days'
+      AND (course IS NULL OR lower(course) = lower(${course}))
+      AND (batch IS NULL OR lower(batch) = lower(${batch}))
+    ORDER BY created_at DESC
+    LIMIT 5
+  `;
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    body: row.body,
+    createdAt: stamp(row.created_at)
+  }));
+}
+async function noticesForScope(scope, choices) {
+  if (scope.faculty) return [];
+  let course = scope.course?.trim() ?? "";
+  let batch = scope.batch?.trim() ?? "";
+  if (scope.division) {
+    const match = choices.find((choice) => choice.division === scope.division);
+    if (match) {
+      course = match.course;
+      batch = match.batch;
+    }
+  }
+  if (!course && !batch) return [];
+  try {
+    return await listMatchingNotices(course, batch);
+  } catch {
+    return [];
+  }
+}
+async function listRecentNotices() {
+  await ensureAdminSchema();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT id, title, body, course, batch, created_at
+    FROM student_notices
+    ORDER BY created_at DESC
+    LIMIT 8
+  `;
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    body: row.body,
+    course: row.course,
+    batch: row.batch,
+    createdAt: stamp(row.created_at)
+  }));
+}
+async function insertNotice(title, body, audience) {
+  await ensureAdminSchema();
+  const sql = getSql();
+  const id = import_node_crypto3.default.randomUUID();
+  await sql`
+    INSERT INTO student_notices (id, title, body, course, batch)
+    VALUES (${id}, ${title}, ${body}, ${audience.course}, ${audience.batch})
+  `;
+  await sql`DELETE FROM student_notices WHERE created_at < now() - interval '30 days'`;
+  return id;
+}
+async function vapidPair() {
+  if (!databaseUrl()) return null;
+  await ensureAdminSchema();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT public_key, private_key FROM push_vapid WHERE id = 1
+  `;
+  const existing = rows[0];
+  if (existing?.public_key && existing.private_key) {
+    return { publicKey: existing.public_key, privateKey: existing.private_key };
+  }
+  const webpush = await import("web-push");
+  const keys = webpush.generateVAPIDKeys();
+  await sql`
+    INSERT INTO push_vapid (id, public_key, private_key)
+    VALUES (1, ${keys.publicKey}, ${keys.privateKey})
+    ON CONFLICT (id) DO NOTHING
+  `;
+  const again = await sql`
+    SELECT public_key, private_key FROM push_vapid WHERE id = 1
+  `;
+  const saved = again[0];
+  if (!saved?.public_key || !saved.private_key) return null;
+  return { publicKey: saved.public_key, privateKey: saved.private_key };
+}
+async function pushPublicKey() {
+  try {
+    const pair = await vapidPair();
+    return pair?.publicKey ?? null;
+  } catch {
+    return null;
+  }
+}
+async function savePushSubscription(row) {
+  await ensureAdminSchema();
+  const sql = getSql();
+  await sql`
+    INSERT INTO push_subscriptions (endpoint, p256dh, auth_key, course, batch, division)
+    VALUES (${row.endpoint}, ${row.p256dh}, ${row.authKey}, ${row.course}, ${row.batch}, ${row.division})
+    ON CONFLICT (endpoint) DO UPDATE
+      SET p256dh = EXCLUDED.p256dh,
+          auth_key = EXCLUDED.auth_key,
+          course = EXCLUDED.course,
+          batch = EXCLUDED.batch,
+          division = EXCLUDED.division
+  `;
+}
+async function listSubscriptions() {
+  await ensureAdminSchema();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT endpoint, p256dh, auth_key, course, batch FROM push_subscriptions
+  `;
+  return rows.map((row) => ({
+    endpoint: row.endpoint,
+    p256dh: row.p256dh,
+    authKey: row.auth_key,
+    course: row.course,
+    batch: row.batch,
+    division: null
+  }));
+}
+async function sendStudentPush(title, body, audience) {
+  const pair = await vapidPair();
+  if (!pair) return 0;
+  const webpush = await import("web-push");
+  webpush.setVapidDetails("https://aayam.kv404.dev", pair.publicKey, pair.privateKey);
+  const subs = (await listSubscriptions()).filter((sub) => subscriptionMatches(sub, audience));
+  let delivered = 0;
+  const sql = getSql();
+  for (const sub of subs) {
+    try {
+      await webpush.sendNotification(
+        { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.authKey } },
+        JSON.stringify({ title, body, tag: "aayam-notice" })
+      );
+      delivered += 1;
+    } catch (error) {
+      const status = typeof error === "object" && error && "statusCode" in error ? Number(error.statusCode) : 0;
+      if (status === 404 || status === 410) {
+        await sql`DELETE FROM push_subscriptions WHERE endpoint = ${sub.endpoint}`;
+      }
+    }
+  }
+  return delivered;
+}
+
+// server/src/services/sheetOverrides.ts
+var SHEET_ID = /^[a-zA-Z0-9-_]{20,80}$/;
+function acceptSpreadsheetId(input) {
+  const id = cleanSpreadsheetId(input);
+  if (!SHEET_ID.test(id)) return null;
+  return id;
+}
+function mergeSheetOverrides(sources, overrides) {
+  return sources.map((source) => {
+    const hit = overrides.find(
+      (row) => row.course.trim().toLowerCase() === source.course.trim().toLowerCase() && (source.batch ?? "").trim().toLowerCase() === row.batch.trim().toLowerCase() && acceptSpreadsheetId(row.spreadsheetId)
+    );
+    if (!hit) return source;
+    return { ...source, id: hit.spreadsheetId };
+  });
+}
+var cache = null;
+function clearSheetSourceCache() {
+  cache = null;
+}
+async function readSheetOverrides() {
+  if (!databaseUrl()) return [];
+  await ensureAdminSchema();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT course, batch, spreadsheet_id FROM timetable_sheet_links
+  `;
+  return rows.filter((row) => row.course && row.batch && acceptSpreadsheetId(row.spreadsheet_id)).map((row) => ({ course: row.course, batch: row.batch, spreadsheetId: row.spreadsheet_id }));
+}
+async function resolveSheetSources(fallback) {
+  const now = Date.now();
+  if (cache && now - cache.at < 3e3) return cache.sources;
+  let sources = fallback;
+  try {
+    const overrides = await readSheetOverrides();
+    sources = mergeSheetOverrides(fallback, overrides);
+  } catch {
+    sources = fallback;
+  }
+  cache = { at: now, sources };
+  return sources;
+}
+async function writeSheetOverride(course, batch, spreadsheetId) {
+  await ensureAdminSchema();
+  const sql = getSql();
+  await sql`
+    INSERT INTO timetable_sheet_links (course, batch, spreadsheet_id, updated_at)
+    VALUES (${course}, ${batch}, ${spreadsheetId}, now())
+    ON CONFLICT (course, batch) DO UPDATE
+      SET spreadsheet_id = EXCLUDED.spreadsheet_id, updated_at = now()
+  `;
+  clearSheetSourceCache();
+}
+async function deleteSheetOverride(course, batch) {
+  await ensureAdminSchema();
+  const sql = getSql();
+  await sql`
+    DELETE FROM timetable_sheet_links
+    WHERE lower(course) = lower(${course}) AND lower(batch) = lower(${batch})
+  `;
+  clearSheetSourceCache();
+}
+
+// server/src/adminRoutes.ts
+function text(value, max) {
+  if (typeof value !== "string") return "";
+  return value.trim().slice(0, max);
+}
+function templateFor(course, batch) {
+  return COHORT_TEMPLATES.find(
+    (item) => item.course.toLowerCase() === course.toLowerCase() && item.batch.toLowerCase() === batch.toLowerCase()
+  );
+}
+function audienceFrom(body) {
+  const course = text(body.course, 40);
+  const batch = text(body.batch, 40);
+  if (!course && !batch) return { course: null, batch: null };
+  if (!course || !batch) {
+    const courseOnly = COHORT_TEMPLATES.some((item) => item.course.toLowerCase() === course.toLowerCase());
+    if (course && !batch && courseOnly) return { course, batch: null };
+    return null;
+  }
+  if (!templateFor(course, batch)) return null;
+  return { course, batch };
+}
+async function requireAdmin(req, res) {
+  if (!hasAdminHeader(req)) {
+    res.status(401).json({ ok: false, error: "Sign in again." });
+    return false;
+  }
+  try {
+    const ok = await adminSessionValid(adminTokenFromRequest(req));
+    if (!ok) {
+      res.status(401).json({ ok: false, error: "Sign in again." });
+      return false;
+    }
+    return true;
+  } catch {
+    res.status(503).json({ ok: false, error: "Admin sign-in is unavailable." });
+    return false;
+  }
+}
+function sheetRows(fallback, overrides) {
+  return fallback.map((source) => {
+    const hit = overrides.find(
+      (row) => row.course.toLowerCase() === source.course.toLowerCase() && row.batch.toLowerCase() === (source.batch ?? "").toLowerCase()
+    );
+    const id = hit?.spreadsheetId || source.id;
+    return {
+      course: source.course,
+      batch: source.batch ?? "",
+      spreadsheetUrl: spreadsheetUrl(id)
+    };
+  });
+}
+function registerAdminRoutes(app2, deps) {
+  app2.get("/api/push/public-key", async (_req, res) => {
+    const publicKey = await pushPublicKey();
+    res.json({ publicKey });
+  });
+  app2.post("/api/push/subscribe", async (req, res) => {
+    const endpoint = text(req.body?.endpoint, 2e3);
+    const p256dh = text(req.body?.keys?.p256dh, 200);
+    const authKey = text(req.body?.keys?.auth, 200);
+    const course = text(req.body?.course, 40);
+    const batch = text(req.body?.batch, 40);
+    const division = text(req.body?.division, 80);
+    const local = endpoint.startsWith("http://localhost") || endpoint.startsWith("http://127.0.0.1");
+    if (!endpoint.startsWith("https://") && !local || !p256dh || !authKey) {
+      res.status(400).json({ ok: false });
+      return;
+    }
+    try {
+      await savePushSubscription({
+        endpoint,
+        p256dh,
+        authKey,
+        course: course || null,
+        batch: batch || null,
+        division: division || null
+      });
+      res.json({ ok: true });
+    } catch {
+      res.status(503).json({ ok: false });
+    }
+  });
+  app2.get("/api/admin/session", async (req, res) => {
+    try {
+      const signedIn = await adminSessionValid(adminTokenFromRequest(req));
+      if (!signedIn) {
+        res.json({ signedIn: false });
+        return;
+      }
+      const overrides = await readSheetOverrides();
+      const notices = await listRecentNotices();
+      res.json({ signedIn: true, sheets: sheetRows(deps.fallbackSheets, overrides), notices });
+    } catch {
+      res.json({ signedIn: false });
+    }
+  });
+  app2.post("/api/admin/login", async (req, res) => {
+    const ip = getClientIp(req);
+    const rate = adminLoginLimiter.check(ip);
+    if (rate.limited) {
+      res.setHeader("Retry-After", String(rate.retryAfterSeconds));
+      res.status(429).json({ ok: false, error: `Too many tries. Wait ${rate.retryAfterSeconds} seconds.` });
+      return;
+    }
+    const password = typeof req.body?.password === "string" ? req.body.password : "";
+    if (!password || password.length > 200) {
+      adminLoginLimiter.recordFailure(ip);
+      res.status(401).json({ ok: false, error: "That password is not right." });
+      return;
+    }
+    try {
+      await bootstrapAdminPasswordFromEnv();
+      const match = await passwordMatches(password);
+      if (!match) {
+        adminLoginLimiter.recordFailure(ip);
+        res.status(401).json({ ok: false, error: "That password is not right." });
+        return;
+      }
+      adminLoginLimiter.reset(ip);
+      const token = await createAdminSession();
+      setAdminCookie(res, token);
+      res.json({ ok: true });
+    } catch {
+      res.status(503).json({ ok: false, error: "Admin sign-in is unavailable." });
+    }
+  });
+  app2.post("/api/admin/logout", async (req, res) => {
+    try {
+      await deleteAdminSession(adminTokenFromRequest(req));
+    } catch {
+    }
+    clearAdminCookie(res);
+    res.json({ ok: true });
+  });
+  app2.post("/api/admin/password", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    const current = typeof req.body?.current === "string" ? req.body.current : "";
+    const next = typeof req.body?.next === "string" ? req.body.next : "";
+    if (next.length < 12 || next.length > 200) {
+      res.status(400).json({ ok: false, error: "Use at least 12 characters." });
+      return;
+    }
+    try {
+      const match = await passwordMatches(current);
+      if (!match) {
+        res.status(401).json({ ok: false, error: "That password is not right." });
+        return;
+      }
+      await setAdminPasswordHash(await hashPassword(next));
+      await deleteAdminSessions();
+      const token = await createAdminSession();
+      setAdminCookie(res, token);
+      res.json({ ok: true });
+    } catch {
+      res.status(503).json({ ok: false, error: "The password could not be changed." });
+    }
+  });
+  app2.post("/api/admin/sheets", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    const course = text(req.body?.course, 40);
+    const batch = text(req.body?.batch, 40);
+    const template = templateFor(course, batch);
+    const spreadsheetId = acceptSpreadsheetId(text(req.body?.url, 300));
+    if (!template || !spreadsheetId) {
+      res.status(400).json({ ok: false, error: "Paste a Google Sheet link for one of the batches." });
+      return;
+    }
+    const previous = (await readSheetOverrides()).find(
+      (row) => row.course.toLowerCase() === course.toLowerCase() && row.batch.toLowerCase() === batch.toLowerCase()
+    );
+    try {
+      await writeSheetOverride(template.course, template.batch, spreadsheetId);
+      const outcome = await deps.syncSheet({
+        id: spreadsheetId,
+        course: template.course,
+        batch: template.batch,
+        divisions: template.divisions
+      });
+      if (!outcome.ok) {
+        if (previous) await writeSheetOverride(template.course, template.batch, previous.spreadsheetId);
+        else await deleteSheetOverride(template.course, template.batch);
+        res.status(400).json({ ok: false, error: outcome.error ?? "That sheet could not be read." });
+        return;
+      }
+      const overrides = await readSheetOverrides();
+      res.json({ ok: true, sheets: sheetRows(deps.fallbackSheets, overrides) });
+    } catch {
+      res.status(503).json({ ok: false, error: "The sheet link could not be saved." });
+    }
+  });
+  app2.post("/api/admin/notices", async (req, res) => {
+    if (!await requireAdmin(req, res)) return;
+    const title = text(req.body?.title, 80);
+    const body = text(req.body?.body, 280).replace(/\s+/g, " ");
+    const audience = audienceFrom(req.body ?? {});
+    if (!title || !body || !audience) {
+      res.status(400).json({ ok: false, error: "Write a title, a message, and who should see it." });
+      return;
+    }
+    try {
+      await insertNotice(title, body, audience);
+      const delivered = await sendStudentPush(title, body, audience).catch(() => 0);
+      const notices = await listRecentNotices();
+      res.json({ ok: true, delivered, notices });
+    } catch {
+      res.status(503).json({ ok: false, error: "The message could not be sent." });
+    }
+  });
+}
+
 // server/src/services/changeHistoryService.ts
 function recordChanges(db2, drafts) {
   insertChanges(db2, drafts);
@@ -1238,6 +1900,152 @@ function presentLecture(lecture, now, highlightHours) {
     explicitMark: lecture.explicitMark,
     recurring: lecture.recurring
   };
+}
+
+// server/src/program.ts
+function programKey(course, batch) {
+  const years = batch.replace(/[–—]/g, "-").replace(/\s+/g, "");
+  return `${course.trim().toLowerCase()}\0${years.toLowerCase()}`;
+}
+
+// server/src/services/weekBackup.ts
+var CAP = 8;
+function daySpan(start, end) {
+  const startMs = Date.parse(`${start}T12:00:00Z`);
+  const endMs = Date.parse(`${end}T12:00:00Z`);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return 0;
+  return Math.round((endMs - startMs) / 864e5);
+}
+function weekMonday(iso) {
+  const date = /* @__PURE__ */ new Date(`${iso}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - (date.getUTCDay() + 6) % 7);
+  return date.toISOString().slice(0, 10);
+}
+function preferOneWeekCopies(weeks) {
+  return weeks.filter((week) => {
+    if (daySpan(week.start, week.end) <= 6) return true;
+    const monday = weekMonday(week.start);
+    return !weeks.some(
+      (other) => other.id !== week.id && programKey(other.course, other.batch) === programKey(week.course, week.batch) && weekMonday(other.start) === monday && daySpan(other.start, other.end) <= 6
+    );
+  });
+}
+function dated(lectures) {
+  return lectures.map((lecture) => lecture.date).filter((date) => Boolean(date)).sort();
+}
+function replacedWeeks(previous, next) {
+  const previousGroups = /* @__PURE__ */ new Map();
+  for (const lecture of previous) {
+    const key = programKey(lecture.course, lecture.batch);
+    const group = previousGroups.get(key) ?? [];
+    group.push(lecture);
+    previousGroups.set(key, group);
+  }
+  const nextDates = /* @__PURE__ */ new Map();
+  for (const lecture of next) {
+    if (!lecture.date) continue;
+    const key = programKey(lecture.course, lecture.batch);
+    const dates = nextDates.get(key) ?? /* @__PURE__ */ new Set();
+    dates.add(lecture.date);
+    nextDates.set(key, dates);
+  }
+  const backups = [];
+  for (const [key, lectures] of previousGroups) {
+    const previousDates = dated(lectures);
+    const incoming = nextDates.get(key);
+    if (previousDates.length === 0 || !incoming || incoming.size === 0) continue;
+    if (previousDates.some((date) => incoming.has(date))) continue;
+    const sample = lectures[0];
+    if (!sample) continue;
+    const start = previousDates[0];
+    const end = previousDates[previousDates.length - 1];
+    backups.push({
+      id: `${sample.course}|${sample.batch}|${start}|${end}`,
+      course: sample.course,
+      batch: sample.batch,
+      start,
+      end,
+      lectures,
+      changes: []
+    });
+  }
+  return backups;
+}
+function weeksFromLectures(lectures) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const lecture of lectures) {
+    const key = programKey(lecture.course, lecture.batch);
+    const group = groups.get(key) ?? [];
+    group.push(lecture);
+    groups.set(key, group);
+  }
+  const weeks = [];
+  for (const group of groups.values()) {
+    const dates = dated(group);
+    const sample = group[0];
+    if (!sample || dates.length === 0) continue;
+    const start = dates[0];
+    const end = dates[dates.length - 1];
+    weeks.push({
+      id: `${sample.course}|${sample.batch}|${start}|${end}`,
+      course: sample.course,
+      batch: sample.batch,
+      start,
+      end,
+      lectures: group,
+      changes: []
+    });
+  }
+  return weeks;
+}
+function changesForWeek(week, changes, weeks) {
+  const divisions = new Set(week.lectures.map((lecture) => lecture.division));
+  const dates = new Set(dated(week.lectures));
+  return changes.filter((change) => {
+    if (change.date) {
+      if (!dates.has(change.date)) return false;
+      return !change.division || divisions.has(change.division);
+    }
+    if (change.division) return divisions.has(change.division);
+    if (change.course && change.course.toLowerCase() !== week.course.toLowerCase()) return false;
+    const siblings = weeks.filter((item) => programKey(item.course, item.batch) === programKey(week.course, week.batch));
+    return siblings.length <= 1 || siblings[0]?.id === week.id;
+  });
+}
+function capWeeks(weeks, currentIds) {
+  const byProgram = /* @__PURE__ */ new Map();
+  for (const week of weeks) {
+    const key = programKey(week.course, week.batch);
+    const list = byProgram.get(key) ?? [];
+    list.push(week);
+    byProgram.set(key, list);
+  }
+  const kept = [];
+  for (const list of byProgram.values()) {
+    const current = list.filter((week) => currentIds.has(week.id));
+    const past = list.filter((week) => !currentIds.has(week.id));
+    past.sort((a, b) => b.end.localeCompare(a.end) || b.start.localeCompare(a.start));
+    kept.push(...current, ...past.slice(0, CAP));
+  }
+  return kept;
+}
+function rememberReplacedWeeks(db2, previous, next, changes = []) {
+  const fresh = replacedWeeks(previous, next);
+  if (fresh.length === 0) return;
+  for (const week of fresh) week.changes = changesForWeek(week, changes, fresh);
+  const merged = new Map(readWeekBackups(db2).map((week) => [week.id, week]));
+  for (const week of fresh) merged.set(week.id, week);
+  replaceWeekBackups(db2, capWeeks([...merged.values()], /* @__PURE__ */ new Set()));
+}
+function rememberPublishedWeeks(db2, lectures) {
+  const current = weeksFromLectures(lectures);
+  if (current.length === 0) return;
+  const merged = new Map(readWeekBackups(db2).map((week) => [week.id, week]));
+  for (const week of current) {
+    const existing = merged.get(week.id);
+    merged.set(week.id, existing ? { ...week, changes: existing.changes } : week);
+  }
+  replaceWeekBackups(db2, capWeeks([...merged.values()], new Set(current.map((week) => week.id))));
 }
 
 // server/src/services/timetableSnapshotService.ts
@@ -1304,8 +2112,8 @@ function parseTimeToken(token) {
   return hour * 60 + minute;
 }
 function parseTimeRange(label) {
-  const text2 = canon(label);
-  const match = text2.match(/^(.+?)\s*(?:-|–|—|\bto\b)\s*(.+)$/i);
+  const text3 = canon(label);
+  const match = text3.match(/^(.+?)\s*(?:-|–|—|\bto\b)\s*(.+)$/i);
   if (!match) return null;
   const start = parseTimeToken(match[1] ?? "");
   const end = parseTimeToken(match[2] ?? "");
@@ -1313,8 +2121,8 @@ function parseTimeRange(label) {
   return { start, end };
 }
 function parseDateLabel(input, order = "DMY") {
-  const text2 = canon(input);
-  const match = text2.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);
+  const text3 = canon(input);
+  const match = text3.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);
   if (!match) return null;
   const first = Number(match[1]);
   const second = Number(match[2]);
@@ -1327,14 +2135,14 @@ function parseDateLabel(input, order = "DMY") {
     return null;
   }
   const iso = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-  const named = text2.match(/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i);
+  const named = text3.match(/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i);
   const computed = WEEKDAYS[date.getUTCDay()] ?? "Monday";
   const weekday = named ? named[1].charAt(0).toUpperCase() + named[1].slice(1).toLowerCase() : computed;
   return { iso, weekday, computedWeekday: computed };
 }
 function weekdayFromName(name) {
-  const text2 = canon(name).toLowerCase();
-  const found = WEEKDAYS.find((day) => text2 === day.toLowerCase() || text2.startsWith(`${day.toLowerCase()} `));
+  const text3 = canon(name).toLowerCase();
+  const found = WEEKDAYS.find((day) => text3 === day.toLowerCase() || text3.startsWith(`${day.toLowerCase()} `));
   return found ?? null;
 }
 function zonedParts(date, timeZone) {
@@ -1556,7 +2364,7 @@ function archiveToRows(archive) {
     weeks
   };
 }
-function text(value) {
+function text2(value) {
   if (value == null) return null;
   if (value instanceof Date) return value.toISOString().slice(0, 10);
   const raw = String(value);
@@ -1582,7 +2390,7 @@ function lectureFromRow(row) {
     semester: row.semester,
     batch: row.batch,
     division: row.division,
-    date: text(row.date),
+    date: text2(row.date),
     weekday: row.weekday,
     startMinutes: Number(row.start_minutes),
     endMinutes: Number(row.end_minutes),
@@ -1624,7 +2432,7 @@ function changeFromRow(row) {
     course: row.course,
     semester: row.semester,
     tabName: row.tab_name,
-    date: text(row.date),
+    date: text2(row.date),
     weekday: row.weekday,
     summary: row.summary,
     previous: row.previous ? json(row.previous, null) : null,
@@ -1637,8 +2445,8 @@ function rowsToArchive(savedAt, sync, rows) {
     id: week.id,
     course: week.course,
     batch: week.batch,
-    start: text(week.start_date) ?? week.start_date,
-    end: text(week.end_date) ?? week.end_date,
+    start: text2(week.start_date) ?? week.start_date,
+    end: text2(week.end_date) ?? week.end_date,
     lectures: [],
     changes: []
   }]));
@@ -2030,9 +2838,9 @@ function hydrateArchive(db2) {
   if (!neonUrl2() || readSyncState(db2).bootstrapped) return Promise.resolve(false);
   const running = hydrating.get(db2);
   if (running) return running;
-  const pending = loadRemoteArchive(db2).finally(() => hydrating.delete(db2));
-  hydrating.set(db2, pending);
-  return pending;
+  const pending2 = loadRemoteArchive(db2).finally(() => hydrating.delete(db2));
+  hydrating.set(db2, pending2);
+  return pending2;
 }
 async function loadRemoteArchive(db2) {
   const archive = await readRemote();
@@ -2071,15 +2879,7 @@ async function publishArchive(db2) {
 }
 
 // server/src/services/changeDetectionService.ts
-var import_node_crypto2 = require("node:crypto");
-
-// server/src/program.ts
-function programKey(course, batch) {
-  const years = batch.replace(/[–—]/g, "-").replace(/\s+/g, "");
-  return `${course.trim().toLowerCase()}\0${years.toLowerCase()}`;
-}
-
-// server/src/services/changeDetectionService.ts
+var import_node_crypto4 = require("node:crypto");
 function coreOf(lecture) {
   return {
     subject: canon(lecture.subject),
@@ -2123,7 +2923,7 @@ function nextOf(lecture, fields) {
   return next;
 }
 function dedupeKey(parts) {
-  return (0, import_node_crypto2.createHash)("sha256").update(JSON.stringify(parts)).digest("hex");
+  return (0, import_node_crypto4.createHash)("sha256").update(JSON.stringify(parts)).digest("hex");
 }
 function rangeLabel(lecture) {
   return `${lecture.startLabel}\u2013${lecture.endLabel}`;
@@ -2494,7 +3294,7 @@ function compareSnapshots(previous, next, options) {
 }
 
 // server/src/services/timetableNormalizer.ts
-var import_node_crypto3 = require("node:crypto");
+var import_node_crypto5 = require("node:crypto");
 function normalizeMark(word) {
   const value = word.toLowerCase();
   if (value === "canceled" || value === "cancelled" || value === "holiday") return "cancelled";
@@ -2503,12 +3303,12 @@ function normalizeMark(word) {
   return "changed";
 }
 function parseStatusToken(status) {
-  const text2 = canon(status).toLowerCase();
-  if (!text2 || text2 === "scheduled" || text2 === "confirmed") return null;
-  if (/^(cancelled|canceled|holiday)$/.test(text2)) return "cancelled";
-  if (text2 === "off") return "off";
-  if (text2 === "rescheduled") return "rescheduled";
-  if (text2 === "changed") return "changed";
+  const text3 = canon(status).toLowerCase();
+  if (!text3 || text3 === "scheduled" || text3 === "confirmed") return null;
+  if (/^(cancelled|canceled|holiday)$/.test(text3)) return "cancelled";
+  if (text3 === "off") return "off";
+  if (text3 === "rescheduled") return "rescheduled";
+  if (text3 === "changed") return "changed";
   return null;
 }
 function parseMarkedSubject(subject) {
@@ -2638,7 +3438,7 @@ function contentFingerprint(lectures, tabs, issues) {
     ].join("")
   ).sort();
   const issueLines = issues.map((item) => `${item.severity}|${item.tabName}|${item.row ?? ""}|${item.message}`).sort();
-  return (0, import_node_crypto3.createHash)("sha256").update(JSON.stringify({ tabs: [...tabs].sort(), lines, issueLines })).digest("hex");
+  return (0, import_node_crypto5.createHash)("sha256").update(JSON.stringify({ tabs: [...tabs].sort(), lines, issueLines })).digest("hex");
 }
 
 // server/src/services/timetableParser.ts
@@ -2729,9 +3529,9 @@ function loadMatrix(worksheet) {
     masterOf(row, col) {
       const cell = worksheet.getCell(row, col);
       const master = cell.master ?? cell;
-      const text2 = cellText(master.value);
-      if (!text2) return null;
-      return { row: Number(master.row), col: columnIndex(master), text: text2 };
+      const text3 = cellText(master.value);
+      if (!text3) return null;
+      return { row: Number(master.row), col: columnIndex(master), text: text3 };
     },
     isYellow(row, col) {
       return isYellowCell(worksheet.getCell(row, col));
@@ -2749,15 +3549,15 @@ function labelAt(matrix, row) {
   return "";
 }
 function classify(label) {
-  const text2 = canon(label).toLowerCase();
-  if (!text2) return "empty";
+  const text3 = canon(label).toLowerCase();
+  if (!text3) return "empty";
   if (parseTimeRange(label)) return "time";
-  if (text2 === "timing" || text2 === "time") return "header";
-  if (text2 === "faculty" || text2 === "teacher" || text2 === "professor" || text2 === "faculty name") return "faculty";
-  if (/^(classroom no\.?|classroom|class room|room no\.?|room|venue|lab|laboratory)$/.test(text2)) return "room";
-  if (text2 === "status") return "status";
-  if (/^(reason|remarks|remark|note|notes)$/.test(text2)) return "reason";
-  if (/^(semester|sem)\b/.test(text2) || /\bbatch\b/.test(text2) || parseDateLabel(label)) return "meta";
+  if (text3 === "timing" || text3 === "time") return "header";
+  if (text3 === "faculty" || text3 === "teacher" || text3 === "professor" || text3 === "faculty name") return "faculty";
+  if (/^(classroom no\.?|classroom|class room|room no\.?|room|venue|lab|laboratory)$/.test(text3)) return "room";
+  if (text3 === "status") return "status";
+  if (/^(reason|remarks|remark|note|notes)$/.test(text3)) return "reason";
+  if (/^(semester|sem)\b/.test(text3) || /\bbatch\b/.test(text3) || parseDateLabel(label)) return "meta";
   return "other";
 }
 function valueAt(matrix, row, col, allowTimeMerge) {
@@ -2780,14 +3580,14 @@ function canonCourse(raw) {
   return canon(raw);
 }
 function canonBatch(raw) {
-  const text2 = canon(raw).replace(/[–—]/g, "-").replace(/\s*-\s*/g, "-");
-  const match = text2.match(/^(\d{4})-(\d{2}|\d{4})$/);
-  if (!match?.[1] || !match[2]) return text2;
+  const text3 = canon(raw).replace(/[–—]/g, "-").replace(/\s*-\s*/g, "-");
+  const match = text3.match(/^(\d{4})-(\d{2}|\d{4})$/);
+  if (!match?.[1] || !match[2]) return text3;
   const end = match[2].length === 4 ? match[2].slice(-2) : match[2];
   return `${match[1]}-${end}`;
 }
-function readProgramBatch(text2) {
-  const match = canon(text2).match(/^(?:(b\.?\s*tech|m\.?\s*c\.?\s*a)\s+)?batch\b(?:\s*[-–:]?\s*(.+))?$/i);
+function readProgramBatch(text3) {
+  const match = canon(text3).match(/^(?:(b\.?\s*tech|m\.?\s*c\.?\s*a)\s+)?batch\b(?:\s*[-–:]?\s*(.+))?$/i);
   if (!match) return null;
   const course = match[1] ? canonCourse(match[1]) : null;
   const batch = match[2] ? canonBatch(match[2]) : null;
@@ -2803,11 +3603,11 @@ function readMeta(matrix, headerRow, dateOrder) {
   let weekday = null;
   const notes = [];
   for (let row = 1; row < headerRow; row += 1) {
-    const text2 = labelAt(matrix, row);
-    if (!text2) continue;
-    const semesterMatch = text2.match(/^(?:semester|sem)\s*[-–:]?\s*([0-9]+)/i);
-    const named = readProgramBatch(text2);
-    const parsedDate = parseDateLabel(text2, dateOrder);
+    const text3 = labelAt(matrix, row);
+    if (!text3) continue;
+    const semesterMatch = text3.match(/^(?:semester|sem)\s*[-–:]?\s*([0-9]+)/i);
+    const named = readProgramBatch(text3);
+    const parsedDate = parseDateLabel(text3, dateOrder);
     if (semesterMatch) semester = semesterMatch[1] ?? semester;
     else if (named) {
       if (named.course) course = named.course;
@@ -2816,9 +3616,9 @@ function readMeta(matrix, headerRow, dateOrder) {
       date = parsedDate.iso;
       weekday = parsedDate.computedWeekday;
       if (parsedDate.weekday !== parsedDate.computedWeekday) {
-        notes.push(`Date ${text2} says ${parsedDate.weekday}, which does not match ${parsedDate.computedWeekday}. The calendar date was used.`);
+        notes.push(`Date ${text3} says ${parsedDate.weekday}, which does not match ${parsedDate.computedWeekday}. The calendar date was used.`);
       }
-    } else if (!collegeName && text2.length > 3) collegeName = canon(text2);
+    } else if (!collegeName && text3.length > 3) collegeName = canon(text3);
   }
   return { collegeName, course, semester, batch, date, weekday, notes };
 }
@@ -2946,10 +3746,10 @@ function parseGrid(matrix, tabName, dateOrder) {
 function headerMap(matrix, row) {
   const map = /* @__PURE__ */ new Map();
   for (let col = 1; col <= matrix.colCount; col += 1) {
-    const text2 = canon(matrix.own(row, col) || matrix.masterOf(row, col)?.text || "").toLowerCase();
-    if (!text2) continue;
+    const text3 = canon(matrix.own(row, col) || matrix.masterOf(row, col)?.text || "").toLowerCase();
+    if (!text3) continue;
     for (const [field, aliases] of Object.entries(HEADER_ALIASES)) {
-      if (aliases.includes(text2) && !map.has(field)) map.set(field, col);
+      if (aliases.includes(text3) && !map.has(field)) map.set(field, col);
     }
   }
   return map;
@@ -3095,126 +3895,6 @@ async function parseTimetableSource(source, options = {}) {
   };
 }
 
-// server/src/services/weekBackup.ts
-var CAP = 8;
-function dated(lectures) {
-  return lectures.map((lecture) => lecture.date).filter((date) => Boolean(date)).sort();
-}
-function replacedWeeks(previous, next) {
-  const previousGroups = /* @__PURE__ */ new Map();
-  for (const lecture of previous) {
-    const key = programKey(lecture.course, lecture.batch);
-    const group = previousGroups.get(key) ?? [];
-    group.push(lecture);
-    previousGroups.set(key, group);
-  }
-  const nextDates = /* @__PURE__ */ new Map();
-  for (const lecture of next) {
-    if (!lecture.date) continue;
-    const key = programKey(lecture.course, lecture.batch);
-    const dates = nextDates.get(key) ?? /* @__PURE__ */ new Set();
-    dates.add(lecture.date);
-    nextDates.set(key, dates);
-  }
-  const backups = [];
-  for (const [key, lectures] of previousGroups) {
-    const previousDates = dated(lectures);
-    const incoming = nextDates.get(key);
-    if (previousDates.length === 0 || !incoming || incoming.size === 0) continue;
-    if (previousDates.some((date) => incoming.has(date))) continue;
-    const sample = lectures[0];
-    if (!sample) continue;
-    const start = previousDates[0];
-    const end = previousDates[previousDates.length - 1];
-    backups.push({
-      id: `${sample.course}|${sample.batch}|${start}|${end}`,
-      course: sample.course,
-      batch: sample.batch,
-      start,
-      end,
-      lectures,
-      changes: []
-    });
-  }
-  return backups;
-}
-function weeksFromLectures(lectures) {
-  const groups = /* @__PURE__ */ new Map();
-  for (const lecture of lectures) {
-    const key = programKey(lecture.course, lecture.batch);
-    const group = groups.get(key) ?? [];
-    group.push(lecture);
-    groups.set(key, group);
-  }
-  const weeks = [];
-  for (const group of groups.values()) {
-    const dates = dated(group);
-    const sample = group[0];
-    if (!sample || dates.length === 0) continue;
-    const start = dates[0];
-    const end = dates[dates.length - 1];
-    weeks.push({
-      id: `${sample.course}|${sample.batch}|${start}|${end}`,
-      course: sample.course,
-      batch: sample.batch,
-      start,
-      end,
-      lectures: group,
-      changes: []
-    });
-  }
-  return weeks;
-}
-function changesForWeek(week, changes, weeks) {
-  const divisions = new Set(week.lectures.map((lecture) => lecture.division));
-  const dates = new Set(dated(week.lectures));
-  return changes.filter((change) => {
-    if (change.date) {
-      if (!dates.has(change.date)) return false;
-      return !change.division || divisions.has(change.division);
-    }
-    if (change.division) return divisions.has(change.division);
-    if (change.course && change.course.toLowerCase() !== week.course.toLowerCase()) return false;
-    const siblings = weeks.filter((item) => programKey(item.course, item.batch) === programKey(week.course, week.batch));
-    return siblings.length <= 1 || siblings[0]?.id === week.id;
-  });
-}
-function capWeeks(weeks, currentIds) {
-  const byProgram = /* @__PURE__ */ new Map();
-  for (const week of weeks) {
-    const key = programKey(week.course, week.batch);
-    const list = byProgram.get(key) ?? [];
-    list.push(week);
-    byProgram.set(key, list);
-  }
-  const kept = [];
-  for (const list of byProgram.values()) {
-    const current = list.filter((week) => currentIds.has(week.id));
-    const past = list.filter((week) => !currentIds.has(week.id));
-    past.sort((a, b) => b.end.localeCompare(a.end) || b.start.localeCompare(a.start));
-    kept.push(...current, ...past.slice(0, CAP));
-  }
-  return kept;
-}
-function rememberReplacedWeeks(db2, previous, next, changes = []) {
-  const fresh = replacedWeeks(previous, next);
-  if (fresh.length === 0) return;
-  for (const week of fresh) week.changes = changesForWeek(week, changes, fresh);
-  const merged = new Map(readWeekBackups(db2).map((week) => [week.id, week]));
-  for (const week of fresh) merged.set(week.id, week);
-  replaceWeekBackups(db2, capWeeks([...merged.values()], /* @__PURE__ */ new Set()));
-}
-function rememberPublishedWeeks(db2, lectures) {
-  const current = weeksFromLectures(lectures);
-  if (current.length === 0) return;
-  const merged = new Map(readWeekBackups(db2).map((week) => [week.id, week]));
-  for (const week of current) {
-    const existing = merged.get(week.id);
-    merged.set(week.id, existing ? { ...week, changes: existing.changes } : week);
-  }
-  replaceWeekBackups(db2, capWeeks([...merged.values()], new Set(current.map((week) => week.id))));
-}
-
 // server/src/services/syncScheduler.ts
 var inflight = /* @__PURE__ */ new WeakMap();
 function dropChangesFromOtherWeeks(db2, lectures) {
@@ -3273,6 +3953,16 @@ async function performSync(ctx) {
       const normalized = normalizeWorkbook(parsed, { courseFallback: file.course, spreadsheetId: file.spreadsheetId || void 0 });
       groups.push({ file, parsed, normalized });
     }
+    const replaceKey = ctx.replaceProgram ? programKey(ctx.replaceProgram.course, ctx.replaceProgram.batch) : "";
+    if (ctx.replaceProgram) {
+      for (const group of groups) {
+        group.normalized.batch = ctx.replaceProgram.batch;
+        for (const lecture of group.normalized.lectures) {
+          lecture.course = ctx.replaceProgram.course;
+          lecture.batch = ctx.replaceProgram.batch;
+        }
+      }
+    }
     persistCancelledRemovals(ctx.db);
     const previous = loadSnapshot(ctx.db);
     const retainedLectures = [];
@@ -3323,13 +4013,18 @@ async function performSync(ctx) {
       return { ok: true, unchanged: true, changeCount: 0, error: null };
     }
     const freshWeek = current.bootstrapped && replacesPublishedWeek(previous, retained.lectures);
-    const stored = current.bootstrapped && !freshWeek ? compareSnapshots(previous, retained.lectures, {
+    const previousForDiff = replaceKey ? previous.filter((lecture) => programKey(lecture.course, lecture.batch) !== replaceKey) : previous;
+    const stored = current.bootstrapped && !freshWeek ? compareSnapshots(previousForDiff, retained.lectures, {
       now,
       previousTabs: current.tabNames,
       nextTabs: tabNames,
       bootstrapped: true
     }) : { lectures: initialSnapshot(retained.lectures), events: [] };
-    const events = dropFreshProgramAdditions(previous, stored.lectures, stored.events);
+    const freshIds = replaceKey ? new Set(retained.lectures.filter((lecture) => programKey(lecture.course, lecture.batch) === replaceKey).map((lecture) => lecture.id)) : null;
+    const events = dropFreshProgramAdditions(previous, stored.lectures, stored.events).filter((event) => {
+      if (!freshIds || event.type !== "added" || !event.lectureId) return true;
+      return !freshIds.has(event.lectureId);
+    });
     ctx.db.exec("BEGIN");
     try {
       rememberReplacedWeeks(ctx.db, previous, retained.lectures, changesBeforeTrim);
@@ -3378,15 +4073,15 @@ function syncInFlight(db2) {
 function runSync(ctx) {
   const existing = inflight.get(ctx.db);
   if (existing) return existing;
-  const pending = performSync(ctx).finally(() => {
+  const pending2 = performSync(ctx).finally(() => {
     inflight.delete(ctx.db);
   });
-  inflight.set(ctx.db, pending);
-  return pending;
+  inflight.set(ctx.db, pending2);
+  return pending2;
 }
 
 // server/src/services/googleSheetsService.ts
-var import_node_crypto4 = require("node:crypto");
+var import_node_crypto6 = require("node:crypto");
 async function fetchSpreadsheet(config2) {
   if (!config2.spreadsheetId) {
     throw new Error("SPREADSHEET_ID is not configured.");
@@ -3403,7 +4098,7 @@ async function fetchSpreadsheet(config2) {
   if (buffer.length < 4 || buffer[0] !== 80 || buffer[1] !== 75) {
     throw new Error("The spreadsheet export was not an Excel file. Share the sheet as \u201CAnyone with the link can view\u201D.");
   }
-  const hash = (0, import_node_crypto4.createHash)("sha256").update(buffer).digest("hex");
+  const hash = (0, import_node_crypto6.createHash)("sha256").update(buffer).digest("hex");
   return { buffer, hash };
 }
 async function fetchSheetSources(sources) {
@@ -3443,8 +4138,37 @@ function summaryInScope(week, filter, choices) {
   if (filter.batch && week.batch.toLowerCase() !== filter.batch.toLowerCase()) return false;
   return true;
 }
+function dominantSheetId(weeks) {
+  const counts = /* @__PURE__ */ new Map();
+  for (const week of weeks) {
+    for (const lecture of week.lectures) {
+      if (!lecture.spreadsheetId) continue;
+      counts.set(lecture.spreadsheetId, (counts.get(lecture.spreadsheetId) ?? 0) + 1);
+    }
+  }
+  let best = "";
+  let count = 0;
+  for (const [id, n] of counts) {
+    if (n > count) {
+      best = id;
+      count = n;
+    }
+  }
+  return best;
+}
+function withoutRepeatedCancels(lectures) {
+  const kept = /* @__PURE__ */ new Set();
+  for (const lecture of lectures) {
+    if (lecture.kind !== "lecture" || lecture.displayStatus === "cancelled") continue;
+    kept.add(`${lecture.date ?? ""}\0${lecture.division}\0${lecture.subject.trim().toLowerCase()}`);
+  }
+  return lectures.filter((lecture) => {
+    if (lecture.kind !== "lecture" || lecture.displayStatus !== "cancelled") return true;
+    return !kept.has(`${lecture.date ?? ""}\0${lecture.division}\0${lecture.subject.trim().toLowerCase()}`);
+  });
+}
 function presentBackup(week, now, highlightHours, restoredIds) {
-  const lectures = week.lectures.map((lecture) => presentLecture(lecture, now, highlightHours)).sort(byLecture);
+  const lectures = withoutRepeatedCancels(week.lectures.map((lecture) => presentLecture(lecture, now, highlightHours))).sort(byLecture);
   const lectureIds = new Set(lectures.map((lecture) => lecture.id));
   const divisions = new Set(lectures.map((lecture) => lecture.division));
   const changes = (week.changes ?? []).filter((change) => {
@@ -3689,13 +4413,18 @@ function createApp(db2, config2, load, options) {
     });
   }
   const lastSyncBySheet = /* @__PURE__ */ new Map();
-  function syncPlan(filter) {
+  async function liveConfig() {
+    const spreadsheets = await resolveSheetSources(config2.spreadsheets);
+    const spreadsheetId = spreadsheets.find((sheet) => sheet.batch === "2025-29")?.id ?? spreadsheets[0]?.id ?? config2.spreadsheetId;
+    return { ...config2, spreadsheets, spreadsheetId };
+  }
+  function syncPlan(filter, live) {
     const mark = (sheets) => {
       const startedAt = Date.now();
       for (const sheet2 of sheets) lastSyncBySheet.set(sheet2.id, startedAt);
     };
     if (filter.faculty || filter.all) {
-      const sheets = config2.spreadsheets;
+      const sheets = live.spreadsheets;
       if (sheets.length === 0) return null;
       const loadAll = options?.loadAll;
       return {
@@ -3703,7 +4432,7 @@ function createApp(db2, config2, load, options) {
         everything: true,
         ctx: {
           db: db2,
-          config: config2,
+          config: live,
           load: () => {
             mark(sheets);
             return load();
@@ -3715,14 +4444,15 @@ function createApp(db2, config2, load, options) {
         }
       };
     }
-    const sheet = sheetForScope(filter, config2.spreadsheets) ?? config2.spreadsheets.find((source) => source.id === config2.spreadsheetId) ?? config2.spreadsheets[0];
+    const named = Boolean(filter.division || filter.batch || filter.course);
+    const sheet = sheetForScope(filter, live.spreadsheets) ?? (named ? void 0 : live.spreadsheets.find((source) => source.id === live.spreadsheetId) ?? live.spreadsheets[0]);
     if (!sheet) return null;
     return {
       sheets: [sheet],
       everything: false,
       ctx: {
         db: db2,
-        config: { ...config2, spreadsheetId: sheet.id },
+        config: { ...live, spreadsheetId: sheet.id },
         load: () => {
           mark([sheet]);
           return fetchSpreadsheet({ spreadsheetId: sheet.id });
@@ -3752,11 +4482,14 @@ function createApp(db2, config2, load, options) {
   async function syncIfStale(filter = {}) {
     if (!options?.syncOnRead) return;
     await hydrateArchive(db2).catch(() => false);
-    const plan = syncPlan(filter);
+    const live = await liveConfig();
+    const plan = syncPlan(filter, live);
     if (!plan) {
-      const state = readSyncState(db2);
-      const age = state.lastSuccessAt ? Date.now() - new Date(state.lastSuccessAt).getTime() : Number.POSITIVE_INFINITY;
-      if (age > config2.syncIntervalSeconds * 1e3) await runSync({ db: db2, config: config2, load, loadAll: options.loadAll });
+      if (filter.faculty || filter.all) {
+        const state = readSyncState(db2);
+        const age = state.lastSuccessAt ? Date.now() - new Date(state.lastSuccessAt).getTime() : Number.POSITIVE_INFINITY;
+        if (age > live.syncIntervalSeconds * 1e3) await runSync({ db: db2, config: live, load, loadAll: options.loadAll });
+      }
       return;
     }
     const isFresh = () => plan.sheets.every((sheet) => Date.now() - (lastSyncBySheet.get(sheet.id) ?? 0) < config2.syncIntervalSeconds * 1e3);
@@ -3793,27 +4526,32 @@ function createApp(db2, config2, load, options) {
     const batch = typeof req.query.batch === "string" ? req.query.batch.trim() : "";
     const filter = { division, faculty, course, batch };
     const choices = cohortChoices(loadSnapshot(db2).map((lecture) => presentLecture(lecture, /* @__PURE__ */ new Date(), config2.highlightHours)));
-    const ids = readWeekSummaries(db2).filter((week) => mondayOf(week.start) === monday).filter((week) => summaryInScope(week, filter, choices)).map((week) => week.id);
+    const ids = preferOneWeekCopies(readWeekSummaries(db2)).filter((week) => mondayOf(week.start) === monday).filter((week) => summaryInScope(week, filter, choices)).map((week) => week.id);
     const now = /* @__PURE__ */ new Date();
     const changes = listChanges(db2, 80);
     const restoredIds = restoreRemovedLectures(loadSnapshot(db2), changes).restoredIds;
-    const opened = readWeekBackupsByIds(db2, ids).map((week) => presentBackup(week, now, config2.highlightHours, restoredIds));
+    const records = preferOneWeekCopies(readWeekBackupsByIds(db2, ids));
+    const opened = records.map((week) => presentBackup(week, now, config2.highlightHours, restoredIds));
     const lectures = opened.flatMap((week) => week.lectures);
     const weekChanges = opened.flatMap((week) => week.changes);
+    const sheetId = dominantSheetId(records);
     const scopedLectures = faculty ? lectures.filter((lecture) => lecture.kind !== "break" && lectureMatchesFaculty(lecture.faculty, faculty)) : division ? lectures.filter((lecture) => {
       const choice = choices.find((item) => item.division === division);
       return choice ? lectureInCohort(lecture, choice) : lecture.division === division;
     }) : lectures;
-    res.json({ lectures: scopedLectures, changes: weekChanges });
+    res.json({ lectures: scopedLectures, changes: weekChanges, spreadsheetUrl: sheetId ? spreadsheetUrl(sheetId) : null });
   });
   app2.get("/api/bootstrap", async (req, res) => {
     const division = (typeof req.query.division === "string" ? req.query.division : typeof req.query.cohort === "string" ? req.query.cohort : "").trim();
     const faculty = typeof req.query.faculty === "string" ? req.query.faculty.trim() : "";
     const course = typeof req.query.course === "string" ? req.query.course.trim() : "";
     const batch = typeof req.query.batch === "string" ? req.query.batch.trim() : "";
-    await syncIfStale({ division, faculty, course, batch, all: req.query.all === "1" });
-    const payload = buildBootstrap(db2, config2, /* @__PURE__ */ new Date(), { division, faculty, course, batch });
-    res.json({ ...payload, sync: { ...payload.sync, refreshing: syncInFlight(db2) } });
+    const scope = { division, faculty, course, batch, all: req.query.all === "1" };
+    await syncIfStale(scope);
+    const live = await liveConfig();
+    const payload = buildBootstrap(db2, live, /* @__PURE__ */ new Date(), { division, faculty, course, batch });
+    const notices = await noticesForScope({ division, faculty, course, batch }, payload.choices ?? []);
+    res.json({ ...payload, notices, sync: { ...payload.sync, refreshing: syncInFlight(db2) } });
   });
   app2.get("/api/calendar.ics", async (req, res) => {
     const division = (typeof req.query.division === "string" ? req.query.division : typeof req.query.cohort === "string" ? req.query.cohort : "").trim();
@@ -3845,18 +4583,22 @@ function createApp(db2, config2, load, options) {
     const faculty = typeof req.query.faculty === "string" ? req.query.faculty.trim() : "";
     const course = typeof req.query.course === "string" ? req.query.course.trim() : "";
     const batch = typeof req.query.batch === "string" ? req.query.batch.trim() : "";
-    const target = !faculty ? sheetForScope({ division, course, batch }, config2.spreadsheets) : void 0;
+    const everySheet = Boolean(faculty) || req.query.all === "1";
+    const live = await liveConfig();
+    const target = everySheet ? void 0 : sheetForScope({ division, course, batch }, live.spreadsheets);
     const minGapMs = Math.min(config2.syncIntervalSeconds, 15) * 1e3;
     if (Date.now() - lastForcedSync < minGapMs) {
       res.setHeader("Retry-After", String(Math.ceil(minGapMs / 1e3)));
-      res.json(buildBootstrap(db2, config2, /* @__PURE__ */ new Date(), { division, faculty, course, batch }));
+      const early = buildBootstrap(db2, live, /* @__PURE__ */ new Date(), { division, faculty, course, batch });
+      const earlyNotices = await noticesForScope({ division, faculty, course, batch }, early.choices ?? []);
+      res.json({ ...early, notices: earlyNotices });
       return;
     }
     lastForcedSync = Date.now();
     if (target) {
       await runSync({
         db: db2,
-        config: { ...config2, spreadsheetId: target.id },
+        config: { ...live, spreadsheetId: target.id },
         load: () => fetchSpreadsheet({ spreadsheetId: target.id }),
         loadAll: async () => [
           {
@@ -3867,11 +4609,13 @@ function createApp(db2, config2, load, options) {
         ]
       });
       lastSyncBySheet.set(target.id, Date.now());
-    } else {
-      await runSync({ db: db2, config: config2, load, loadAll: options?.loadAll });
-      for (const s of config2.spreadsheets) lastSyncBySheet.set(s.id, Date.now());
+    } else if (everySheet) {
+      await runSync({ db: db2, config: live, load, loadAll: options?.loadAll });
+      for (const s of live.spreadsheets) lastSyncBySheet.set(s.id, Date.now());
     }
-    res.json(buildBootstrap(db2, config2, /* @__PURE__ */ new Date(), { division, faculty, course, batch }));
+    const synced = buildBootstrap(db2, live, /* @__PURE__ */ new Date(), { division, faculty, course, batch });
+    const syncedNotices = await noticesForScope({ division, faculty, course, batch }, synced.choices ?? []);
+    res.json({ ...synced, notices: syncedNotices });
   });
   app2.get("/api/auth/config", (_req, res) => {
     const clientId = (process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || "").trim();
@@ -4012,6 +4756,28 @@ function createApp(db2, config2, load, options) {
       res.status(500).json({ ok: false, error: "An unexpected error occurred while verifying access code." });
     }
   });
+  registerAdminRoutes(app2, {
+    fallbackSheets: config2.spreadsheets,
+    syncSheet: async (source) => {
+      clearSheetSourceCache();
+      let file;
+      try {
+        file = await fetchSpreadsheet({ spreadsheetId: source.id });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "That sheet could not be read.";
+        return { ok: false, error: message };
+      }
+      const outcome = await runSync({
+        db: db2,
+        config: { ...config2, spreadsheetId: source.id, courseName: source.course },
+        load: async () => file,
+        loadAll: async () => [{ ...file, course: source.course, spreadsheetId: source.id }],
+        replaceProgram: source.batch ? { course: source.course, batch: source.batch } : void 0
+      });
+      if (outcome.ok) lastSyncBySheet.set(source.id, Date.now());
+      return { ok: outcome.ok, error: outcome.error };
+    }
+  });
   if (!process.env.VERCEL) {
     const clientDist = import_node_path3.default.resolve(import_node_path3.default.dirname((0, import_node_url2.fileURLToPath)(import_meta2.url)), "../../client/dist");
     if (import_node_fs3.default.existsSync(clientDist)) {
@@ -4031,7 +4797,7 @@ var databasePath = process.env.VERCEL ? "/tmp/timetable.sqlite" : config.databas
 var db = openDatabase(databasePath);
 var app = createApp(db, { ...config, databasePath }, () => fetchSpreadsheet(config), {
   syncOnRead: Boolean(process.env.VERCEL),
-  loadAll: () => fetchSheetSources(config.spreadsheets),
+  loadAll: () => resolveSheetSources(config.spreadsheets).then(fetchSheetSources),
   runInBackground: import_functions.waitUntil
 });
 var vercel_default = app;

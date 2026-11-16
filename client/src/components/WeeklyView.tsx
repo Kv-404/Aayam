@@ -1,6 +1,6 @@
 import type { PublicLecture } from "@shared/types";
 import { cohortLabel } from "@shared/cohort";
-import { memo, useEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { StatusBadge, badgeText } from "@/components/StatusBadge";
 import { NowMark } from "@/components/TodayView";
 import { useColors } from "@/lib/colorState";
@@ -224,11 +224,15 @@ export function WeeklyView({
                     if (group.kind === "classes") {
                       return (
                         <td key={group.dates[0]} className={`px-2 py-2 ${group.dates[0] === today ? "cal-today" : ""}`}>
-                          <div className="space-y-2">
-                            {group.classes!.map((lecture) => (
-                              <Cell key={lecture.id} lecture={lecture} showDivision={showDivision} showFaculty={showFaculty} now={showLive && isLive(lecture, today, minutes)} meet={meet} />
-                            ))}
-                          </div>
+                          <ClassCellGroup
+                            classes={group.classes!}
+                            showDivision={showDivision}
+                            showFaculty={showFaculty}
+                            today={today}
+                            minutes={minutes}
+                            showLive={showLive}
+                            meet={meet}
+                          />
                         </td>
                       );
                     }
@@ -308,6 +312,122 @@ const PhoneRow = memo(function PhoneRow({ lecture, showDivision, showFaculty, no
         <ClassFoot faculty={showDivision && !showFaculty ? "" : lecture.faculty} room={lecture.room} cohort={showDivision ? lecture.division : ""} meet={meet} oneLine batch={showDivision && !showFaculty ? lecture.batch : ""} />
       </div>
     </li>
+  );
+});
+
+function ClassCellGroup({
+  classes,
+  showDivision,
+  showFaculty,
+  today,
+  minutes,
+  showLive,
+  meet,
+}: {
+  classes: PublicLecture[];
+  showDivision: boolean;
+  showFaculty: boolean;
+  today: string;
+  minutes: number;
+  showLive: boolean;
+  meet: MeetAction;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const isCrowded = classes.length > 2;
+
+  if (!isCrowded) {
+    return (
+      <div className="space-y-2">
+        {classes.map((lecture) => (
+          <Cell
+            key={lecture.id}
+            lecture={lecture}
+            showDivision={showDivision}
+            showFaculty={showFaculty}
+            now={showLive && isLive(lecture, today, minutes)}
+            meet={meet}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  const displayed = expanded ? classes : classes.slice(0, 2);
+  const hiddenCount = classes.length - 2;
+
+  return (
+    <div className="space-y-1.5">
+      {displayed.map((lecture) => (
+        <CompactCell
+          key={lecture.id}
+          lecture={lecture}
+          showDivision={showDivision}
+          showFaculty={showFaculty}
+          now={showLive && isLive(lecture, today, minutes)}
+          meet={meet}
+        />
+      ))}
+      {!expanded && hiddenCount > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="w-full text-center text-[10px] font-medium py-1 px-1.5 rounded border border-border/70 bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+        >
+          +{hiddenCount} more {hiddenCount === 1 ? "cohort" : "cohorts"}
+        </button>
+      )}
+      {expanded && (
+        <button
+          type="button"
+          onClick={() => setExpanded(false)}
+          className="w-full text-center text-[10px] font-medium py-0.5 text-muted-foreground hover:text-foreground transition-colors"
+        >
+          Show less
+        </button>
+      )}
+    </div>
+  );
+}
+
+const CompactCell = memo(function CompactCell({
+  lecture,
+  showDivision,
+  showFaculty,
+  now,
+  meet,
+}: {
+  lecture: PublicLecture;
+  showDivision: boolean;
+  showFaculty: boolean;
+  now: boolean;
+  meet: MeetAction;
+}) {
+  const { classNameFor } = useColors();
+  const cancelled = lecture.displayStatus === "cancelled" && lecture.subject !== "OFF";
+  const label = [showDivision ? cohortLabel(lecture.division) : "", showFaculty ? lecture.faculty : lecture.batch || lecture.faculty]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <div
+      className={`rounded-lg p-2 text-xs border border-border/60 transition-colors shadow-xs ${classNameFor(lecture.subject, lecture.displayStatus)} ${now ? "is-now ring-1 ring-emerald-500" : ""}`}
+      data-testid="lecture-card"
+      data-live={now ? "true" : undefined}
+    >
+      <div className="flex items-start justify-between gap-1.5">
+        <p className={`min-w-0 font-medium truncate leading-tight ${now ? "font-semibold" : ""} ${cancelled ? "line-through decoration-danger decoration-2" : ""}`}>
+          {lecture.subject}
+        </p>
+        {now && <NowMark />}
+        {cancelled && <span className="shrink-0 text-[10px] font-semibold text-danger uppercase">Cancelled</span>}
+      </div>
+      <div className="mt-1 flex items-center justify-between gap-1 text-[11px] text-muted-foreground">
+        <span className="truncate max-w-[130px] font-medium text-foreground/90" title={label}>
+          {label}
+        </span>
+        {lecture.room && <LectureRoom room={lecture.room} action={meet} variant="inline" />}
+      </div>
+    </div>
   );
 });
 

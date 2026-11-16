@@ -1,4 +1,4 @@
-import type { BootstrapResponse, ChangeEvent, PublicLecture, SheetLink } from "@shared/types";
+import type { BootstrapResponse, ChangeEvent, PublicLecture, SavedWeek, SheetLink } from "@shared/types";
 import { cohortChoices, cohortLabel, lectureInCohort, type CohortChoice } from "@shared/cohort";
 import { findCoordinator } from "@shared/coordinators";
 import { changeMatchesFaculty, listFacultyNames } from "@shared/faculty";
@@ -28,7 +28,7 @@ import { clearFacultyBrowse, clearStudentAuth, closeExamNotice, closeNotifyHint,
 import { ColorEditor } from "@/components/ColorEditor";
 import { ColorSwitch } from "@/components/ColorSwitch";
 import { formatClockTime, formatCompactRange, zonedNow } from "@/lib/time";
-import { applyFilters, collapseFullOffDays, defaultFilters, groupSavedWeeks, slotPhase, unique, type Filters, type WeekGroup } from "@/lib/view";
+import { applyFilters, collapseFullOffDays, defaultFilters, groupSavedWeeks, mondayOf, slotPhase, splitByLatestWeek, unique, type Filters, type WeekGroup } from "@/lib/view";
 import { AayamLogo } from "@/components/AayamLogo";
 
 const dayOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -126,11 +126,36 @@ export function Dashboard({
   );
   const selected = choice ? choice.division : cohort;
 
+  const { liveLectures, derivedSavedWeeks } = useMemo(() => {
+    const { latest, earlier } = splitByLatestWeek(data.lectures);
+    if (earlier.length === 0) {
+      return { liveLectures: data.lectures, derivedSavedWeeks: [] };
+    }
+    const earlierWeekMap = new Map<string, SavedWeek>();
+    for (const lecture of earlier) {
+      const monday = lecture.date ? mondayOf(lecture.date) : "unknown";
+      const key = `${lecture.course}|${lecture.batch}|${monday}`;
+      if (!earlierWeekMap.has(key)) {
+        earlierWeekMap.set(key, {
+          id: key,
+          course: lecture.course,
+          batch: lecture.batch,
+          start: monday,
+          end: lecture.date ?? monday,
+          lectures: [],
+          changes: [],
+        });
+      }
+      earlierWeekMap.get(key)!.lectures.push(lecture);
+    }
+    return { liveLectures: latest, derivedSavedWeeks: [...earlierWeekMap.values()] };
+  }, [data.lectures]);
+
   const weekRows = useMemo(() => {
-    const rows = data.savedWeeks ?? [];
+    const rows = [...(data.savedWeeks ?? []), ...derivedSavedWeeks];
     if (role === "student" && choice) return rows.filter((week) => week.course === choice.course && week.batch === choice.batch);
     return rows;
-  }, [data.savedWeeks, role, choice]);
+  }, [data.savedWeeks, derivedSavedWeeks, role, choice]);
   const allWeeks = useMemo(() => groupSavedWeeks(weekRows), [weekRows]);
   const savedWeeks = allWeeks.filter((week) => !data.weekStart || !data.weekEnd || week.end < data.weekStart || week.start > data.weekEnd);
   const selectedWeek = savedWeeks.find((week) => week.id === weekId);
@@ -139,11 +164,15 @@ export function Dashboard({
   }, [selectedWeek, weekId]);
   const pastWeek = useQuery({
     queryKey: ["saved-week", weekId, scopeAll ? "all" : role === "faculty" ? faculty : cohort],
-    queryFn: () => fetchSavedWeek(weekId, scopeAll ? { all: true } : role === "faculty" ? { faculty } : { division: cohort }),
+    queryFn: () => {
+      const derived = derivedSavedWeeks.find((w) => w.id === weekId);
+      if (derived) return Promise.resolve(derived);
+      return fetchSavedWeek(weekId, scopeAll ? { all: true } : role === "faculty" ? { faculty } : { division: cohort });
+    },
     enabled: weekId !== "live",
     staleTime: 5 * 60 * 1000,
   });
-  const lectureFeed = !selectedWeek ? data.lectures : pastWeek.data?.lectures ?? [];
+  const lectureFeed = !selectedWeek ? liveLectures : pastWeek.data?.lectures ?? [];
   const board = resolveFacultyView({
     lectures: lectureFeed,
     choices,
@@ -868,6 +897,36 @@ export function Dashboard({
               <span key={batch} className="rounded-full bg-muted px-2 py-0.5 font-medium text-foreground">
                 {batch} · {count} {count === 1 ? "class" : "classes"}
               </span>
+            ))}
+          </div>
+        )}
+        {role === "faculty" && board.wide && !board.facultyFilter && (
+          <div className="mb-3 flex items-center gap-1.5 overflow-x-auto pb-1 text-xs no-scrollbar">
+            <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider shrink-0 mr-1">Cohort:</span>
+            <button
+              type="button"
+              onClick={() => patch({ division: "" })}
+              className={`px-2.5 py-1 rounded-full font-medium shrink-0 transition-colors ${
+                !filters.division
+                  ? "bg-foreground text-background"
+                  : "bg-muted text-muted-foreground hover:text-foreground hover:bg-muted/80"
+              }`}
+            >
+              All cohorts
+            </button>
+            {unique(facultyPool.map((l) => l.division)).map((division) => (
+              <button
+                key={division}
+                type="button"
+                onClick={() => patch({ division })}
+                className={`px-2.5 py-1 rounded-full font-medium shrink-0 transition-colors ${
+                  filters.division === division
+                    ? "bg-foreground text-background"
+                    : "bg-muted text-muted-foreground hover:text-foreground hover:bg-muted/80"
+                }`}
+              >
+                {cohortLabel(division)}
+              </button>
             ))}
           </div>
         )}
