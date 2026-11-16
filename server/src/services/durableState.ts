@@ -78,10 +78,16 @@ async function readBlob(): Promise<TimetableArchive | null> {
 }
 
 async function readRemote(): Promise<TimetableArchive | null> {
-  const [blob, rows] = await Promise.all([readBlob(), readNeonRows()]);
-  if (!blob) return rows;
-  if (!rows) return blob;
-  return mergeArchives(blob, rows);
+  // Attempt to read structured rows first, which avoids downloading the large JSON blob.
+  try {
+    const rows = await readNeonRows();
+    if (rows?.sync?.bootstrapped) {
+      return rows;
+    }
+  } catch (err) {
+    console.error("[archive] rows read error, falling back to blob:", err);
+  }
+  return readBlob();
 }
 
 async function writeBlob(archive: TimetableArchive) {

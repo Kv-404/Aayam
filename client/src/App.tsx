@@ -439,16 +439,18 @@ export function App() {
     queryFn: () => fetchBootstrap(scope),
     initialData: () => readCachedBootstrap(scope),
     placeholderData: keepPreviousData,
-    staleTime: 15 * 1000,
+    staleTime: 60 * 1000,
     gcTime: 10 * 60 * 1000,
+    refetchOnWindowFocus: false,
     enabled: Boolean(configured || scope.division || scope.faculty || scope.all || (scope.course && scope.batch)),
-    // While the server refreshes in the background, ask again soon to pick up the new copy (limited to 5 rapid checks to prevent infinite polling)
+    // While the server refreshes in the background, ask again soon to pick up the new copy (limited to 3 rapid checks to prevent polling loops)
     refetchInterval: (result) => {
       const isRefreshing = Boolean(result.state.data?.sync?.refreshing);
-      if (isRefreshing && refreshPollingCount < 5) {
+      if (isRefreshing && refreshPollingCount < 3) {
         return 4000;
       }
-      return (result.state.data?.sync?.intervalSeconds ?? 45) * 1000;
+      const intervalSec = result.state.data?.sync?.intervalSeconds ?? 300;
+      return Math.max(intervalSec, 120) * 1000;
     },
   });
 

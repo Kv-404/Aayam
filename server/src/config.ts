@@ -303,7 +303,7 @@ export function getConfig(): AppConfig {
     timezone: process.env.TIMEZONE?.trim() || "Asia/Kolkata",
     dateOrder,
     port: integer(process.env.PORT, 8787, 1, 65535),
-    syncIntervalSeconds: integer(process.env.SYNC_INTERVAL_SECONDS, 45, 15, 3600),
+    syncIntervalSeconds: integer(process.env.SYNC_INTERVAL_SECONDS, 300, 15, 3600),
     highlightHours: integer(process.env.HIGHLIGHT_HOURS, 72, 1, 24 * 30),
     databasePath: process.env.DATABASE_PATH?.trim() || "./data/timetable.sqlite",
     clientOrigin: process.env.CLIENT_ORIGIN?.trim() || null,

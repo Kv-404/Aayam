@@ -13,8 +13,9 @@ export function DatabaseStatus({ showLabel = false, className = "" }: DatabaseSt
   const { data, isLoading, isFetching, isError } = useQuery({
     queryKey: ["db-status", forceCount],
     queryFn: () => fetchDatabaseStatus(forceCount > 0),
-    refetchInterval: 30000,
-    staleTime: 10000,
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
   });
 
   const state: "connecting" | "connected" | "disconnected" =
