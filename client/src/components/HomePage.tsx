@@ -308,12 +308,12 @@ export function HomePage({
             rel="noopener noreferrer"
             className="font-medium text-foreground underline-offset-4 hover:underline"
           >
-            KV
+            Kv
           </a>
         </p>
 
         <p className="text-[11px] text-muted-foreground/75">
-          Special thanks to Soumyajit and Neil
+          Special thanks to Neel and Somyajeet
         </p>
       </footer>
     </main>

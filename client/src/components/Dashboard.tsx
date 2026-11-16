@@ -963,32 +963,48 @@ export function Dashboard({
             />
           </TabsContent>
         </div>
-        <footer className="mt-auto pt-10 pb-6 border-t border-border/40 text-center text-xs text-muted-foreground flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
-          <span>ITM / ISU Timetable</span>
-          <span>•</span>
-          <a
-            href="/privacy"
-            onClick={(e) => {
-              e.preventDefault();
-              window.history.pushState(null, "", "/privacy");
-              window.dispatchEvent(new PopStateEvent("popstate"));
-            }}
-            className="hover:text-foreground underline underline-offset-4"
-          >
-            Privacy Policy
-          </a>
-          <span>•</span>
-          <a
-            href="/terms"
-            onClick={(e) => {
-              e.preventDefault();
-              window.history.pushState(null, "", "/terms");
-              window.dispatchEvent(new PopStateEvent("popstate"));
-            }}
-            className="hover:text-foreground underline underline-offset-4"
-          >
-            Terms of Service
-          </a>
+        <footer className="mt-auto pt-10 pb-6 border-t border-border/40 text-center text-xs text-muted-foreground flex flex-col items-center justify-center gap-2">
+          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+            <span>ITM / ISU Timetable</span>
+            <span>•</span>
+            <a
+              href="/privacy"
+              onClick={(e) => {
+                e.preventDefault();
+                window.history.pushState(null, "", "/privacy");
+                window.dispatchEvent(new PopStateEvent("popstate"));
+              }}
+              className="hover:text-foreground underline underline-offset-4"
+            >
+              Privacy Policy
+            </a>
+            <span>•</span>
+            <a
+              href="/terms"
+              onClick={(e) => {
+                e.preventDefault();
+                window.history.pushState(null, "", "/terms");
+                window.dispatchEvent(new PopStateEvent("popstate"));
+              }}
+              className="hover:text-foreground underline underline-offset-4"
+            >
+              Terms of Service
+            </a>
+          </div>
+          <p className="text-muted-foreground">
+            Made by{" "}
+            <a
+              href="https://kv404.dev"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-foreground underline-offset-4 hover:underline"
+            >
+              Kv
+            </a>
+          </p>
+          <p className="text-[11px] text-muted-foreground/75">
+            Special thanks to Neel and Somyajeet
+          </p>
         </footer>
       </main>
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background/95 backdrop-blur-md sm:hidden pb-[env(safe-area-inset-bottom)]">
