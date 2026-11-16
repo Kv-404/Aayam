@@ -5,6 +5,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { AayamIcon } from "@/components/AayamLogo";
 import { DatabaseStatus } from "@/components/DatabaseStatus";
 import { ColorSwitch } from "@/components/ColorSwitch";
+import { McpConnectModal } from "@/components/McpConnectModal";
 import { MeetChoice } from "@/components/MeetLink";
 import { readStoredCohort, saveRole, saveSetup, saveStudentBatch, themes, type MeetAction, type ThemeId } from "@/lib/prefs";
 import { cohortToSlug } from "@/lib/slug";
@@ -55,6 +56,7 @@ export function HomePage({
   const savedCohort = readStoredCohort();
   const [enter] = useState(() => (typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("enter") ?? ""));
   const [step, setStep] = useState<Step>(enter === "student" ? "program" : "role");
+  const [mcpOpen, setMcpOpen] = useState(false);
   const [program, setProgram] = useState("");
   const [batch, setBatch] = useState("");
   const [cohort, setCohort] = useState("");
@@ -186,6 +188,14 @@ export function HomePage({
                 >
                   University exam schedule
                 </a>
+                <button
+                  type="button"
+                  data-testid="home-mcp-connect"
+                  onClick={() => setMcpOpen(true)}
+                  className="text-left text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                >
+                  Connect AI assistant (MCP)
+                </button>
               </div>
             )}
 
@@ -316,6 +326,11 @@ export function HomePage({
           Special thanks to Neel and Somyajeet
         </p>
       </footer>
+      <McpConnectModal
+        open={mcpOpen}
+        onClose={() => setMcpOpen(false)}
+        cohortLabel={savedCohort ? cohortLabel(savedCohort) : undefined}
+      />
     </main>
   );
 }

@@ -100,6 +100,7 @@ The theme step is roomy cards (swatch, name, blurb) in 2, 3, or 4 columns, and t
 | Admin sheet links and notices | `client/src/components/AdminPage.tsx` |
 | Setup steps | `client/src/components/Setup.tsx` |
 | Filtering, header, now line | `client/src/components/Dashboard.tsx` |
+| MCP install prompts modal | `client/src/components/McpConnectModal.tsx`, `client/src/lib/mcpInstall.ts` |
 | Week grid and phone list | `client/src/components/WeeklyView.tsx` |
 | One day | `client/src/components/TodayView.tsx` |
 | Filter controls | `client/src/components/TimetableFilters.tsx` |

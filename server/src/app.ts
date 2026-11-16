@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,19 +11,34 @@ import type { BootstrapResponse, ChangeEvent, DatabaseConnectionStatus, PublicLe
 import { registerAdminRoutes } from "./adminRoutes.ts";
 import { sheetForScope, spreadsheetUrl, type AppConfig, type SheetSource } from "./config.ts";
 import { readSyncState, readWeekBackupsByIds, readWeekSummaries, type AppDatabase, type WeekBackupRecord } from "./db.ts";
-import { authenticateFacultyWithNeon, clearSessionCookie, getClientIp, getSessionFromRequest, loginRateLimiter, pinRateLimiter, setSessionCookie, signSession, verifyBatchPinWithNeon, verifyGoogleCredential } from "./auth.ts";
+import {
+  authenticateFacultyWithNeon,
+  clearSessionCookie,
+  distributedLoginRateLimiter,
+  distributedPinRateLimiter,
+  getClientIp,
+  getSessionFromRequest,
+  setSessionCookie,
+  signSession,
+  verifyBatchPinWithNeon,
+  verifyGoogleCredential,
+  type FacultyDirectoryRecord,
+} from "./auth.ts";
 import { listChanges } from "./services/changeHistoryService.ts";
 import { presentLecture } from "./services/presentLecture.ts";
 import { preferOneWeekCopies } from "./services/weekBackup.ts";
 import { persistCancelledRemovals } from "./services/persistCancelled.ts";
 import { restoreRemovedLectures } from "./services/restoreRemoved.ts";
 import { loadSnapshot } from "./services/timetableSnapshotService.ts";
-import { hydrateArchive } from "./services/durableState.ts";
-import { checkDatabaseConnection } from "./services/postgres.ts";
+import { ensureWeeksHydrated, hydrateArchive } from "./services/durableState.ts";
+import { checkDatabaseConnection, databaseUrl } from "./services/postgres.ts";
+import { getRedis } from "./services/redis.ts";
 import { runSync, syncInFlight, type SyncContext } from "./services/syncScheduler.ts";
 import { fetchSpreadsheet } from "./services/googleSheetsService.ts";
 import { noticesForScope } from "./services/notices.ts";
 import { clearSheetSourceCache, resolveSheetSources } from "./services/sheetOverrides.ts";
+import { createMcpAuthRouter, type McpOAuthDependencies } from "./mcp/oauth.ts";
+import { createMcpRouter } from "./mcp/server.ts";
 import { zonedParts } from "./time.ts";
 
 function mondayOf(iso: string) {
@@ -314,12 +330,67 @@ function buildBootstrap(
   };
 }
 
-function securityHeaders(_req: express.Request, res: express.Response, next: express.NextFunction) {
+const dbScopeIds = new WeakMap<AppDatabase, string>();
+let nextLocalScopeSeq = 0;
+
+function cacheNamespace(db: AppDatabase): string {
+  if (databaseUrl()) return "shared";
+  let id = dbScopeIds.get(db);
+  if (!id) {
+    nextLocalScopeSeq += 1;
+    id = `local_${nextLocalScopeSeq}`;
+    dbScopeIds.set(db, id);
+  }
+  return id;
+}
+
+function hashScope(value: string): string {
+  return crypto.createHash("sha256").update(value).digest("hex").slice(0, 20);
+}
+
+function sendWithEtag(
+  req: express.Request,
+  res: express.Response,
+  etagSeed: string,
+  contentType: "json" | "text/calendar",
+  body: unknown,
+  cacheControl = "public, max-age=0, must-revalidate",
+) {
+  const etag = `W/"${hashScope(etagSeed)}"`;
+  res.setHeader("ETag", etag);
+  res.setHeader("Cache-Control", cacheControl);
+  if (req.headers["if-none-match"] === etag) {
+    res.status(304).end();
+    return;
+  }
+  if (contentType === "text/calendar") {
+    res.send(body);
+    return;
+  }
+  res.json(body);
+}
+
+function isMcpOrOAuthPath(url: string): boolean {
+  return (
+    url === "/mcp" ||
+    url.startsWith("/mcp/") ||
+    url.startsWith("/mcp?") ||
+    url === "/api/mcp" ||
+    url.startsWith("/api/mcp/") ||
+    url.startsWith("/api/mcp?") ||
+    url.startsWith("/.well-known/") ||
+    url.startsWith("/oauth/")
+  );
+}
+
+function securityHeaders(req: express.Request, res: express.Response, next: express.NextFunction) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+  if (!isMcpOrOAuthPath(req.url || "/")) {
+    res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+  }
   if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
     res.setHeader("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
   }
@@ -336,32 +407,60 @@ function allowedOrigins(config: AppConfig) {
   return ["http://localhost:5173", "http://127.0.0.1:5173", "http://[::1]:5173"];
 }
 
-export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext["load"], options?: { syncOnRead?: boolean; loadAll?: SyncContext["loadAll"]; runInBackground?: (work: Promise<unknown>) => void }) {
+export function createApp(
+  db: AppDatabase,
+  config: AppConfig,
+  load: SyncContext["load"],
+  options?: {
+    syncOnRead?: boolean;
+    loadAll?: SyncContext["loadAll"];
+    runInBackground?: (work: Promise<unknown>) => void;
+    mcpOAuth?: McpOAuthDependencies;
+    listDirectory?: () => Promise<FacultyDirectoryRecord[]>;
+  },
+) {
   const app = express();
   app.disable("x-powered-by");
   if (process.env.VERCEL || process.env.TRUST_PROXY === "1") {
     app.set("trust proxy", 1);
   }
   const origins = allowedOrigins(config);
-  app.use(
-    cors({
-      credentials: true,
-      origin(origin, callback) {
-        if (!origin || origins.includes(origin)) {
-          callback(null, true);
-          return;
-        }
-        callback(null, false);
-      },
-    }),
-  );
+  const apiCors = cors({
+    credentials: true,
+    origin(origin, callback) {
+      if (!origin || origins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(null, false);
+    },
+  });
+  app.use((req, res, next) => {
+    if (isMcpOrOAuthPath(req.url || "/")) {
+      next();
+      return;
+    }
+    apiCors(req, res, next);
+  });
   app.use(securityHeaders);
-  app.use(express.json({ limit: "16kb" }));
+  app.use((req, res, next) => {
+    const url = req.url || "/";
+    if (url === "/mcp" || url.startsWith("/mcp/") || url.startsWith("/mcp?") || url === "/api/mcp" || url.startsWith("/api/mcp/") || url.startsWith("/api/mcp?") || url.startsWith("/oauth/")) {
+      next();
+      return;
+    }
+    express.json({ limit: "16kb" })(req, res, next);
+  });
   // The catch-all function sometimes receives /bootstrap instead of /api/bootstrap.
   if (process.env.VERCEL) {
     app.use((req, _res, next) => {
       const url = req.url || "/";
-      if (url === "/api" || url.startsWith("/api/") || url.startsWith("/api?")) {
+      if (
+        url === "/api" ||
+        url.startsWith("/api/") ||
+        url.startsWith("/api?") ||
+        isMcpOrOAuthPath(url)
+      ) {
         next();
         return;
       }
@@ -370,7 +469,31 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
     });
   }
 
+  const ns = cacheNamespace(db);
+  const redis = getRedis();
   const lastSyncBySheet = new Map<string, number>();
+
+  async function triggerFullSync() {
+    const outcome = await runSync({ db, config, load, loadAll: options?.loadAll });
+    const nowMs = Date.now();
+    for (const s of config.spreadsheets) {
+      lastSyncBySheet.set(s.id, nowMs);
+      await redis.set(`${ns}:sync:sheet:${s.id}`, String(nowMs), config.syncIntervalSeconds).catch(() => {});
+    }
+    return outcome;
+  }
+
+  // Mount OAuth 2.1 Authorization Server and Remote Streamable-HTTP MCP Server.
+  app.use(createMcpAuthRouter(options?.mcpOAuth));
+  app.use(
+    createMcpRouter({
+      db,
+      config,
+      triggerSync: triggerFullSync,
+      oauth: options?.mcpOAuth,
+      listDirectory: options?.listDirectory,
+    }),
+  );
 
   type ReadScope = { division?: string; faculty?: string; course?: string; batch?: string; all?: boolean };
 
@@ -386,7 +509,10 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
     // Marked when the download starts, so joining another request's sync does not count as this one.
     const mark = (sheets: SheetSource[]) => {
       const startedAt = Date.now();
-      for (const sheet of sheets) lastSyncBySheet.set(sheet.id, startedAt);
+      for (const sheet of sheets) {
+        lastSyncBySheet.set(sheet.id, startedAt);
+        void redis.set(`${ns}:sync:sheet:${sheet.id}`, String(startedAt), config.syncIntervalSeconds).catch(() => {});
+      }
     };
     if (filter.faculty || filter.all) {
       const sheets = live.spreadsheets;
@@ -457,7 +583,7 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
   /** Answers from the saved timetable when there is one, and refreshes the sheets in the background. */
   async function syncIfStale(filter: ReadScope = {}) {
     if (!options?.syncOnRead) return;
-    // A cold start has an empty local database. The saved copy in Neon is what makes an instant answer possible.
+    // A cold start has an empty local database. Redis or Postgres provides the instant saved copy.
     await hydrateArchive(db).catch(() => false);
     const live = await liveConfig();
     const plan = syncPlan(filter, live);
@@ -469,11 +595,22 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
       }
       return;
     }
-    const state = readSyncState(db);
-    const dbAge = state.lastSuccessAt ? Date.now() - new Date(state.lastSuccessAt).getTime() : Number.POSITIVE_INFINITY;
-    const isFresh = () => {
-      if (state.bootstrapped && dbAge < config.syncIntervalSeconds * 1000) return true;
-      return plan.sheets.every((sheet) => Date.now() - (lastSyncBySheet.get(sheet.id) ?? 0) < config.syncIntervalSeconds * 1000);
+    const sheetFresh = async (sheetId: string) => {
+      const localTs = lastSyncBySheet.get(sheetId) ?? 0;
+      if (Date.now() - localTs < live.syncIntervalSeconds * 1000) return true;
+      if (redis.isShared || databaseUrl()) {
+        const remoteTsRaw = await redis.get(`${ns}:sync:sheet:${sheetId}`).catch(() => null);
+        const remoteTs = remoteTsRaw ? Number(remoteTsRaw) : 0;
+        if (Number.isFinite(remoteTs) && Date.now() - remoteTs < live.syncIntervalSeconds * 1000) {
+          lastSyncBySheet.set(sheetId, remoteTs);
+          return true;
+        }
+      }
+      return false;
+    };
+    const isFresh = async () => {
+      const flags = await Promise.all(plan.sheets.map((sheet) => sheetFresh(sheet.id)));
+      return flags.every(Boolean);
     };
     const snapshot = loadSnapshot(db);
     // A saved copy of an older workbook is not this week. Wait for the configured sheets.
@@ -481,25 +618,24 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
     const saved = plan.everything
       ? readSyncState(db).bootstrapped && snapshot.length > 0 && currentSheets
       : snapshot.some((lecture) => plan.sheets.some((sheet) => lecture.spreadsheetId === sheet.id || (sheet.batch && lecture.course === sheet.course && lecture.batch === sheet.batch))) && currentSheets;
-    if (isFresh() && (saved || plan.everything)) return;
+    if ((await isFresh()) && (saved || plan.everything)) return;
     if (saved) {
+      const lockKey = `${ns}:sync:lock:${plan.everything ? "all" : plan.sheets.map((s) => s.id).join(",")}`;
+      const acquired = await redis.setNx(lockKey, "1", Math.min(25, live.syncIntervalSeconds)).catch(() => true);
+      if (!acquired) return;
       const running = runSync(plan.ctx)
-        .then(() => {
-          for (const s of plan.sheets) lastSyncBySheet.set(s.id, Date.now());
-        })
         .catch((err) => {
           console.error("[sync]", err instanceof Error ? err.message : err);
-          for (const s of plan.sheets) lastSyncBySheet.set(s.id, Date.now());
+        })
+        .finally(() => {
+          void redis.del(lockKey).catch(() => {});
         });
       options.runInBackground?.(running);
       return;
     }
     // Nothing to show yet, so this request has to wait for the sheet.
-    try {
-      await runSync(plan.ctx);
-    } finally {
-      for (const s of plan.sheets) lastSyncBySheet.set(s.id, Date.now());
-    }
+    await runSync(plan.ctx);
+    if (!(await isFresh())) await runSync(plan.ctx);
   }
 
   app.get("/api/health", async (req, res) => {
@@ -533,12 +669,23 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
     const faculty = typeof req.query.faculty === "string" ? req.query.faculty.trim() : "";
     const course = typeof req.query.course === "string" ? req.query.course.trim() : "";
     const batch = typeof req.query.batch === "string" ? req.query.batch.trim() : "";
+    const state = readSyncState(db);
+    const scopeKey = hashScope(`${monday}|${division}|${faculty}|${course}|${batch}`);
+    const cacheKey = `${ns}:resp:week:${state.contentHash ?? "none"}:${scopeKey}`;
+
+    const cached = await redis.getJson<{ lectures: PublicLecture[]; changes: ChangeEvent[]; spreadsheetUrl: string | null }>(cacheKey).catch(() => null);
+    if (cached) {
+      sendWithEtag(req, res, `${cacheKey}:${state.lastSuccessAt ?? "none"}`, "json", cached, "public, max-age=60, stale-while-revalidate=300");
+      return;
+    }
+
     const filter = { division, faculty, course, batch };
     const choices = cohortChoices(loadSnapshot(db).map((lecture) => presentLecture(lecture, new Date(), config.highlightHours)));
     const ids = preferOneWeekCopies(readWeekSummaries(db))
       .filter((week) => mondayOf(week.start) === monday)
       .filter((week) => summaryInScope(week, filter, choices))
       .map((week) => week.id);
+    await ensureWeeksHydrated(db, ids);
     const now = new Date();
     const changes = listChanges(db, 80);
     const restoredIds = restoreRemovedLectures(loadSnapshot(db), changes).restoredIds;
@@ -555,7 +702,13 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
             return choice ? lectureInCohort(lecture, choice) : lecture.division === division;
           })
         : lectures;
-    res.json({ lectures: scopedLectures, changes: weekChanges, spreadsheetUrl: sheetId ? spreadsheetUrl(sheetId) : null });
+    const payload = {
+      lectures: scopedLectures,
+      changes: weekChanges,
+      spreadsheetUrl: sheetId ? spreadsheetUrl(sheetId) : null,
+    };
+    await redis.setJson(cacheKey, payload, 300).catch(() => {});
+    sendWithEtag(req, res, `${cacheKey}:${state.lastSuccessAt ?? "none"}`, "json", payload, "public, max-age=60, stale-while-revalidate=300");
   });
   app.get("/api/bootstrap", async (req, res) => {
     const division = (typeof req.query.division === "string" ? req.query.division : typeof req.query.cohort === "string" ? req.query.cohort : "").trim();
@@ -565,39 +718,82 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
     const scope = { division, faculty, course, batch, all: req.query.all === "1" };
     await syncIfStale(scope);
     const live = await liveConfig();
-    const payload = buildBootstrap(db, live, new Date(), { division, faculty, course, batch });
-    const notices = await noticesForScope({ division, faculty, course, batch }, payload.choices ?? []);
-    res.json({ ...payload, notices, sync: { ...payload.sync, refreshing: syncInFlight(db) } });
+    const now = new Date();
+    const state = readSyncState(db);
+    const refreshing = syncInFlight(db);
+    const zone = zonedParts(now, live.timezone);
+    const noticesVer = (await redis.get("notices:version").catch(() => null)) || "0";
+    const sheetsSig = hashScope(live.spreadsheets.map((s) => s.id).join(","));
+    const scopeKey = hashScope(`${division}|${faculty}|${course}|${batch}|${req.query.all === "1" ? "1" : "0"}`);
+    const cacheKey = `${ns}:resp:bootstrap:${state.contentHash ?? "none"}:${state.lastSuccessAt ?? "none"}:${state.lastError ?? "ok"}:${zone.iso}:${sheetsSig}:${noticesVer}:${scopeKey}`;
+
+    let payload = !refreshing ? await redis.getJson<BootstrapResponse>(cacheKey).catch(() => null) : null;
+    if (!payload) {
+      const base = buildBootstrap(db, live, now, { division, faculty, course, batch });
+      const notices = await noticesForScope({ division, faculty, course, batch }, base.choices ?? []);
+      payload = { ...base, notices };
+      if (!refreshing) {
+        await redis.setJson(cacheKey, payload, Math.min(live.syncIntervalSeconds, 30)).catch(() => {});
+      }
+    } else {
+      payload = { ...payload, now: now.toISOString() };
+    }
+
+    const etagSeed = `${cacheKey}:${refreshing ? "syncing" : "idle"}`;
+    sendWithEtag(
+      req,
+      res,
+      etagSeed,
+      "json",
+      { ...payload, sync: { ...payload.sync, refreshing } },
+      "public, max-age=0, must-revalidate",
+    );
   });
   app.get("/api/calendar.ics", async (req, res) => {
     const division = (typeof req.query.division === "string" ? req.query.division : typeof req.query.cohort === "string" ? req.query.cohort : "").trim();
     const faculty = typeof req.query.faculty === "string" ? req.query.faculty.trim() : "";
     await syncIfStale({ division, faculty });
-    const snapshot = buildBootstrap(db, config);
-    const choice = division ? cohortChoices(snapshot.lectures).find((item) => item.division === division) : undefined;
-    const lectures = faculty
-      ? snapshot.lectures.filter((lecture) => lectureMatchesFaculty(lecture.faculty, faculty))
-      : choice
-        ? snapshot.lectures.filter((lecture) => lectureInCohort(lecture, choice))
-        : division
-          ? snapshot.lectures.filter((lecture) => lecture.division === division)
-          : [];
-    if ((!faculty && !division) || lectures.length === 0) {
-      res.status(404).type("text/plain").send(faculty ? "No lectures for that faculty." : "Unknown cohort.");
-      return;
-    }
+    const state = readSyncState(db);
+    const scopeKey = hashScope(`${division}|${faculty}`);
+    const cacheKey = `${ns}:resp:ics:${state.contentHash ?? "none"}:${state.lastSuccessAt ?? "none"}:${scopeKey}`;
     const name = faculty || cohortLabel(division);
+
+    let icsText = await redis.get(cacheKey).catch(() => null);
+    if (!icsText) {
+      const snapshot = buildBootstrap(db, config);
+      const choice = division ? cohortChoices(snapshot.lectures).find((item) => item.division === division) : undefined;
+      const lectures = faculty
+        ? snapshot.lectures.filter((lecture) => lectureMatchesFaculty(lecture.faculty, faculty))
+        : choice
+          ? snapshot.lectures.filter((lecture) => lectureInCohort(lecture, choice))
+          : division
+            ? snapshot.lectures.filter((lecture) => lecture.division === division)
+            : [];
+      if ((!faculty && !division) || lectures.length === 0) {
+        res.status(404).type("text/plain").send(faculty ? "No lectures for that faculty." : "Unknown cohort.");
+        return;
+      }
+      icsText = calendarFile(lectures, config.timezone, name, { includeCohort: Boolean(faculty) });
+      await redis.set(cacheKey, icsText, 60).catch(() => {});
+    }
+
     res.setHeader("Content-Type", "text/calendar; charset=utf-8");
-    res.setHeader("Cache-Control", "no-store");
     if (req.query.download === "1") {
       const file = `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "timetable"}.ics`;
       res.setHeader("Content-Disposition", `attachment; filename="${file}"`);
     }
-    res.send(calendarFile(lectures, config.timezone, name, { includeCohort: Boolean(faculty) }));
+    sendWithEtag(req, res, cacheKey, "text/calendar", icsText, "no-store");
   });
-  app.get("/api/changes", (req, res) => {
+  app.get("/api/changes", async (req, res) => {
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 80));
-    res.json({ changes: listChanges(db, limit) });
+    const state = readSyncState(db);
+    const cacheKey = `${ns}:resp:changes:${state.contentHash ?? "none"}:${state.lastSuccessAt ?? "none"}:${limit}`;
+    let changes = await redis.getJson<ChangeEvent[]>(cacheKey).catch(() => null);
+    if (!changes) {
+      changes = listChanges(db, limit);
+      await redis.setJson(cacheKey, changes, 30).catch(() => {});
+    }
+    sendWithEtag(req, res, cacheKey, "json", { changes });
   });
   let lastForcedSync = 0;
 
@@ -610,7 +806,10 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
     const live = await liveConfig();
     const target = everySheet ? undefined : sheetForScope({ division, course, batch }, live.spreadsheets);
     const minGapMs = Math.min(config.syncIntervalSeconds, 15) * 1000;
-    if (Date.now() - lastForcedSync < minGapMs) {
+    const cooldownAllowed =
+      Date.now() - lastForcedSync >= minGapMs &&
+      (await redis.setNx(`${ns}:sync:forced:${target?.id ?? "all"}`, "1", Math.ceil(minGapMs / 1000)).catch(() => true));
+    if (!cooldownAllowed) {
       res.setHeader("Retry-After", String(Math.ceil(minGapMs / 1000)));
       const early = buildBootstrap(db, live, new Date(), { division, faculty, course, batch });
       const earlyNotices = await noticesForScope({ division, faculty, course, batch }, early.choices ?? []);
@@ -631,10 +830,18 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
           },
         ],
       });
-      lastSyncBySheet.set(target.id, Date.now());
+      const nowMs = Date.now();
+      lastSyncBySheet.set(target.id, nowMs);
+      await redis.set(`${ns}:sync:sheet:${target.id}`, String(nowMs), live.syncIntervalSeconds).catch(() => {});
     } else if (everySheet) {
       await runSync({ db, config: live, load, loadAll: options?.loadAll });
-      for (const s of live.spreadsheets) lastSyncBySheet.set(s.id, Date.now());
+      const nowMs = Date.now();
+      for (const s of live.spreadsheets) {
+        lastSyncBySheet.set(s.id, nowMs);
+        await redis.set(`${ns}:sync:sheet:${s.id}`, String(nowMs), live.syncIntervalSeconds).catch(() => {});
+      }
+    } else {
+      await triggerFullSync();
     }
     const synced = buildBootstrap(db, live, new Date(), { division, faculty, course, batch });
     const syncedNotices = await noticesForScope({ division, faculty, course, batch }, synced.choices ?? []);
@@ -662,13 +869,13 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
 
   app.post("/api/auth/google", async (req, res) => {
     const ip = getClientIp(req);
-    const rateCheck = loginRateLimiter.check(ip);
+    const rateCheck = await distributedLoginRateLimiter.check(ip);
     if (rateCheck.limited) {
       res.setHeader("Retry-After", String(rateCheck.retryAfterSeconds));
       res.status(429).json({ ok: false, error: `Too many sign-in attempts. Try again in ${rateCheck.retryAfterSeconds} seconds.` });
       return;
     }
-    loginRateLimiter.recordFailure(ip);
+    await distributedLoginRateLimiter.recordFailure(ip);
     const credential = typeof req.body?.credential === "string" ? req.body.credential.trim() : "";
     if (!credential) {
       console.warn("[auth] Google login rejected: Missing credential payload.");
@@ -685,7 +892,7 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
         faculty: faculty.faculty_name,
         canSeeAllFaculty: faculty.can_see_all_faculty,
       });
-      loginRateLimiter.reset(ip);
+      await distributedLoginRateLimiter.reset(ip);
       setSessionCookie(res, token);
       res.json({
         ok: true,
@@ -708,7 +915,7 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
 
   app.post("/api/auth/pin-verify", async (req, res) => {
     const ip = getClientIp(req);
-    const rateCheck = pinRateLimiter.check(ip);
+    const rateCheck = await distributedPinRateLimiter.check(ip);
 
     if (rateCheck.limited) {
       res.setHeader("Retry-After", String(rateCheck.retryAfterSeconds));
@@ -727,7 +934,7 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
 
     // Only accept digits and validate length (must be exactly 6 digits)
     if (!/^\d{6}$/.test(rawPin)) {
-      pinRateLimiter.recordFailure(ip);
+      await distributedPinRateLimiter.recordFailure(ip);
       res.status(400).json({ ok: false, error: "Invalid PIN format. PIN must be exactly 6 digits." });
       return;
     }
@@ -735,10 +942,10 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
     try {
       const result = await verifyBatchPinWithNeon(rawPin);
       if (result && result.ok) {
-        pinRateLimiter.reset(ip);
+        await distributedPinRateLimiter.reset(ip);
         res.json({ ok: true, course: result.course, batch: result.batch });
       } else {
-        pinRateLimiter.recordFailure(ip);
+        await distributedPinRateLimiter.recordFailure(ip);
         res.status(401).json({ ok: false, error: "Invalid PIN. Please check with your class representative." });
       }
     } catch (err) {
@@ -747,9 +954,9 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
     }
   });
 
-  app.post("/api/auth/batch-verify", (req, res) => {
+  app.post("/api/auth/batch-verify", async (req, res) => {
     const ip = getClientIp(req);
-    const rateCheck = pinRateLimiter.check(ip);
+    const rateCheck = await distributedPinRateLimiter.check(ip);
 
     if (rateCheck.limited) {
       res.setHeader("Retry-After", String(rateCheck.retryAfterSeconds));
@@ -770,7 +977,7 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
     }
 
     if (!/^\d{6}$/.test(rawCode)) {
-      pinRateLimiter.recordFailure(ip);
+      await distributedPinRateLimiter.recordFailure(ip);
       res.status(400).json({ ok: false, error: "Invalid access code format. Must be exactly 6 digits." });
       return;
     }
@@ -785,10 +992,10 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
       }
 
       if (rawCode === expected) {
-        pinRateLimiter.reset(ip);
+        await distributedPinRateLimiter.reset(ip);
         res.json({ ok: true, course, batch });
       } else {
-        pinRateLimiter.recordFailure(ip);
+        await distributedPinRateLimiter.recordFailure(ip);
         res.status(401).json({ ok: false, error: `Invalid access code for ${course} ${batch}.` });
       }
     } catch (err) {
@@ -815,7 +1022,11 @@ export function createApp(db: AppDatabase, config: AppConfig, load: SyncContext[
         loadAll: async () => [{ ...file, course: source.course, spreadsheetId: source.id }],
         replaceProgram: source.batch ? { course: source.course, batch: source.batch } : undefined,
       });
-      if (outcome.ok) lastSyncBySheet.set(source.id, Date.now());
+      if (outcome.ok) {
+        const nowMs = Date.now();
+        lastSyncBySheet.set(source.id, nowMs);
+        await redis.set(`${ns}:sync:sheet:${source.id}`, String(nowMs), config.syncIntervalSeconds).catch(() => {});
+      }
       return { ok: outcome.ok, error: outcome.error };
     },
   });

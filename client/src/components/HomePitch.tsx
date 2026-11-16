@@ -10,6 +10,7 @@ export interface HomePitchProps {
   onContinue: () => void;
   onOpenStudent: () => void;
   onOpenFaculty: () => void;
+  onOpenMcp?: () => void;
   onOpenPage: (event: MouseEvent, url: string) => void;
   sourceUrl: string;
 }
@@ -23,6 +24,7 @@ export function HomePitch(props: HomePitchProps) {
       <PitchClose
         onOpenStudent={props.onOpenStudent}
         onOpenFaculty={props.onOpenFaculty}
+        onOpenMcp={props.onOpenMcp}
         onOpenPage={props.onOpenPage}
         sourceUrl={props.sourceUrl}
       />

@@ -2,13 +2,14 @@ import type { BootstrapResponse, ChangeEvent, PublicLecture, SavedWeek, SheetLin
 import { cohortChoices, cohortLabel, lectureInCohort, type CohortChoice } from "@shared/cohort";
 import { findCoordinator } from "@shared/coordinators";
 import { changeMatchesFaculty, listFacultyNames } from "@shared/faculty";
-import { Bell, CalendarPlus, Check, ChevronDown, Download, FileSpreadsheet, GraduationCap, LogOut, RefreshCw, Settings, X } from "lucide-react";
+import { Bell, CalendarPlus, Check, ChevronDown, Download, FileSpreadsheet, GraduationCap, LogOut, RefreshCw, Settings, Sparkles, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { FacultyLoginModal } from "@/components/FacultyLoginModal";
 import { FacultyScopeMenu } from "@/components/FacultyScopeMenu";
 import { DatabaseStatus } from "@/components/DatabaseStatus";
+import { McpConnectModal } from "@/components/McpConnectModal";
 import { fetchCurrentAuth, logoutFaculty } from "@/lib/auth";
 import { fetchSavedWeek } from "@/lib/api";
 import { LectureRoom, MeetChoice } from "@/components/MeetLink";
@@ -90,6 +91,7 @@ export function Dashboard({
   const [authEmail, setAuthEmail] = useState<string | undefined>(() => readFacultyEmail() || undefined);
   const [lens, setLens] = useState<FacultyLens | null>(() => readFacultyLens());
   const [loginModalOpen, setLoginModalOpen] = useState(false);
+  const [mcpModalOpen, setMcpModalOpen] = useState(false);
   const [setupSeed, setSetupSeed] = useState(0);
   const [seedRole, setSeedRole] = useState<ViewerRole | "">("");
   const [filters, setFilters] = useState<Filters>(() => {
@@ -834,7 +836,18 @@ export function Dashboard({
                   }}
                   onClear={() => patch({ division: "", day: "", subject: "", faculty: "", room: "", status: "all", query: "" })}
                 />
-                <AppearanceMenu theme={theme} colors={colors} bold={bold} meet={meet} subjects={subjects} notifications={notifications.optedIn} onTheme={onTheme} onColors={onColors} onBold={onBold} onMeet={onMeet} onEnable={() => void notifications.enable()} onDisable={notifications.disable} role={role} sheetUrl={sheetUrl} pending={pending} onRefresh={onRefresh} onStudentLogout={handleStudentLogout} onFacultyLogout={handleFacultyLogout} savedWeeks={savedWeeks} weekId={selectedWeek ? selectedWeek.id : "live"} onWeek={chooseWeek} />
+                <button
+                  type="button"
+                  data-testid="mcp-connect-button"
+                  aria-label="Connect AI assistant (MCP)"
+                  title="Connect AI assistant (MCP)"
+                  onClick={() => setMcpModalOpen(true)}
+                  className="hidden h-9 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors sm:inline-flex"
+                >
+                  <Sparkles className="size-3.5 shrink-0" aria-hidden="true" />
+                  <span className="hidden md:inline">Connect AI</span>
+                </button>
+                <AppearanceMenu theme={theme} colors={colors} bold={bold} meet={meet} subjects={subjects} notifications={notifications.optedIn} onTheme={onTheme} onColors={onColors} onBold={onBold} onMeet={onMeet} onEnable={() => void notifications.enable()} onDisable={notifications.disable} role={role} sheetUrl={sheetUrl} pending={pending} onRefresh={onRefresh} onOpenMcp={() => setMcpModalOpen(true)} onStudentLogout={handleStudentLogout} onFacultyLogout={handleFacultyLogout} savedWeeks={savedWeeks} weekId={selectedWeek ? selectedWeek.id : "live"} onWeek={chooseWeek} />
               </div>
             </div>
           </div>
@@ -1052,6 +1065,14 @@ export function Dashboard({
         onClose={() => setLoginModalOpen(false)}
         onSuccess={handleFacultyLoginSuccess}
       />
+      <McpConnectModal
+        open={mcpModalOpen}
+        onClose={() => setMcpModalOpen(false)}
+        faculty={role === "faculty" ? selectedFaculty || faculty : undefined}
+        email={role === "faculty" ? authEmail : undefined}
+        canSeeAllFaculty={role === "faculty" ? canSeeAll : false}
+        cohortLabel={role !== "faculty" && selected ? cohortLabel(selected) : undefined}
+      />
     </Tabs>
   );
 }
@@ -1204,6 +1225,7 @@ function AppearanceMenu({
   sheetUrl,
   pending,
   onRefresh,
+  onOpenMcp,
   onTheme,
   onColors,
   onBold,
@@ -1226,6 +1248,7 @@ function AppearanceMenu({
   sheetUrl: string;
   pending: boolean;
   onRefresh: () => void;
+  onOpenMcp?: () => void;
   onTheme: (theme: ThemeId) => void;
   onColors: (on: boolean) => void;
   onBold: (on: boolean) => void;
@@ -1315,6 +1338,26 @@ function AppearanceMenu({
           <div className="mt-2.5 border-t border-border pt-2.5">
             <MeetChoice compact menu action={meet} onChange={onMeet} />
           </div>
+          {onOpenMcp && (
+            <div className="mt-2.5 border-t border-border pt-2.5">
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="mcp-connect-menu"
+                onClick={() => {
+                  setOpen(false);
+                  onOpenMcp();
+                }}
+                className="flex w-full items-center justify-between rounded-md border border-border px-2.5 py-2 text-left text-xs font-medium text-foreground hover:bg-muted transition-colors"
+              >
+                <span className="flex items-center gap-2">
+                  <Sparkles className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <span>Connect AI assistant (MCP)</span>
+                </span>
+                <span className="font-mono text-[10px] text-muted-foreground">OAuth 2.1</span>
+              </button>
+            </div>
+          )}
           {colors && (
             <div className="mt-2.5 border-t border-border pt-2.5">
               <ColorEditor theme={theme} subjects={subjects} />

@@ -328,7 +328,8 @@ function openDatabase(file) {
       start_date TEXT NOT NULL,
       end_date TEXT NOT NULL,
       lectures_json TEXT NOT NULL,
-      changes_json TEXT NOT NULL DEFAULT '[]'
+      changes_json TEXT NOT NULL DEFAULT '[]',
+      hydrated INTEGER NOT NULL DEFAULT 1
     );
 
     CREATE TABLE IF NOT EXISTS sync_state (
@@ -350,6 +351,9 @@ function openDatabase(file) {
   const weekColumns = db2.prepare("PRAGMA table_info(week_backups)").all();
   if (!weekColumns.some((column) => column.name === "changes_json")) {
     db2.exec("ALTER TABLE week_backups ADD COLUMN changes_json TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!weekColumns.some((column) => column.name === "hydrated")) {
+    db2.exec("ALTER TABLE week_backups ADD COLUMN hydrated INTEGER NOT NULL DEFAULT 1");
   }
   return db2;
 }
@@ -441,13 +445,57 @@ function readWeekBackups(db2) {
     changes: row.changes_json ? JSON.parse(row.changes_json) : []
   }));
 }
-function replaceWeekBackups(db2, weeks) {
-  db2.exec("DELETE FROM week_backups");
-  const insert = db2.prepare(`
-    INSERT INTO week_backups (id, course, batch, start_date, end_date, lectures_json, changes_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+function readUnhydratedWeekIds(db2, ids) {
+  if (ids.length === 0) return [];
+  const marks = ids.map(() => "?").join(", ");
+  const rows = db2.prepare(`
+    SELECT id, hydrated FROM week_backups WHERE id IN (${marks})
+  `).all(...ids);
+  const hydratedMap = new Map(rows.map((r) => [r.id, r.hydrated !== 0]));
+  return ids.filter((id) => !hydratedMap.get(id));
+}
+function readHydratedWeekIds(db2) {
+  const rows = db2.prepare("SELECT id FROM week_backups WHERE hydrated = 1").all();
+  return new Set(rows.map((r) => r.id));
+}
+function upsertWeekBackups(db2, weeks, hydrated = true) {
+  if (weeks.length === 0) return;
+  const upsert = db2.prepare(`
+    INSERT INTO week_backups (id, course, batch, start_date, end_date, lectures_json, changes_json, hydrated)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      course = excluded.course,
+      batch = excluded.batch,
+      start_date = excluded.start_date,
+      end_date = excluded.end_date,
+      lectures_json = excluded.lectures_json,
+      changes_json = excluded.changes_json,
+      hydrated = excluded.hydrated
   `);
   for (const week of weeks) {
+    upsert.run(
+      week.id,
+      week.course,
+      week.batch,
+      week.start,
+      week.end,
+      JSON.stringify(week.lectures),
+      JSON.stringify(week.changes ?? []),
+      hydrated ? 1 : 0
+    );
+  }
+}
+function replaceWeekBackups(db2, weeks, unhydratedIds) {
+  const priorUnhydrated = new Set(
+    db2.prepare("SELECT id FROM week_backups WHERE hydrated = 0").all().map((r) => r.id)
+  );
+  db2.exec("DELETE FROM week_backups");
+  const insert = db2.prepare(`
+    INSERT INTO week_backups (id, course, batch, start_date, end_date, lectures_json, changes_json, hydrated)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  for (const week of weeks) {
+    const isUnhydrated = unhydratedIds?.has(week.id) || priorUnhydrated.has(week.id) && week.lectures.length === 0;
     insert.run(
       week.id,
       week.course,
@@ -455,7 +503,8 @@ function replaceWeekBackups(db2, weeks) {
       week.start,
       week.end,
       JSON.stringify(week.lectures),
-      JSON.stringify(week.changes ?? [])
+      JSON.stringify(week.changes ?? []),
+      isUnhydrated ? 0 : 1
     );
   }
 }
@@ -619,11 +668,12 @@ function loadEnvFiles() {
 }
 
 // server/src/app.ts
+var import_node_crypto8 = __toESM(require("node:crypto"), 1);
 var import_node_fs3 = __toESM(require("node:fs"), 1);
 var import_node_path3 = __toESM(require("node:path"), 1);
 var import_node_url2 = require("node:url");
 var import_cors = __toESM(require("cors"), 1);
-var import_express = __toESM(require("express"), 1);
+var import_express3 = __toESM(require("express"), 1);
 
 // shared/cohort.ts
 function cohortName(division) {
@@ -961,6 +1011,266 @@ async function checkDatabaseConnection(options = {}) {
   }
 }
 
+// server/src/services/redis.ts
+var import_node_zlib = require("node:zlib");
+var import_redis = require("@upstash/redis");
+var import_ioredis = __toESM(require("ioredis"), 1);
+var GZ_PREFIX = "gz:";
+var DEFAULT_COMPRESS_BYTES = 4096;
+function redisPrefix() {
+  const raw = (process.env.REDIS_PREFIX || "tt:v2:").trim();
+  return raw.endsWith(":") ? raw : `${raw}:`;
+}
+function prefixed(key) {
+  const prefix = redisPrefix();
+  return key.startsWith(prefix) ? key : `${prefix}${key}`;
+}
+function encodeJson(value, compressAboveBytes) {
+  const json2 = JSON.stringify(value);
+  if (Buffer.byteLength(json2, "utf8") >= compressAboveBytes) {
+    const gz = (0, import_node_zlib.gzipSync)(Buffer.from(json2, "utf8"), { level: 6 }).toString("base64");
+    return `${GZ_PREFIX}${gz}`;
+  }
+  return json2;
+}
+function decodeJson(raw) {
+  if (!raw) return null;
+  try {
+    if (raw.startsWith(GZ_PREFIX)) {
+      const buf = (0, import_node_zlib.gunzipSync)(Buffer.from(raw.slice(GZ_PREFIX.length), "base64"));
+      return JSON.parse(buf.toString("utf8"));
+    }
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+var MemoryRedisStore = class {
+  mode = "memory";
+  isShared;
+  map = /* @__PURE__ */ new Map();
+  maxKeys;
+  constructor(maxKeys = 1e4, isShared = false) {
+    this.maxKeys = maxKeys;
+    this.isShared = isShared;
+  }
+  readEntry(fullKey) {
+    const entry = this.map.get(fullKey);
+    if (!entry) return null;
+    if (entry.expiresAt !== null && Date.now() >= entry.expiresAt) {
+      this.map.delete(fullKey);
+      return null;
+    }
+    return entry;
+  }
+  prune() {
+    if (this.map.size <= this.maxKeys) return;
+    const now = Date.now();
+    for (const [key, entry] of this.map) {
+      if (entry.expiresAt !== null && now >= entry.expiresAt) this.map.delete(key);
+    }
+    while (this.map.size > this.maxKeys) {
+      const oldest = this.map.keys().next().value;
+      if (!oldest) break;
+      this.map.delete(oldest);
+    }
+  }
+  async get(key) {
+    return this.readEntry(prefixed(key))?.value ?? null;
+  }
+  async set(key, value, ttlSeconds) {
+    const fullKey = prefixed(key);
+    const expiresAt = ttlSeconds && ttlSeconds > 0 ? Date.now() + ttlSeconds * 1e3 : null;
+    this.map.set(fullKey, { value, expiresAt });
+    this.prune();
+  }
+  async setNx(key, value, ttlSeconds) {
+    const fullKey = prefixed(key);
+    if (this.readEntry(fullKey)) return false;
+    const expiresAt = ttlSeconds > 0 ? Date.now() + ttlSeconds * 1e3 : null;
+    this.map.set(fullKey, { value, expiresAt });
+    this.prune();
+    return true;
+  }
+  async del(...keys) {
+    let removed = 0;
+    for (const key of keys) {
+      if (this.map.delete(prefixed(key))) removed += 1;
+    }
+    return removed;
+  }
+  async incrWindow(key, windowSeconds) {
+    const fullKey = prefixed(key);
+    const now = Date.now();
+    const existing = this.readEntry(fullKey);
+    if (!existing) {
+      const expiresAt2 = now + Math.max(1, windowSeconds) * 1e3;
+      this.map.set(fullKey, { value: "1", expiresAt: expiresAt2 });
+      this.prune();
+      return { count: 1, ttlSeconds: Math.max(1, windowSeconds) };
+    }
+    const nextCount = (Number.parseInt(existing.value, 10) || 0) + 1;
+    const expiresAt = existing.expiresAt ?? now + Math.max(1, windowSeconds) * 1e3;
+    this.map.set(fullKey, { value: String(nextCount), expiresAt });
+    return {
+      count: nextCount,
+      ttlSeconds: Math.max(1, Math.ceil((expiresAt - now) / 1e3))
+    };
+  }
+  async getJson(key) {
+    return decodeJson(await this.get(key));
+  }
+  async setJson(key, value, ttlSeconds, compressAboveBytes = DEFAULT_COMPRESS_BYTES) {
+    await this.set(key, encodeJson(value, compressAboveBytes), ttlSeconds);
+  }
+  async close() {
+    this.map.clear();
+  }
+};
+var UpstashRedisStore = class {
+  mode = "upstash-rest";
+  isShared = true;
+  client;
+  constructor(url, token) {
+    this.client = new import_redis.Redis({
+      url,
+      token,
+      automaticDeserialization: false
+    });
+  }
+  async get(key) {
+    const value = await this.client.get(prefixed(key));
+    return typeof value === "string" ? value : value == null ? null : String(value);
+  }
+  async set(key, value, ttlSeconds) {
+    if (ttlSeconds && ttlSeconds > 0) {
+      await this.client.set(prefixed(key), value, { ex: Math.ceil(ttlSeconds) });
+      return;
+    }
+    await this.client.set(prefixed(key), value);
+  }
+  async setNx(key, value, ttlSeconds) {
+    const res = await this.client.set(prefixed(key), value, {
+      nx: true,
+      ex: Math.max(1, Math.ceil(ttlSeconds))
+    });
+    return res === "OK";
+  }
+  async del(...keys) {
+    if (keys.length === 0) return 0;
+    return await this.client.del(...keys.map(prefixed));
+  }
+  async incrWindow(key, windowSeconds) {
+    const fullKey = prefixed(key);
+    const window = Math.max(1, Math.ceil(windowSeconds));
+    const count = await this.client.incr(fullKey);
+    let ttl = await this.client.ttl(fullKey);
+    if (count === 1 || ttl < 0) {
+      await this.client.expire(fullKey, window);
+      ttl = window;
+    }
+    return { count, ttlSeconds: Math.max(1, ttl) };
+  }
+  async getJson(key) {
+    return decodeJson(await this.get(key));
+  }
+  async setJson(key, value, ttlSeconds, compressAboveBytes = DEFAULT_COMPRESS_BYTES) {
+    await this.set(key, encodeJson(value, compressAboveBytes), ttlSeconds);
+  }
+  async close() {
+  }
+};
+var IoRedisStore = class {
+  mode = "ioredis";
+  isShared = true;
+  client;
+  constructor(url) {
+    this.client = new import_ioredis.default(url, {
+      lazyConnect: true,
+      maxRetriesPerRequest: 2,
+      enableReadyCheck: false,
+      connectTimeout: 3e3
+    });
+    this.client.on("error", (err) => {
+      console.error("[redis] ioredis error:", err.message);
+    });
+  }
+  async get(key) {
+    return await this.client.get(prefixed(key));
+  }
+  async set(key, value, ttlSeconds) {
+    if (ttlSeconds && ttlSeconds > 0) {
+      await this.client.set(prefixed(key), value, "EX", Math.ceil(ttlSeconds));
+      return;
+    }
+    await this.client.set(prefixed(key), value);
+  }
+  async setNx(key, value, ttlSeconds) {
+    const res = await this.client.set(prefixed(key), value, "EX", Math.max(1, Math.ceil(ttlSeconds)), "NX");
+    return res === "OK";
+  }
+  async del(...keys) {
+    if (keys.length === 0) return 0;
+    return await this.client.del(...keys.map(prefixed));
+  }
+  async incrWindow(key, windowSeconds) {
+    const fullKey = prefixed(key);
+    const window = Math.max(1, Math.ceil(windowSeconds));
+    const count = await this.client.incr(fullKey);
+    let ttl = await this.client.ttl(fullKey);
+    if (count === 1 || ttl < 0) {
+      await this.client.expire(fullKey, window);
+      ttl = window;
+    }
+    return { count, ttlSeconds: Math.max(1, ttl) };
+  }
+  async getJson(key) {
+    return decodeJson(await this.get(key));
+  }
+  async setJson(key, value, ttlSeconds, compressAboveBytes = DEFAULT_COMPRESS_BYTES) {
+    await this.set(key, encodeJson(value, compressAboveBytes), ttlSeconds);
+  }
+  async close() {
+    await this.client.quit().catch(() => {
+      this.client.disconnect();
+    });
+  }
+};
+var cachedStore = null;
+var cachedSignature = "";
+var testOverrideStore = null;
+function envRedisSignature() {
+  const restUrl = (process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || "").trim();
+  const restToken = (process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || "").trim();
+  if (restUrl && restToken) {
+    return { mode: "upstash-rest", sig: `rest:${restUrl}:${restToken.slice(-8)}`, restUrl, restToken };
+  }
+  const tcpUrl = (process.env.REDIS_URL || process.env.KV_URL || "").trim();
+  if (tcpUrl) {
+    return { mode: "ioredis", sig: `tcp:${tcpUrl}`, tcpUrl };
+  }
+  return { mode: "memory", sig: "memory" };
+}
+function getRedis() {
+  if (testOverrideStore) return testOverrideStore;
+  const spec = envRedisSignature();
+  if (cachedStore && cachedSignature === spec.sig) {
+    return cachedStore;
+  }
+  if (cachedStore) {
+    void cachedStore.close();
+  }
+  if (spec.mode === "upstash-rest" && spec.restUrl && spec.restToken) {
+    cachedStore = new UpstashRedisStore(spec.restUrl, spec.restToken);
+  } else if (spec.mode === "ioredis" && spec.tcpUrl) {
+    cachedStore = new IoRedisStore(spec.tcpUrl);
+  } else {
+    cachedStore = new MemoryRedisStore();
+  }
+  cachedSignature = spec.sig;
+  return cachedStore;
+}
+
 // server/src/auth.ts
 var COOKIE_NAME = "timetable_faculty_session";
 var DEV_AUTH_SECRET = "timetable-insecure-dev-secret-replace-in-production";
@@ -987,6 +1297,9 @@ function getAllowedDomains() {
 }
 function getGoogleClientId() {
   return (process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || "").trim();
+}
+function getGoogleClientSecret() {
+  return (process.env.GOOGLE_CLIENT_SECRET || "").trim();
 }
 function signSession(payload, expiresInDays = 7) {
   const secret = getAuthSecret();
@@ -1080,33 +1393,83 @@ async function verifyGoogleCredential(credential) {
   }
   return { email, name };
 }
-async function authenticateFacultyWithNeon(email) {
+function sha256Hex(value) {
+  return import_node_crypto.default.createHash("sha256").update(value).digest("hex");
+}
+async function lookupFacultyByEmail(email, options) {
+  const normalizedEmail = email.toLowerCase().trim();
   const dbUrl = getDatabaseUrl();
   if (!dbUrl) {
     throw new Error("DATABASE_URL is not configured.");
   }
-  let rows;
+  const redis = getRedis();
+  const cacheKey = `auth:faculty:${sha256Hex(normalizedEmail)}`;
+  let faculty = null;
   try {
-    const sql = getSql();
-    rows = await sql`
-      SELECT id, email, faculty_name, can_see_all_faculty, is_active 
-      FROM faculty_directory 
-      WHERE LOWER(email) = ${email.toLowerCase()} AND is_active = true 
-      LIMIT 1
-    `;
+    const cached = await redis.getJson(cacheKey);
+    if (cached) {
+      if (!cached.found) {
+        throw new Error(`The account ${email} is not registered in the authorized faculty directory.`);
+      }
+      if (cached.id && cached.email && cached.faculty_name) {
+        faculty = {
+          id: cached.id,
+          email: cached.email,
+          faculty_name: cached.faculty_name,
+          can_see_all_faculty: Boolean(cached.can_see_all_faculty),
+          is_active: Boolean(cached.is_active)
+        };
+      }
+    }
   } catch (err) {
-    console.error("[auth] Faculty lookup error:", err);
-    throw new Error("Faculty directory service is temporarily unavailable.");
+    if (err instanceof Error && err.message.includes("not registered in the authorized faculty directory")) {
+      throw err;
+    }
   }
-  if (!rows || rows.length === 0) {
-    throw new Error(`The account ${email} is not registered in the authorized faculty directory.`);
+  if (!faculty) {
+    let rows;
+    try {
+      const sql = getSql();
+      rows = await sql`
+        SELECT id, email, faculty_name, can_see_all_faculty, is_active
+        FROM faculty_directory
+        WHERE LOWER(email) = ${normalizedEmail} AND is_active = true
+        LIMIT 1
+      `;
+    } catch (err) {
+      console.error("[auth] Faculty lookup error:", err);
+      throw new Error("Faculty directory service is temporarily unavailable.");
+    }
+    if (!rows || rows.length === 0) {
+      try {
+        await redis.setJson(cacheKey, { found: false }, 60);
+      } catch {
+      }
+      throw new Error(`The account ${email} is not registered in the authorized faculty directory.`);
+    }
+    const row = rows[0];
+    faculty = {
+      id: Number(row.id),
+      email: String(row.email),
+      faculty_name: String(row.faculty_name),
+      can_see_all_faculty: Boolean(row.can_see_all_faculty),
+      is_active: Boolean(row.is_active)
+    };
+    try {
+      await redis.setJson(cacheKey, { found: true, ...faculty }, 600);
+    } catch {
+    }
   }
-  const faculty = rows[0];
-  try {
-    const sql = getSql();
-    await sql`UPDATE faculty_directory SET last_login_at = NOW() WHERE id = ${faculty.id}`;
-  } catch (err) {
-    console.error("Failed to update last_login_at:", err);
+  if (options?.touchLastLogin !== false) {
+    try {
+      const shouldTouch = await redis.setNx(`auth:login-touch:${faculty.id}`, "1", 3600);
+      if (shouldTouch) {
+        const sql = getSql();
+        await sql`UPDATE faculty_directory SET last_login_at = NOW() WHERE id = ${faculty.id}`;
+      }
+    } catch (err) {
+      console.error("Failed to update last_login_at:", err);
+    }
   }
   return {
     id: faculty.id,
@@ -1114,6 +1477,39 @@ async function authenticateFacultyWithNeon(email) {
     faculty_name: faculty.faculty_name,
     can_see_all_faculty: Boolean(faculty.can_see_all_faculty)
   };
+}
+async function authenticateFacultyWithNeon(email) {
+  return lookupFacultyByEmail(email, { touchLastLogin: true });
+}
+async function listFacultyDirectoryWithCache() {
+  const dbUrl = getDatabaseUrl();
+  if (!dbUrl) return [];
+  const redis = getRedis();
+  const cacheKey = "auth:faculty_directory:all";
+  try {
+    const cached = await redis.getJson(cacheKey);
+    if (Array.isArray(cached)) return cached;
+  } catch {
+  }
+  const sql = getSql();
+  const rows = await sql`
+    SELECT id, email, faculty_name, can_see_all_faculty, is_active, last_login_at::text AS last_login_at
+    FROM faculty_directory
+    ORDER BY faculty_name ASC, id ASC
+  `;
+  const records = rows.map((row) => ({
+    id: Number(row.id),
+    email: String(row.email),
+    faculty_name: String(row.faculty_name),
+    can_see_all_faculty: Boolean(row.can_see_all_faculty),
+    is_active: Boolean(row.is_active),
+    last_login_at: row.last_login_at ? String(row.last_login_at) : null
+  }));
+  try {
+    await redis.setJson(cacheKey, records, 300);
+  } catch {
+  }
+  return records;
 }
 var PinRateLimiter = class {
   attempts = /* @__PURE__ */ new Map();
@@ -1175,6 +1571,49 @@ var PinRateLimiter = class {
 };
 var pinRateLimiter = new PinRateLimiter(5, 5 * 60 * 1e3);
 var loginRateLimiter = new PinRateLimiter(8, 10 * 60 * 1e3);
+function createDistributedRateLimiter(namespace, fallback, maxAttempts, windowSeconds) {
+  const keyFor = (ip) => `ratelimit:${namespace}:${sha256Hex(ip)}`;
+  return {
+    async check(ip) {
+      const redis = getRedis();
+      if (!redis.isShared) return fallback.check(ip);
+      try {
+        const raw = await redis.get(keyFor(ip));
+        const count = raw ? Number.parseInt(raw, 10) || 0 : 0;
+        if (count >= maxAttempts) {
+          return { limited: true, remainingAttempts: 0, retryAfterSeconds: windowSeconds };
+        }
+        return {
+          limited: false,
+          remainingAttempts: Math.max(0, maxAttempts - count),
+          retryAfterSeconds: 0
+        };
+      } catch {
+        return fallback.check(ip);
+      }
+    },
+    async recordFailure(ip) {
+      fallback.recordFailure(ip);
+      const redis = getRedis();
+      if (!redis.isShared) return;
+      try {
+        await redis.incrWindow(keyFor(ip), windowSeconds);
+      } catch {
+      }
+    },
+    async reset(ip) {
+      fallback.reset(ip);
+      const redis = getRedis();
+      if (!redis.isShared) return;
+      try {
+        await redis.del(keyFor(ip));
+      } catch {
+      }
+    }
+  };
+}
+var distributedPinRateLimiter = createDistributedRateLimiter("pin", pinRateLimiter, 5, 5 * 60);
+var distributedLoginRateLimiter = createDistributedRateLimiter("login", loginRateLimiter, 8, 10 * 60);
 function getClientIp(req) {
   const trustProxy = Boolean(process.env.VERCEL) || process.env.TRUST_PROXY === "1";
   if (trustProxy && req.ip) return req.ip;
@@ -1193,6 +1632,15 @@ async function verifyBatchPinWithNeon(pin) {
   if (!/^\d{6}$/.test(cleanPin)) return null;
   const dbUrl = getDatabaseUrl();
   if (dbUrl) {
+    const redis = getRedis();
+    const cacheKey = `auth:pin:${sha256Hex(cleanPin)}`;
+    try {
+      const cached = await redis.getJson(cacheKey);
+      if (cached) {
+        return cached.ok && cached.course && cached.batch ? { ok: true, course: cached.course, batch: cached.batch } : null;
+      }
+    } catch {
+    }
     try {
       const sql = getSql();
       const rows = await sql`
@@ -1202,11 +1650,20 @@ async function verifyBatchPinWithNeon(pin) {
         LIMIT 1
       `;
       if (rows && rows.length > 0 && rows[0]?.course && rows[0]?.batch) {
-        return {
+        const result = {
           ok: true,
           course: String(rows[0].course),
           batch: String(rows[0].batch)
         };
+        try {
+          await redis.setJson(cacheKey, result, 600);
+        } catch {
+        }
+        return result;
+      }
+      try {
+        await redis.setJson(cacheKey, { ok: false }, 60);
+      } catch {
       }
       return null;
     } catch (err) {
@@ -1489,6 +1946,14 @@ function stamp(value) {
 }
 async function listMatchingNotices(course, batch) {
   if (!databaseUrl()) return [];
+  const redis = getRedis();
+  const ver = await redis.get("notices:version").catch(() => null) || "0";
+  const cacheKey = `notices:list:${ver}:${course.trim().toLowerCase()}:${batch.trim().toLowerCase()}`;
+  try {
+    const cached = await redis.getJson(cacheKey);
+    if (Array.isArray(cached)) return cached;
+  } catch {
+  }
   await ensureAdminSchema();
   const sql = getSql();
   const rows = await sql`
@@ -1500,12 +1965,15 @@ async function listMatchingNotices(course, batch) {
     ORDER BY created_at DESC
     LIMIT 5
   `;
-  return rows.map((row) => ({
+  const result = rows.map((row) => ({
     id: row.id,
     title: row.title,
     body: row.body,
     createdAt: stamp(row.created_at)
   }));
+  await redis.setJson(cacheKey, result, 120).catch(() => {
+  });
+  return result;
 }
 async function noticesForScope(scope, choices) {
   if (scope.faculty) return [];
@@ -1552,6 +2020,8 @@ async function insertNotice(title, body, audience) {
     VALUES (${id}, ${title}, ${body}, ${audience.course}, ${audience.batch})
   `;
   await sql`DELETE FROM student_notices WHERE created_at < now() - interval '30 days'`;
+  await getRedis().set("notices:version", `${Date.now().toString(36)}`, 24 * 60 * 60).catch(() => {
+  });
   return id;
 }
 async function vapidPair() {
@@ -1658,17 +2128,29 @@ function mergeSheetOverrides(sources, overrides) {
   });
 }
 var cache = null;
+var SHEET_OVERRIDES_CACHE_KEY = "admin:sheet-overrides";
 function clearSheetSourceCache() {
   cache = null;
+  void getRedis().del(SHEET_OVERRIDES_CACHE_KEY).catch(() => {
+  });
 }
 async function readSheetOverrides() {
   if (!databaseUrl()) return [];
+  const redis = getRedis();
+  try {
+    const cached = await redis.getJson(SHEET_OVERRIDES_CACHE_KEY);
+    if (Array.isArray(cached)) return cached;
+  } catch {
+  }
   await ensureAdminSchema();
   const sql = getSql();
   const rows = await sql`
     SELECT course, batch, spreadsheet_id FROM timetable_sheet_links
   `;
-  return rows.filter((row) => row.course && row.batch && acceptSpreadsheetId(row.spreadsheet_id)).map((row) => ({ course: row.course, batch: row.batch, spreadsheetId: row.spreadsheet_id }));
+  const overrides = rows.filter((row) => row.course && row.batch && acceptSpreadsheetId(row.spreadsheet_id)).map((row) => ({ course: row.course, batch: row.batch, spreadsheetId: row.spreadsheet_id }));
+  await redis.setJson(SHEET_OVERRIDES_CACHE_KEY, overrides, 120).catch(() => {
+  });
+  return overrides;
 }
 async function resolveSheetSources(fallback) {
   const now = Date.now();
@@ -2661,7 +3143,7 @@ function insertChanges2(sql, rows) {
     )
   `;
 }
-async function readNeonRows() {
+async function readNeonMeta() {
   const url = neonUrl();
   if (!url) return null;
   try {
@@ -2674,12 +3156,9 @@ async function readNeonRows() {
     `;
     const sync = syncRows[0];
     if (!sync?.bootstrapped) return null;
-    const lectures = await sql`SELECT * FROM timetable_lectures`;
-    const changes = await sql`SELECT * FROM timetable_changes ORDER BY id`;
-    const weeks = await sql`SELECT id, course, batch, start_date, end_date FROM timetable_weeks`;
-    return rowsToArchive(
-      sync.saved_at,
-      {
+    return {
+      savedAt: sync.saved_at,
+      sync: {
         lastSuccessAt: sync.last_success_at,
         lastAttemptAt: sync.last_attempt_at,
         lastError: sync.last_error,
@@ -2688,15 +3167,87 @@ async function readNeonRows() {
         tabNames: json(sync.tab_names, []),
         parseIssues: json(sync.parse_issues, []),
         spreadsheetTitle: sync.spreadsheet_title
+      }
+    };
+  } catch (error) {
+    console.error("[archive] meta read error:", error);
+    return null;
+  }
+}
+async function readNeonLiveRows() {
+  const url = neonUrl();
+  if (!url) return null;
+  try {
+    const sql = getSql();
+    await ensureSchema(sql);
+    const meta = await readNeonMeta();
+    if (!meta) return null;
+    const [lectures, changes, weeks] = await Promise.all([
+      sql`SELECT * FROM timetable_lectures WHERE week_id = ${LIVE}`,
+      sql`SELECT * FROM timetable_changes WHERE week_id = ${LIVE} ORDER BY id`,
+      sql`SELECT id, course, batch, start_date, end_date FROM timetable_weeks`
+    ]);
+    const archive = rowsToArchive(meta.savedAt, meta.sync, { lectures, changes, weeks });
+    return {
+      archive,
+      unhydratedWeekIds: new Set(weeks.map((w) => w.id))
+    };
+  } catch (error) {
+    console.error("[archive] live row read error:", error);
+    return null;
+  }
+}
+async function readNeonWeeksByIds(weekIds) {
+  const url = neonUrl();
+  if (!url || weekIds.length === 0) return [];
+  try {
+    const sql = getSql();
+    await ensureSchema(sql);
+    const [weeks, lectures, changes] = await Promise.all([
+      sql`SELECT id, course, batch, start_date, end_date FROM timetable_weeks WHERE id = ANY(${weekIds})`,
+      sql`SELECT * FROM timetable_lectures WHERE week_id = ANY(${weekIds})`,
+      sql`SELECT * FROM timetable_changes WHERE week_id = ANY(${weekIds}) ORDER BY id`
+    ]);
+    const restored = rowsToArchive(
+      (/* @__PURE__ */ new Date()).toISOString(),
+      {
+        lastSuccessAt: null,
+        lastAttemptAt: null,
+        lastError: null,
+        bootstrapped: true,
+        contentHash: null,
+        tabNames: [],
+        parseIssues: [],
+        spreadsheetTitle: null
       },
       { lectures, changes, weeks }
     );
+    return restored.weeks ?? [];
+  } catch (error) {
+    console.error("[archive] week row read error:", error);
+    return [];
+  }
+}
+async function readNeonRows() {
+  const url = neonUrl();
+  if (!url) return null;
+  try {
+    const sql = getSql();
+    await ensureSchema(sql);
+    const meta = await readNeonMeta();
+    if (!meta) return null;
+    const [lectures, changes, weeks] = await Promise.all([
+      sql`SELECT * FROM timetable_lectures`,
+      sql`SELECT * FROM timetable_changes ORDER BY id`,
+      sql`SELECT id, course, batch, start_date, end_date FROM timetable_weeks`
+    ]);
+    return rowsToArchive(meta.savedAt, meta.sync, { lectures, changes, weeks });
   } catch (error) {
     console.error("[archive] row read error:", error);
     return null;
   }
 }
-async function writeNeonRows(archive) {
+async function writeNeonRows(archive, hydratedWeekIds) {
   const url = neonUrl();
   if (!url) return false;
   const sql = getSql();
@@ -2705,19 +3256,45 @@ async function writeNeonRows(archive) {
   const weekPayload = JSON.stringify(rows.weeks);
   const tabNames = JSON.stringify(archive.sync.tabNames);
   const parseIssues = JSON.stringify(archive.sync.parseIssues);
+  const keptWeekIds = rows.weeks.map((w) => w.id);
   await sql.begin(async (tx) => {
-    await tx`DELETE FROM timetable_lectures`;
-    await tx`DELETE FROM timetable_changes`;
-    await tx`DELETE FROM timetable_weeks`;
+    if (!hydratedWeekIds) {
+      await tx`DELETE FROM timetable_lectures`;
+      await tx`DELETE FROM timetable_changes`;
+      await tx`DELETE FROM timetable_weeks`;
+      for (const chunk of chunks(rows.lectures, 200)) await insertLectures(tx, chunk);
+      for (const chunk of chunks(rows.changes, 200)) await insertChanges2(tx, chunk);
+    } else {
+      const targetWeeks = [LIVE, ...hydratedWeekIds];
+      await tx`DELETE FROM timetable_lectures WHERE week_id = ANY(${targetWeeks})`;
+      await tx`DELETE FROM timetable_changes WHERE week_id = ANY(${targetWeeks})`;
+      if (keptWeekIds.length > 0) {
+        await tx`DELETE FROM timetable_lectures WHERE week_id <> ${LIVE} AND NOT (week_id = ANY(${keptWeekIds}))`;
+        await tx`DELETE FROM timetable_changes WHERE week_id <> ${LIVE} AND NOT (week_id = ANY(${keptWeekIds}))`;
+        await tx`DELETE FROM timetable_weeks WHERE NOT (id = ANY(${keptWeekIds}))`;
+      } else {
+        await tx`DELETE FROM timetable_lectures WHERE week_id <> ${LIVE}`;
+        await tx`DELETE FROM timetable_changes WHERE week_id <> ${LIVE}`;
+        await tx`DELETE FROM timetable_weeks`;
+      }
+      const targetSet = new Set(targetWeeks);
+      const lecturesToInsert = rows.lectures.filter((r) => targetSet.has(r.week_id));
+      const changesToInsert = rows.changes.filter((r) => targetSet.has(r.week_id));
+      for (const chunk of chunks(lecturesToInsert, 200)) await insertLectures(tx, chunk);
+      for (const chunk of chunks(changesToInsert, 200)) await insertChanges2(tx, chunk);
+    }
     await tx`DELETE FROM timetable_sync`;
-    for (const chunk of chunks(rows.lectures, 200)) await insertLectures(tx, chunk);
-    for (const chunk of chunks(rows.changes, 200)) await insertChanges2(tx, chunk);
     await tx`
       INSERT INTO timetable_weeks (id, course, batch, start_date, end_date)
       SELECT id, course, batch, start_date, end_date
       FROM jsonb_to_recordset(${weekPayload}::jsonb) AS x(
         id text, course text, batch text, start_date text, end_date text
       )
+      ON CONFLICT (id) DO UPDATE SET
+        course = EXCLUDED.course,
+        batch = EXCLUDED.batch,
+        start_date = EXCLUDED.start_date,
+        end_date = EXCLUDED.end_date
     `;
     await tx`
       INSERT INTO timetable_sync (
@@ -2829,6 +3406,13 @@ function uniqueChangeIds(changes) {
 // server/src/services/durableState.ts
 var lastSignature = "";
 var hydrating = /* @__PURE__ */ new WeakMap();
+var ARCHIVE_LIVE_KEY = "archive:live";
+var ARCHIVE_SIG_KEY = "archive:sig";
+var ARCHIVE_VERSION_KEY = "archive:version";
+var ARCHIVE_TTL_SECONDS = 24 * 60 * 60;
+function weekKey(id) {
+  return `archive:week:${id}`;
+}
 function neonUrl2() {
   return databaseUrl();
 }
@@ -2842,12 +3426,12 @@ function exportArchive(db2) {
     weeks: readWeekBackups(db2)
   };
 }
-function importArchive(db2, archive) {
+function importArchive(db2, archive, unhydratedWeekIds) {
   db2.exec("BEGIN");
   try {
     replaceLectures(db2, archive.lectures);
     replaceChangeRows(db2, archive.changes);
-    replaceWeekBackups(db2, archive.weeks ?? []);
+    replaceWeekBackups(db2, archive.weeks ?? [], unhydratedWeekIds);
     writeSyncState(db2, { ...archive.sync, bootstrapped: true });
     db2.exec("COMMIT");
   } catch (error) {
@@ -2865,6 +3449,19 @@ function withWeekChanges(archive) {
     ...archive,
     weeks: (archive.weeks ?? []).map((week) => ({ ...week, changes: week.changes ?? [] }))
   };
+}
+async function readBlobUpdatedAt() {
+  const dbUrl = neonUrl2();
+  if (!dbUrl) return null;
+  try {
+    const sql = getSql();
+    const rows = await sql`
+      SELECT updated_at::text AS updated_at FROM timetable_archive WHERE id = 'latest' LIMIT 1
+    `;
+    return rows?.[0]?.updated_at ? String(rows[0].updated_at) : null;
+  } catch {
+    return null;
+  }
 }
 async function readBlob() {
   const dbUrl = neonUrl2();
@@ -2884,16 +3481,23 @@ async function readBlob() {
   }
   return null;
 }
-async function readRemote() {
-  try {
-    const rows = await readNeonRows();
-    if (rows?.sync?.bootstrapped) {
-      return rows;
-    }
-  } catch (err) {
-    console.error("[archive] rows read error, falling back to blob:", err);
+async function readRemoteForColdStart() {
+  const [meta, blobUpdatedAt] = await Promise.all([readNeonMeta(), readBlobUpdatedAt()]);
+  const metaTime = meta ? Date.parse(meta.sync.lastSuccessAt || meta.savedAt) : 0;
+  const blobTime = blobUpdatedAt ? Date.parse(blobUpdatedAt) : 0;
+  if (meta && (!blobUpdatedAt || metaTime >= blobTime || Number.isNaN(blobTime))) {
+    const live = await readNeonLiveRows();
+    if (live) return live;
   }
-  return readBlob();
+  const blob = await readBlob();
+  if (blob) {
+    return { archive: blob, unhydratedWeekIds: /* @__PURE__ */ new Set() };
+  }
+  const fullRows = await readNeonRows();
+  if (fullRows) {
+    return { archive: fullRows, unhydratedWeekIds: /* @__PURE__ */ new Set() };
+  }
+  return null;
 }
 async function writeBlob(archive) {
   const dbUrl = neonUrl2();
@@ -2907,6 +3511,46 @@ async function writeBlob(archive) {
     SET archive = EXCLUDED.archive, updated_at = NOW()
   `;
 }
+async function writeArchiveToRedis(archive, unhydratedWeekIds) {
+  const redis = getRedis();
+  try {
+    const hydratedWeeks = (archive.weeks ?? []).filter((w) => !unhydratedWeekIds.has(w.id) && w.lectures.length > 0);
+    const liveArchive = {
+      ...archive,
+      weeks: (archive.weeks ?? []).map((w) => ({
+        id: w.id,
+        course: w.course,
+        batch: w.batch,
+        start: w.start,
+        end: w.end,
+        lectures: [],
+        changes: []
+      }))
+    };
+    await Promise.all([
+      redis.setJson(
+        ARCHIVE_LIVE_KEY,
+        {
+          archive: liveArchive,
+          unhydratedWeekIds: (archive.weeks ?? []).map((w) => w.id)
+        },
+        ARCHIVE_TTL_SECONDS
+      ),
+      redis.set(ARCHIVE_SIG_KEY, archiveSignature(archive), ARCHIVE_TTL_SECONDS),
+      ...hydratedWeeks.map((week) => redis.setJson(weekKey(week.id), week, ARCHIVE_TTL_SECONDS))
+    ]);
+  } catch (err) {
+    console.error("[redis] archive write failed:", err);
+  }
+}
+async function bumpArchiveVersion() {
+  const version = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  try {
+    await getRedis().set(ARCHIVE_VERSION_KEY, version, ARCHIVE_TTL_SECONDS);
+  } catch {
+  }
+  return version;
+}
 function hydrateArchive(db2) {
   if (!neonUrl2() || readSyncState(db2).bootstrapped) return Promise.resolve(false);
   const running = hydrating.get(db2);
@@ -2916,33 +3560,141 @@ function hydrateArchive(db2) {
   return pending2;
 }
 async function loadRemoteArchive(db2) {
-  const archive = await readRemote();
-  if (!archive?.sync.bootstrapped) return false;
-  importArchive(db2, archive);
-  lastSignature = archiveSignature(archive);
+  const redis = getRedis();
+  try {
+    const cached = await redis.getJson(ARCHIVE_LIVE_KEY);
+    if (cached?.archive?.sync?.bootstrapped) {
+      const unhydrated = new Set(cached.unhydratedWeekIds ?? []);
+      importArchive(db2, cached.archive, unhydrated);
+      lastSignature = archiveSignature(cached.archive);
+      return true;
+    }
+  } catch (err) {
+    console.error("[redis] archive read failed, falling back to Postgres:", err);
+  }
+  const loaded = await readRemoteForColdStart();
+  if (!loaded?.archive?.sync.bootstrapped) return false;
+  importArchive(db2, loaded.archive, loaded.unhydratedWeekIds);
+  lastSignature = archiveSignature(loaded.archive);
+  await writeArchiveToRedis(loaded.archive, loaded.unhydratedWeekIds);
   console.log("[sync] loaded saved timetable history");
   return true;
+}
+async function ensureWeeksHydrated(db2, weekIds) {
+  if (weekIds.length === 0) return;
+  const missing = readUnhydratedWeekIds(db2, weekIds);
+  if (missing.length === 0) return;
+  const redis = getRedis();
+  const stillMissing = [];
+  const resolved = [];
+  await Promise.all(
+    missing.map(async (id) => {
+      try {
+        const cached = await redis.getJson(weekKey(id));
+        if (cached && Array.isArray(cached.lectures)) {
+          resolved.push({ ...cached, changes: cached.changes ?? [] });
+          return;
+        }
+      } catch {
+      }
+      stillMissing.push(id);
+    })
+  );
+  if (stillMissing.length > 0 && neonUrl2()) {
+    let fromRows = await readNeonWeeksByIds(stillMissing);
+    const foundIds = new Set(fromRows.map((w) => w.id));
+    const unresolvedIds = stillMissing.filter((id) => !foundIds.has(id));
+    if (unresolvedIds.length > 0) {
+      const blob = await readBlob();
+      const fromBlob = (blob?.weeks ?? []).filter((w) => unresolvedIds.includes(w.id));
+      fromRows = [...fromRows, ...fromBlob];
+    }
+    for (const week of fromRows) {
+      resolved.push(week);
+      try {
+        await redis.setJson(weekKey(week.id), week, ARCHIVE_TTL_SECONDS);
+      } catch {
+      }
+    }
+  }
+  if (resolved.length > 0) {
+    upsertWeekBackups(db2, resolved, true);
+  }
+}
+async function resolveAllWeeksForBlob(archive, hydratedIds) {
+  const weeks = archive.weeks ?? [];
+  const missingIds = weeks.filter((w) => !hydratedIds.has(w.id) && w.lectures.length === 0).map((w) => w.id);
+  if (missingIds.length === 0) return weeks;
+  const redis = getRedis();
+  const byId = new Map(weeks.map((w) => [w.id, w]));
+  const fetchFromPg = [];
+  await Promise.all(
+    missingIds.map(async (id) => {
+      try {
+        const cached = await redis.getJson(weekKey(id));
+        if (cached && cached.lectures.length > 0) {
+          byId.set(id, { ...cached, changes: cached.changes ?? [] });
+          return;
+        }
+      } catch {
+      }
+      fetchFromPg.push(id);
+    })
+  );
+  if (fetchFromPg.length > 0 && neonUrl2()) {
+    const pgWeeks = await readNeonWeeksByIds(fetchFromPg);
+    for (const week of pgWeeks) {
+      byId.set(week.id, week);
+      try {
+        await redis.setJson(weekKey(week.id), week, ARCHIVE_TTL_SECONDS);
+      } catch {
+      }
+    }
+  }
+  return [...byId.values()];
 }
 async function publishArchive(db2) {
   if (!neonUrl2() || !readSyncState(db2).bootstrapped) return false;
   const local = exportArchive(db2);
-  if (archiveSignature(local) === lastSignature) return false;
-  const remote = await readRemote();
-  const merged = remote ? mergeArchives(remote, local) : local;
-  if (archiveSignature(merged) !== archiveSignature(local)) importArchive(db2, merged);
-  const signature = archiveSignature(merged);
-  if (remote && signature === archiveSignature(remote)) {
-    lastSignature = signature;
-    return false;
-  }
-  merged.savedAt = (/* @__PURE__ */ new Date()).toISOString();
+  const localSig = archiveSignature(local);
+  if (localSig === lastSignature) return false;
+  const redis = getRedis();
   try {
-    await writeNeonRows(merged);
+    const cachedSig = await redis.get(ARCHIVE_SIG_KEY);
+    if (cachedSig && cachedSig === localSig) {
+      lastSignature = localSig;
+      return false;
+    }
+  } catch {
+  }
+  let merged = local;
+  const remoteMeta = await readNeonMeta();
+  const remoteNewer = remoteMeta && (remoteMeta.sync.lastSuccessAt ?? "") > (local.sync.lastSuccessAt ?? "") && remoteMeta.sync.contentHash !== local.sync.contentHash;
+  if (remoteNewer) {
+    const remoteLive = await readNeonLiveRows();
+    if (remoteLive) {
+      merged = mergeArchives(remoteLive.archive, local);
+      if (archiveSignature(merged) !== localSig) {
+        importArchive(db2, merged, remoteLive.unhydratedWeekIds);
+      }
+    }
+  }
+  const signature = archiveSignature(merged);
+  merged.savedAt = (/* @__PURE__ */ new Date()).toISOString();
+  const hydratedIds = readHydratedWeekIds(db2);
+  const unhydratedSet = new Set(
+    (merged.weeks ?? []).filter((w) => !hydratedIds.has(w.id) && w.lectures.length === 0).map((w) => w.id)
+  );
+  await writeArchiveToRedis(merged, unhydratedSet);
+  await bumpArchiveVersion();
+  try {
+    await writeNeonRows(merged, hydratedIds);
   } catch (err) {
     console.error("[archive] row write error:", err);
   }
   try {
-    await writeBlob(merged);
+    const fullWeeks = await resolveAllWeeksForBlob(merged, hydratedIds);
+    await writeBlob({ ...merged, weeks: fullWeeks });
     console.log("[sync] saved timetable history");
   } catch (err) {
     console.error("[archive] write error:", err);
@@ -4188,14 +4940,1819 @@ async function fetchSheetSources(sources) {
   );
 }
 
-// server/src/app.ts
-var import_meta2 = {};
+// server/src/mcp/oauth.ts
+var import_express = __toESM(require("express"), 1);
+
+// shared/coordinators.ts
+var COORDINATORS = [
+  { name: "Harshita Deshmukh", email: "harshitad@itm.edu", cohorts: ["Andrew NG", "Sam Altman"] },
+  { name: "Kashmira Thakur", email: "kashmirat@itm.edu", cohorts: ["Jerry Sanders", "Larry Page"] },
+  { name: "Vyoma Amravat", email: "avyoma@itm.edu", cohorts: ["Jeff Bezos", "Steve Jobs"] },
+  { name: "Apeksha Phapale", email: "apekshap@itm.edu", cohorts: ["Tim Cook", "Elon Musk"] },
+  { name: "Gaurav Deshmukh", email: "gauravd@itm.edu", cohorts: ["Demis Hassabis", "Jensen Huang"] },
+  { name: "Hardik Kadam", email: "", cohorts: ["Mark Zuckerberg"] }
+];
+var titles2 = /* @__PURE__ */ new Set(["mr", "ms", "mrs", "dr", "prof", "sir", "mam", "maam"]);
+function nameWords(value) {
+  return value.toLowerCase().replace(/\./g, "").split(/\s+/).filter((word) => word.length > 1 && !titles2.has(word));
+}
+function coordinatorNamesMatch(a, b) {
+  if (personMatch(a, b)) return true;
+  const left = nameWords(a);
+  const right = nameWords(b);
+  if (left.length < 2 || right.length < 2) return false;
+  const shorter = left.length <= right.length ? left : right;
+  const longer = left.length <= right.length ? right : left;
+  return shorter.every((word) => longer.includes(word));
+}
+function findCoordinator(email, facultyName) {
+  const mail = email?.trim().toLowerCase();
+  if (mail) {
+    const byEmail = COORDINATORS.find((person) => person.email && person.email.toLowerCase() === mail);
+    if (byEmail) return byEmail;
+  }
+  const name = facultyName?.trim();
+  if (!name) return void 0;
+  const lowered = name.toLowerCase();
+  if (lowered === "all" || lowered === "all faculty" || lowered === "all classes") return void 0;
+  return COORDINATORS.find((person) => coordinatorNamesMatch(person.name, name));
+}
+function divisionMatchesAssigned(division, assigned) {
+  const key = (value) => cohortName(cohortTrack(value).base).toLowerCase();
+  return key(division) === key(assigned);
+}
+
+// server/src/mcp/oauthStore.ts
+var import_node_crypto7 = __toESM(require("node:crypto"), 1);
+var import_promises = __toESM(require("node:dns/promises"), 1);
+var import_node_net = __toESM(require("node:net"), 1);
+
+// server/src/mcp/types.ts
+var MCP_SCOPES = [
+  "timetable:read",
+  "faculty:self",
+  "coordinator:read",
+  "faculty:all",
+  "faculty:directory"
+];
+
+// server/src/mcp/oauthStore.ts
+var CLIENT_TTL_SECONDS = 30 * 24 * 60 * 60;
+var CIMD_TTL_SECONDS = 10 * 60;
+var TX_TTL_SECONDS = 10 * 60;
+var CODE_TTL_SECONDS = 90;
+var ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
+var REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
+function sha256Hex2(value) {
+  return import_node_crypto7.default.createHash("sha256").update(value).digest("hex");
+}
+function sha256Base64Url(value) {
+  return import_node_crypto7.default.createHash("sha256").update(value).digest("base64url");
+}
+function randomToken(bytes = 32) {
+  return import_node_crypto7.default.randomBytes(bytes).toString("base64url");
+}
+function timingSafeEqualStr(a, b) {
+  const bufA = Buffer.from(a, "utf8");
+  const bufB = Buffer.from(b, "utf8");
+  if (bufA.length !== bufB.length) return false;
+  return import_node_crypto7.default.timingSafeEqual(bufA, bufB);
+}
+function getMcpSigningKey() {
+  const secret = getAuthSecret();
+  if (!secret) {
+    throw new Error("AUTH_SECRET is not configured for MCP OAuth.");
+  }
+  return import_node_crypto7.default.createHmac("sha256", secret).update("aayam-mcp-oauth-v1").digest();
+}
+function isPrivateOrReservedIp(ip) {
+  const cleaned = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  if (cleaned.startsWith("::ffff:")) {
+    return isPrivateOrReservedIp(cleaned.slice(7));
+  }
+  const version = import_node_net.default.isIP(cleaned);
+  if (version === 4) {
+    const parts = cleaned.split(".").map((n) => Number.parseInt(n, 10));
+    if (parts.length !== 4 || parts.some((n) => Number.isNaN(n))) return true;
+    const [a, b] = parts;
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    if (a >= 224) return true;
+    return false;
+  }
+  if (version === 6) {
+    if (cleaned === "::" || cleaned === "::1") return true;
+    if (cleaned.startsWith("fc") || cleaned.startsWith("fd")) return true;
+    if (cleaned.startsWith("fe8") || cleaned.startsWith("fe9") || cleaned.startsWith("fea") || cleaned.startsWith("feb")) return true;
+    if (cleaned.startsWith("ff")) return true;
+    return false;
+  }
+  return true;
+}
+async function assertSafePublicHttpsUrl(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error("Invalid client_id URL.");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error("CIMD client_id URL must use HTTPS.");
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("CIMD client_id URL must not contain credentials.");
+  }
+  if (parsed.port && parsed.port !== "443") {
+    throw new Error("CIMD client_id URL must use standard HTTPS port 443.");
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) {
+    throw new Error("CIMD client_id hostname is not allowed.");
+  }
+  if (import_node_net.default.isIP(host)) {
+    if (isPrivateOrReservedIp(host)) {
+      throw new Error("CIMD client_id IP address is private or reserved.");
+    }
+    return parsed;
+  }
+  const records = await import_promises.default.lookup(host, { all: true }).catch(() => []);
+  if (records.length === 0) {
+    throw new Error("CIMD client_id hostname could not be resolved.");
+  }
+  for (const record of records) {
+    if (isPrivateOrReservedIp(record.address)) {
+      throw new Error("CIMD client_id resolves to a private or reserved network address.");
+    }
+  }
+  return parsed;
+}
+function isValidRedirectUri(rawUri) {
+  try {
+    const parsed = new URL(rawUri);
+    if (parsed.protocol === "https:") return true;
+    if (parsed.protocol === "http:") {
+      const host = parsed.hostname.toLowerCase();
+      return host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host === "::1";
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+async function defaultCimdFetch(url) {
+  const parsed = await assertSafePublicHttpsUrl(url);
+  const response = await fetch(parsed.toString(), {
+    method: "GET",
+    redirect: "error",
+    signal: AbortSignal.timeout(5e3),
+    headers: { Accept: "application/json", "User-Agent": "aayam-mcp-oauth" }
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch client metadata document (${response.status}).`);
+  }
+  const text3 = await response.text();
+  if (Buffer.byteLength(text3, "utf8") > 64 * 1024) {
+    throw new Error("Client metadata document exceeds 64KB limit.");
+  }
+  return JSON.parse(text3);
+}
+async function resolveOAuthClient(clientId, cimdFetcher = defaultCimdFetch) {
+  const cleanId = clientId.trim();
+  if (!cleanId) return null;
+  const redis = getRedis();
+  if (cleanId.startsWith("https://")) {
+    const cacheKey = `oauth:cimd:${sha256Hex2(cleanId)}`;
+    const cached = await redis.getJson(cacheKey).catch(() => null);
+    if (cached) return cached;
+    const doc = await cimdFetcher(cleanId);
+    if (!doc || typeof doc !== "object") {
+      throw new Error("Invalid client metadata document.");
+    }
+    if (doc.client_id !== cleanId) {
+      throw new Error("CIMD client_id does not match document URL.");
+    }
+    if (!Array.isArray(doc.redirect_uris) || doc.redirect_uris.length === 0) {
+      throw new Error("CIMD redirect_uris must be a non-empty array.");
+    }
+    const redirectUris = doc.redirect_uris.filter((u) => typeof u === "string" && isValidRedirectUri(u));
+    if (redirectUris.length !== doc.redirect_uris.length) {
+      throw new Error("CIMD contains invalid redirect_uris.");
+    }
+    const authMethod = typeof doc.token_endpoint_auth_method === "string" ? doc.token_endpoint_auth_method : "none";
+    if (authMethod !== "none") {
+      throw new Error("CIMD clients must use token_endpoint_auth_method 'none'.");
+    }
+    const client2 = {
+      clientId: cleanId,
+      clientName: typeof doc.client_name === "string" && doc.client_name.trim() ? doc.client_name.trim() : new URL(cleanId).hostname,
+      clientUri: typeof doc.client_uri === "string" ? doc.client_uri : void 0,
+      redirectUris,
+      grantTypes: Array.isArray(doc.grant_types) ? doc.grant_types.filter((g) => typeof g === "string") : ["authorization_code", "refresh_token"],
+      responseTypes: Array.isArray(doc.response_types) ? doc.response_types.filter((r) => typeof r === "string") : ["code"],
+      tokenEndpointAuthMethod: "none",
+      isCimd: true,
+      createdAt: Date.now()
+    };
+    await redis.setJson(cacheKey, client2, CIMD_TTL_SECONDS).catch(() => {
+    });
+    return client2;
+  }
+  return await redis.getJson(`oauth:client:${cleanId}`).catch(() => null);
+}
+async function registerDcrClient(input) {
+  if (!Array.isArray(input.redirect_uris) || input.redirect_uris.length === 0 || input.redirect_uris.length > 10) {
+    throw new Error("redirect_uris must be a non-empty array of at most 10 URIs.");
+  }
+  const redirectUris = input.redirect_uris.map((u) => typeof u === "string" ? u.trim() : "");
+  if (redirectUris.some((u) => !isValidRedirectUri(u))) {
+    throw new Error("Each redirect_uri must be HTTPS or http://localhost / http://127.0.0.1.");
+  }
+  const rawAuthMethod = typeof input.token_endpoint_auth_method === "string" ? input.token_endpoint_auth_method : "none";
+  if (rawAuthMethod !== "none" && rawAuthMethod !== "client_secret_post" && rawAuthMethod !== "client_secret_basic") {
+    throw new Error("Unsupported token_endpoint_auth_method.");
+  }
+  const grantTypes = Array.isArray(input.grant_types) ? input.grant_types.filter((g) => typeof g === "string") : ["authorization_code", "refresh_token"];
+  if (!grantTypes.includes("authorization_code")) {
+    throw new Error("grant_types must include authorization_code.");
+  }
+  const responseTypes = Array.isArray(input.response_types) ? input.response_types.filter((r) => typeof r === "string") : ["code"];
+  if (!responseTypes.includes("code")) {
+    throw new Error("response_types must include code.");
+  }
+  const clientId = `mcp_${randomToken(18)}`;
+  const clientSecret = rawAuthMethod === "none" ? void 0 : `mcs_${randomToken(24)}`;
+  const client2 = {
+    clientId,
+    clientName: typeof input.client_name === "string" && input.client_name.trim() ? input.client_name.trim().slice(0, 120) : "MCP Client",
+    clientUri: typeof input.client_uri === "string" && isValidRedirectUri(input.client_uri) ? input.client_uri : void 0,
+    redirectUris,
+    grantTypes,
+    responseTypes,
+    tokenEndpointAuthMethod: rawAuthMethod,
+    clientSecretHash: clientSecret ? sha256Hex2(clientSecret) : void 0,
+    isCimd: false,
+    createdAt: Date.now()
+  };
+  await getRedis().setJson(`oauth:client:${clientId}`, client2, CLIENT_TTL_SECONDS);
+  return { client: client2, clientSecret };
+}
+async function saveAuthTransaction(tx) {
+  await getRedis().setJson(`oauth:tx:${tx.txId}`, tx, TX_TTL_SECONDS);
+}
+async function getAuthTransaction(txId) {
+  if (!txId) return null;
+  return await getRedis().getJson(`oauth:tx:${txId}`);
+}
+async function consumeAuthTransaction(txId) {
+  if (!txId) return null;
+  const redis = getRedis();
+  const tx = await redis.getJson(`oauth:tx:${txId}`);
+  if (!tx) return null;
+  await redis.del(`oauth:tx:${txId}`);
+  return tx;
+}
+function allowedScopesForIdentity(faculty) {
+  const allowed = ["timetable:read", "faculty:self"];
+  if (faculty.canSeeAllFaculty || faculty.coordinatorCohorts.length > 0) {
+    allowed.push("coordinator:read");
+  }
+  if (faculty.canSeeAllFaculty) {
+    allowed.push("faculty:all", "faculty:directory");
+  }
+  return allowed;
+}
+function resolveGrantedScopes(requestedScope, faculty) {
+  const allowed = allowedScopesForIdentity(faculty);
+  const allowedSet = new Set(allowed);
+  const tokens = requestedScope.split(/[\s,]+/).map((s) => s.trim()).filter((s) => MCP_SCOPES.includes(s));
+  if (tokens.length === 0) return allowed;
+  const intersection = [...new Set(tokens.filter((s) => allowedSet.has(s)))];
+  return intersection.length > 0 ? intersection : ["timetable:read", "faculty:self"];
+}
+async function issueAuthorizationCode(input) {
+  const code = `mc_${randomToken(24)}`;
+  const codeHash = sha256Hex2(code);
+  const record = {
+    ...input,
+    codeHash,
+    createdAt: Date.now()
+  };
+  await getRedis().setJson(`oauth:code:${codeHash}`, record, CODE_TTL_SECONDS);
+  return code;
+}
+async function consumeAuthorizationCode(code) {
+  if (!code) return null;
+  const codeHash = sha256Hex2(code);
+  const redis = getRedis();
+  const key = `oauth:code:${codeHash}`;
+  const usedKey = `oauth:code:used:${codeHash}`;
+  const firstUse = await redis.setNx(usedKey, "1", CODE_TTL_SECONDS);
+  if (!firstUse) return null;
+  const record = await redis.getJson(key);
+  if (record) await redis.del(key);
+  return record;
+}
+function signMcpAccessToken(input) {
+  const nowSec = Math.floor(Date.now() / 1e3);
+  const ttl = input.ttlSeconds ?? ACCESS_TOKEN_TTL_SECONDS;
+  const payload = {
+    typ: "mcp_at",
+    jti: `jti_${randomToken(18)}`,
+    familyId: input.familyId,
+    iss: input.iss,
+    aud: input.aud,
+    sub: input.faculty.email,
+    faculty: input.faculty.facultyName,
+    canSeeAllFaculty: input.faculty.canSeeAllFaculty,
+    coordinatorCohorts: input.faculty.coordinatorCohorts,
+    scopes: input.scopes,
+    client_id: input.clientId,
+    iat: nowSec,
+    exp: nowSec + ttl
+  };
+  const encoded = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const sig = import_node_crypto7.default.createHmac("sha256", getMcpSigningKey()).update(encoded).digest("base64url");
+  return { token: `${encoded}.${sig}`, payload };
+}
+function parseAndVerifyAccessTokenSignature(token) {
+  if (!token || !token.includes(".")) return null;
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  const [encoded, sig] = parts;
+  if (!encoded || !sig) return null;
+  try {
+    const expectedSig = import_node_crypto7.default.createHmac("sha256", getMcpSigningKey()).update(encoded).digest("base64url");
+    if (!timingSafeEqualStr(sig, expectedSig)) return null;
+    const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+    if (!payload || payload.typ !== "mcp_at" || !payload.jti || !payload.sub || !payload.aud) return null;
+    const nowSec = Math.floor(Date.now() / 1e3);
+    if (typeof payload.exp !== "number" || nowSec >= payload.exp) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+async function issueRefreshToken(input) {
+  const refreshToken = `rt_${randomToken(32)}`;
+  const tokenHash = sha256Hex2(refreshToken);
+  const familyId = input.familyId || `fam_${randomToken(12)}`;
+  const record = {
+    tokenHash,
+    familyId,
+    clientId: input.clientId,
+    scopes: input.scopes,
+    resource: input.resource,
+    faculty: input.faculty,
+    used: false,
+    createdAt: Date.now()
+  };
+  await getRedis().setJson(`oauth:rt:${tokenHash}`, record, REFRESH_TOKEN_TTL_SECONDS);
+  return { refreshToken, familyId };
+}
+async function rotateRefreshToken(refreshToken, clientId) {
+  if (!refreshToken) return { ok: false, reason: "Missing refresh token." };
+  const tokenHash = sha256Hex2(refreshToken);
+  const redis = getRedis();
+  const key = `oauth:rt:${tokenHash}`;
+  const record = await redis.getJson(key);
+  if (!record) return { ok: false, reason: "Invalid or expired refresh token." };
+  if (record.clientId !== clientId) return { ok: false, reason: "Refresh token client mismatch." };
+  const familyRevoked = await redis.get(`oauth:rt-family-revoked:${record.familyId}`);
+  if (familyRevoked) return { ok: false, reason: "Token family has been revoked." };
+  if (record.used) {
+    await redis.set(`oauth:rt-family-revoked:${record.familyId}`, "1", REFRESH_TOKEN_TTL_SECONDS);
+    await redis.del(key);
+    return { ok: false, reason: "Refresh token reuse detected." };
+  }
+  await redis.setJson(key, { ...record, used: true }, 300);
+  return { ok: true, record };
+}
+async function revokeToken(token) {
+  if (!token) return;
+  const redis = getRedis();
+  if (token.startsWith("rt_")) {
+    const hash = sha256Hex2(token);
+    const record = await redis.getJson(`oauth:rt:${hash}`);
+    if (record) {
+      await redis.set(`oauth:rt-family-revoked:${record.familyId}`, "1", REFRESH_TOKEN_TTL_SECONDS);
+      await redis.del(`oauth:rt:${hash}`);
+    }
+    return;
+  }
+  const payload = parseAndVerifyAccessTokenSignature(token);
+  if (payload) {
+    const remaining = Math.max(1, payload.exp - Math.floor(Date.now() / 1e3));
+    await redis.set(`oauth:revoked:${payload.jti}`, "1", remaining);
+  }
+}
+async function isAccessTokenRevoked(payload) {
+  const redis = getRedis();
+  const revoked = await redis.get(`oauth:revoked:${payload.jti}`);
+  if (revoked) return true;
+  if (payload.familyId) {
+    const familyRevoked = await redis.get(`oauth:rt-family-revoked:${payload.familyId}`);
+    if (familyRevoked) return true;
+  }
+  return false;
+}
+
+// server/src/mcp/oauth.ts
+var dcrRateLimiterFallback = new PinRateLimiter(12, 10 * 60 * 1e3);
+var dcrRateLimiter = createDistributedRateLimiter("oauth_dcr", dcrRateLimiterFallback, 12, 10 * 60);
+var tokenRateLimiterFallback = new PinRateLimiter(60, 5 * 60 * 1e3);
+var tokenRateLimiter = createDistributedRateLimiter("oauth_token", tokenRateLimiterFallback, 60, 5 * 60);
+function firstHeader(value) {
+  if (Array.isArray(value)) return value[0]?.split(",")[0]?.trim() || "";
+  if (typeof value === "string") return value.split(",")[0]?.trim() || "";
+  return "";
+}
+function canonicalOrigin(req) {
+  const configured = process.env.MCP_PUBLIC_URL?.trim();
+  if (configured) {
+    try {
+      return new URL(configured).origin;
+    } catch {
+    }
+  }
+  const trustProxy = Boolean(process.env.VERCEL) || process.env.TRUST_PROXY === "1";
+  const forwardedProto = trustProxy ? firstHeader(req.headers["x-forwarded-proto"]) : "";
+  const proto = forwardedProto === "http" || forwardedProto === "https" ? forwardedProto : req.protocol || "http";
+  const forwardedHost = trustProxy ? firstHeader(req.headers["x-forwarded-host"]) : "";
+  const host = forwardedHost || req.get("host") || "localhost:8787";
+  return `${proto}://${host}`;
+}
+function canonicalResourceUrl(req) {
+  return `${canonicalOrigin(req)}/mcp`;
+}
+function normalizeResourceUri(raw) {
+  try {
+    const parsed = new URL(raw.trim());
+    const pathname = parsed.pathname.replace(/\/+$/, "") || "";
+    return `${parsed.origin}${pathname}`;
+  } catch {
+    return raw.trim().replace(/\/+$/, "");
+  }
+}
+function acceptedResourceAudiences(req) {
+  const origin = canonicalOrigin(req);
+  const set = /* @__PURE__ */ new Set([`${origin}/mcp`, `${origin}/api/mcp`]);
+  const configured = process.env.MCP_PUBLIC_URL?.trim();
+  if (configured) {
+    try {
+      const configuredOrigin = new URL(configured).origin;
+      set.add(`${configuredOrigin}/mcp`);
+      set.add(`${configuredOrigin}/api/mcp`);
+    } catch {
+    }
+  }
+  return set;
+}
+function escapeHtml(text3) {
+  return text3.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function renderHtmlPage(title, body, status = 200, res) {
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(title)} \u2014 Aayam Timetable</title>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+      background: #f8fafc;
+      color: #0f172a;
+    }
+    .card {
+      width: 100%;
+      max-width: 440px;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      padding: 24px;
+      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+    }
+    .eyebrow {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #64748b;
+      margin: 0 0 8px;
+    }
+    h1 { font-size: 20px; margin: 0 0 8px; line-height: 1.3; }
+    p { font-size: 14px; line-height: 1.5; color: #475569; margin: 0 0 16px; }
+    .identity {
+      padding: 12px 14px;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      background: #f8fafc;
+      margin-bottom: 16px;
+    }
+    .identity-name { font-weight: 600; font-size: 14px; color: #0f172a; }
+    .identity-email { font-size: 12px; color: #64748b; margin-top: 2px; }
+    .badge {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      background: rgba(16, 185, 129, 0.12);
+      color: #047857;
+    }
+    .badge-elevated {
+      background: rgba(245, 158, 11, 0.15);
+      color: #b45309;
+    }
+    ul.scopes {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 20px;
+      border-top: 1px solid #e2e8f0;
+    }
+    ul.scopes li {
+      padding: 10px 0;
+      border-bottom: 1px solid #e2e8f0;
+      font-size: 13px;
+    }
+    ul.scopes strong { display: block; color: #0f172a; font-size: 13px; }
+    ul.scopes span { color: #64748b; font-size: 12px; }
+    .actions { display: flex; gap: 10px; }
+    button {
+      flex: 1;
+      padding: 10px 14px;
+      border-radius: 9px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid transparent;
+    }
+    .btn-primary { background: #0f172a; color: #ffffff; }
+    .btn-secondary { background: #ffffff; color: #334155; border-color: #cbd5e1; }
+    .meta { margin-top: 14px; font-size: 11px; color: #94a3b8; font-family: ui-monospace, monospace; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #09090b; color: #f4f4f5; }
+      .card { background: #18181b; border-color: #27272a; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4); }
+      p { color: #a1a1aa; }
+      .identity { background: #09090b; border-color: #27272a; }
+      .identity-name, ul.scopes strong { color: #f4f4f5; }
+      .identity-email, ul.scopes span, .eyebrow { color: #a1a1aa; }
+      ul.scopes, ul.scopes li { border-color: #27272a; }
+      .btn-primary { background: #f4f4f5; color: #09090b; }
+      .btn-secondary { background: #18181b; color: #e4e4e7; border-color: #3f3f46; }
+      .badge { color: #34d399; }
+      .badge-elevated { color: #fbbf24; }
+    }
+  </style>
+</head>
+<body>
+  <main class="card">${body}</main>
+</body>
+</html>`;
+  if (res) {
+    res.status(status);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader(
+      "Content-Security-Policy",
+      "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'"
+    );
+    res.send(html);
+  }
+  return html;
+}
+var SCOPE_LABELS = {
+  "timetable:read": {
+    title: "Read published timetables & room availability",
+    detail: "Cohort schedules, weekly updates, cancellations, and free classrooms."
+  },
+  "faculty:self": {
+    title: "Read your personal teaching schedule",
+    detail: "Your upcoming classes, room assignments, and calendar feed URL."
+  },
+  "coordinator:read": {
+    title: "Read your coordinated cohort schedules",
+    detail: "Schedules and updates across the cohorts assigned to you."
+  },
+  "faculty:all": {
+    title: "Read all faculty teaching schedules",
+    detail: "Elevated access to look up any faculty member's teaching schedule."
+  },
+  "faculty:directory": {
+    title: "Read confidential faculty directory",
+    detail: "Staff emails, active status, and access permission flags."
+  }
+};
+function renderConsentPage(res, params) {
+  const roleLabel = params.faculty.canSeeAllFaculty ? "All-Access Faculty" : params.faculty.coordinatorCohorts.length > 0 ? "Class Coordinator" : "Faculty";
+  const badgeClass = params.faculty.canSeeAllFaculty ? "badge badge-elevated" : "badge";
+  const scopeList = params.scopes.map((scope) => {
+    const info = SCOPE_LABELS[scope];
+    return `<li><strong>${escapeHtml(info.title)}</strong><span>${escapeHtml(info.detail)} (${escapeHtml(scope)})</span></li>`;
+  }).join("");
+  const body = `
+    <p class="eyebrow">Aayam MCP Authorization</p>
+    <h1>Connect ${escapeHtml(params.clientName)}</h1>
+    <p><strong>${escapeHtml(params.clientName)}</strong> is requesting permission to access your Aayam timetable account.</p>
+    <div class="identity">
+      <div class="identity-name">${escapeHtml(params.faculty.facultyName)}</div>
+      <div class="identity-email">${escapeHtml(params.faculty.email)}</div>
+      <span class="${badgeClass}">${escapeHtml(roleLabel)}</span>
+    </div>
+    <ul class="scopes">${scopeList}</ul>
+    <form method="POST" action="/oauth/consent">
+      <input type="hidden" name="txId" value="${escapeHtml(params.txId)}" />
+      <input type="hidden" name="csrfToken" value="${escapeHtml(params.csrfToken)}" />
+      <div class="actions">
+        <button class="btn-secondary" type="submit" name="decision" value="deny">Deny</button>
+        <button class="btn-primary" type="submit" name="decision" value="approve">Authorize Access</button>
+      </div>
+    </form>
+    <div class="meta">Redirect target: ${escapeHtml(params.redirectHost)}</div>
+  `;
+  renderHtmlPage("Authorize MCP Client", body, 200, res);
+}
+function redirectWithError(res, redirectUri, error, description, state) {
+  const target = new URL(redirectUri);
+  target.searchParams.set("error", error);
+  target.searchParams.set("error_description", description);
+  if (state) target.searchParams.set("state", state);
+  res.redirect(302, target.toString());
+}
+async function defaultExchangeGoogleCode(opts) {
+  const clientId = getGoogleClientId();
+  const clientSecret = getGoogleClientSecret();
+  if (!clientId || !clientSecret) {
+    throw new Error("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be configured.");
+  }
+  const body = new URLSearchParams({
+    code: opts.code,
+    client_id: clientId,
+    client_secret: clientSecret,
+    redirect_uri: opts.redirectUri,
+    grant_type: "authorization_code",
+    code_verifier: opts.codeVerifier
+  });
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+    signal: AbortSignal.timeout(1e4)
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || typeof data?.id_token !== "string") {
+    throw new Error("Failed to exchange Google authorization code.");
+  }
+  return { idToken: data.id_token };
+}
+async function defaultVerifyGoogleIdToken(idToken, expectedNonce) {
+  const url = `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`;
+  const response = await fetch(url, { signal: AbortSignal.timeout(1e4) });
+  if (!response.ok) {
+    throw new Error("Invalid Google ID token.");
+  }
+  const data = await response.json();
+  const email = (typeof data.email === "string" ? data.email : "").toLowerCase().trim();
+  const emailVerified = data.email_verified === "true" || data.email_verified === true;
+  const name = typeof data.name === "string" ? data.name : "";
+  const aud = typeof data.aud === "string" ? data.aud : "";
+  const iss = typeof data.iss === "string" ? data.iss : "";
+  const nonce = typeof data.nonce === "string" ? data.nonce : "";
+  if (!email || !emailVerified) {
+    throw new Error("Google account email is not verified.");
+  }
+  const expectedClientId = getGoogleClientId();
+  if (!expectedClientId || aud !== expectedClientId) {
+    throw new Error("Google token was not issued for this application.");
+  }
+  if (iss !== "accounts.google.com" && iss !== "https://accounts.google.com") {
+    throw new Error("Google token issuer was not accepted.");
+  }
+  if (expectedNonce && nonce && !timingSafeEqualStr(nonce, expectedNonce)) {
+    throw new Error("Google OAuth nonce mismatch.");
+  }
+  const allowedDomains = getAllowedDomains();
+  if (!allowedDomains.some((d) => email.endsWith(`@${d}`))) {
+    throw new Error(`Only accounts from [${allowedDomains.join(", ")}] are allowed.`);
+  }
+  return { email, name };
+}
+function toFacultyIdentity(row) {
+  const coordinator = findCoordinator(row.email, row.faculty_name);
+  return {
+    id: row.id,
+    email: row.email,
+    facultyName: row.faculty_name,
+    canSeeAllFaculty: Boolean(row.can_see_all_faculty),
+    coordinatorCohorts: coordinator?.cohorts ?? []
+  };
+}
+function parseClientCredentials(req) {
+  const auth = req.headers.authorization;
+  if (typeof auth === "string" && /^Basic\s+/i.test(auth)) {
+    try {
+      const decoded = Buffer.from(auth.replace(/^Basic\s+/i, "").trim(), "base64").toString("utf8");
+      const sep = decoded.indexOf(":");
+      if (sep > 0) {
+        return {
+          clientId: decodeURIComponent(decoded.slice(0, sep)),
+          clientSecret: decodeURIComponent(decoded.slice(sep + 1))
+        };
+      }
+    } catch {
+    }
+  }
+  const body = req.body ?? {};
+  return {
+    clientId: typeof body.client_id === "string" ? body.client_id.trim() : "",
+    clientSecret: typeof body.client_secret === "string" ? body.client_secret : void 0
+  };
+}
+function authenticateClient(client2, presentedSecret) {
+  if (client2.tokenEndpointAuthMethod === "none") return true;
+  if (!client2.clientSecretHash || !presentedSecret) return false;
+  return timingSafeEqualStr(sha256Hex2(presentedSecret), client2.clientSecretHash);
+}
+function setOAuthCors(req, res, next) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Max-Age", "86400");
+  if (req.method === "OPTIONS") {
+    res.status(204).end();
+    return;
+  }
+  next();
+}
+function createMcpAuthRouter(deps = {}) {
+  const router = import_express.default.Router();
+  const cimdFetcher = deps.cimdFetcher;
+  const exchangeGoogleCode = deps.exchangeGoogleCode ?? defaultExchangeGoogleCode;
+  const verifyGoogleIdToken = deps.verifyGoogleIdToken ?? defaultVerifyGoogleIdToken;
+  const resolveFaculty = deps.resolveFaculty ?? ((email) => lookupFacultyByEmail(email, { touchLastLogin: true }));
+  router.use("/.well-known", setOAuthCors);
+  router.use(["/oauth/register", "/oauth/token", "/oauth/revoke"], setOAuthCors);
+  router.use("/oauth", import_express.default.json({ limit: "32kb" }), import_express.default.urlencoded({ extended: false, limit: "32kb" }));
+  const protectedResourceMetadata = (req, res) => {
+    const origin = canonicalOrigin(req);
+    const resource = req.path.endsWith("/api/mcp") ? `${origin}/api/mcp` : `${origin}/mcp`;
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.json({
+      resource,
+      authorization_servers: [origin],
+      scopes_supported: [...MCP_SCOPES],
+      bearer_methods_supported: ["header"],
+      resource_name: "Aayam Timetable MCP Server"
+    });
+  };
+  router.get("/.well-known/oauth-protected-resource", protectedResourceMetadata);
+  router.get("/.well-known/oauth-protected-resource/mcp", protectedResourceMetadata);
+  router.get("/.well-known/oauth-protected-resource/api/mcp", protectedResourceMetadata);
+  const authServerMetadata = (req, res) => {
+    const origin = canonicalOrigin(req);
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.json({
+      issuer: origin,
+      authorization_endpoint: `${origin}/oauth/authorize`,
+      token_endpoint: `${origin}/oauth/token`,
+      registration_endpoint: `${origin}/oauth/register`,
+      revocation_endpoint: `${origin}/oauth/revoke`,
+      scopes_supported: [...MCP_SCOPES],
+      response_types_supported: ["code"],
+      response_modes_supported: ["query"],
+      grant_types_supported: ["authorization_code", "refresh_token"],
+      token_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"],
+      code_challenge_methods_supported: ["S256"],
+      client_id_metadata_document_supported: true
+    });
+  };
+  router.get("/.well-known/oauth-authorization-server", authServerMetadata);
+  router.get("/.well-known/openid-configuration", authServerMetadata);
+  router.post("/oauth/register", async (req, res) => {
+    const ip = getClientIp(req);
+    const rate = await dcrRateLimiter.check(ip);
+    if (rate.limited) {
+      res.setHeader("Retry-After", String(rate.retryAfterSeconds));
+      res.status(429).json({ error: "too_many_requests", error_description: "Dynamic client registration rate limit exceeded." });
+      return;
+    }
+    await dcrRateLimiter.recordFailure(ip);
+    try {
+      const { client: client2, clientSecret } = await registerDcrClient(req.body ?? {});
+      res.status(201).json({
+        client_id: client2.clientId,
+        ...clientSecret ? { client_secret: clientSecret, client_secret_expires_at: 0 } : {},
+        client_id_issued_at: Math.floor(client2.createdAt / 1e3),
+        client_name: client2.clientName,
+        ...client2.clientUri ? { client_uri: client2.clientUri } : {},
+        redirect_uris: client2.redirectUris,
+        grant_types: client2.grantTypes,
+        response_types: client2.responseTypes,
+        token_endpoint_auth_method: client2.tokenEndpointAuthMethod
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Invalid client registration payload.";
+      res.status(400).json({ error: "invalid_client_metadata", error_description: message });
+    }
+  });
+  router.get("/oauth/authorize", async (req, res) => {
+    const responseType = typeof req.query.response_type === "string" ? req.query.response_type.trim() : "";
+    const clientId = typeof req.query.client_id === "string" ? req.query.client_id.trim() : "";
+    const redirectUri = typeof req.query.redirect_uri === "string" ? req.query.redirect_uri.trim() : "";
+    const state = typeof req.query.state === "string" ? req.query.state : "";
+    const codeChallenge = typeof req.query.code_challenge === "string" ? req.query.code_challenge.trim() : "";
+    const codeChallengeMethod = typeof req.query.code_challenge_method === "string" ? req.query.code_challenge_method.trim() : "";
+    const requestedScope = typeof req.query.scope === "string" ? req.query.scope.trim() : "";
+    const rawResource = typeof req.query.resource === "string" ? req.query.resource.trim() : "";
+    let client2 = null;
+    try {
+      client2 = await resolveOAuthClient(clientId, cimdFetcher);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to verify client metadata.";
+      renderHtmlPage("Invalid Client", `<p class="eyebrow">OAuth Error</p><h1>Client verification failed</h1><p>${escapeHtml(message)}</p>`, 400, res);
+      return;
+    }
+    if (!client2) {
+      renderHtmlPage("Unknown Client", `<p class="eyebrow">OAuth Error</p><h1>Unknown MCP client</h1><p>The requested client_id is not registered or valid.</p>`, 400, res);
+      return;
+    }
+    if (!redirectUri || !client2.redirectUris.includes(redirectUri)) {
+      renderHtmlPage("Invalid Redirect URI", `<p class="eyebrow">OAuth Error</p><h1>Redirect URI mismatch</h1><p>The redirect_uri does not match this client's registered redirect URIs.</p>`, 400, res);
+      return;
+    }
+    if (responseType !== "code") {
+      redirectWithError(res, redirectUri, "unsupported_response_type", "Only response_type=code is supported.", state);
+      return;
+    }
+    if (!codeChallenge || codeChallenge.length < 43 || codeChallenge.length > 128 || codeChallengeMethod !== "S256") {
+      redirectWithError(res, redirectUri, "invalid_request", "PKCE with code_challenge_method=S256 is required.", state);
+      return;
+    }
+    const acceptedAudiences = acceptedResourceAudiences(req);
+    const resource = rawResource ? normalizeResourceUri(rawResource) : canonicalResourceUrl(req);
+    if (!acceptedAudiences.has(resource)) {
+      redirectWithError(res, redirectUri, "invalid_target", "Requested resource does not match this MCP server.", state);
+      return;
+    }
+    const googleClientId = getGoogleClientId();
+    if (!googleClientId && !deps.exchangeGoogleCode) {
+      redirectWithError(res, redirectUri, "server_error", "Google OAuth is not configured on this server.", state);
+      return;
+    }
+    const txId = randomToken(24);
+    const googleNonce = randomToken(18);
+    const googleCodeVerifier = randomToken(32);
+    const csrfToken = randomToken(24);
+    await saveAuthTransaction({
+      txId,
+      clientId: client2.clientId,
+      clientName: client2.clientName,
+      redirectUri,
+      state,
+      codeChallenge,
+      codeChallengeMethod: "S256",
+      requestedScope,
+      resource,
+      googleNonce,
+      googleCodeVerifier,
+      csrfToken,
+      createdAt: Date.now()
+    });
+    const origin = canonicalOrigin(req);
+    const callbackUri = `${origin}/oauth/callback`;
+    const googleAuth = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+    googleAuth.searchParams.set("client_id", googleClientId || "dev-google-client");
+    googleAuth.searchParams.set("redirect_uri", callbackUri);
+    googleAuth.searchParams.set("response_type", "code");
+    googleAuth.searchParams.set("scope", "openid email profile");
+    googleAuth.searchParams.set("state", txId);
+    googleAuth.searchParams.set("nonce", googleNonce);
+    googleAuth.searchParams.set("code_challenge", sha256Base64Url(googleCodeVerifier));
+    googleAuth.searchParams.set("code_challenge_method", "S256");
+    googleAuth.searchParams.set("prompt", "select_account");
+    res.redirect(302, googleAuth.toString());
+  });
+  router.get("/oauth/callback", async (req, res) => {
+    const txId = typeof req.query.state === "string" ? req.query.state.trim() : "";
+    const googleError = typeof req.query.error === "string" ? req.query.error.trim() : "";
+    const googleCode = typeof req.query.code === "string" ? req.query.code.trim() : "";
+    const tx = await getAuthTransaction(txId);
+    if (!tx) {
+      renderHtmlPage("Session Expired", `<p class="eyebrow">OAuth Error</p><h1>Authorization session expired</h1><p>Please restart the connection from your AI assistant.</p>`, 400, res);
+      return;
+    }
+    if (googleError) {
+      await consumeAuthTransaction(txId);
+      redirectWithError(res, tx.redirectUri, "access_denied", "Google sign-in was cancelled.", tx.state);
+      return;
+    }
+    if (!googleCode) {
+      await consumeAuthTransaction(txId);
+      redirectWithError(res, tx.redirectUri, "access_denied", "Missing authorization code from Google.", tx.state);
+      return;
+    }
+    try {
+      const origin = canonicalOrigin(req);
+      const { idToken } = await exchangeGoogleCode({
+        code: googleCode,
+        redirectUri: `${origin}/oauth/callback`,
+        codeVerifier: tx.googleCodeVerifier
+      });
+      const verified = await verifyGoogleIdToken(idToken, tx.googleNonce);
+      const directoryRow = await resolveFaculty(verified.email);
+      const faculty = toFacultyIdentity(directoryRow);
+      const scopes = resolveGrantedScopes(tx.requestedScope, faculty);
+      await saveAuthTransaction({
+        ...tx,
+        authenticatedFaculty: faculty
+      });
+      renderConsentPage(res, {
+        txId: tx.txId,
+        csrfToken: tx.csrfToken,
+        clientName: tx.clientName,
+        redirectHost: new URL(tx.redirectUri).host,
+        faculty,
+        scopes
+      });
+    } catch (err) {
+      await consumeAuthTransaction(txId);
+      const message = err instanceof Error ? err.message : "Authentication failed.";
+      renderHtmlPage(
+        "Access Denied",
+        `<p class="eyebrow">Faculty Verification</p><h1>Sign-in was refused</h1><p>${escapeHtml(message)}</p><p>Ask your timetable administrator to verify your account in the active faculty directory.</p>`,
+        403,
+        res
+      );
+    }
+  });
+  router.post("/oauth/consent", async (req, res) => {
+    const body = req.body ?? {};
+    const txId = typeof body.txId === "string" ? body.txId.trim() : "";
+    const csrfToken = typeof body.csrfToken === "string" ? body.csrfToken.trim() : "";
+    const decision = typeof body.decision === "string" ? body.decision.trim() : "";
+    const tx = await consumeAuthTransaction(txId);
+    if (!tx || !tx.authenticatedFaculty || !csrfToken || !timingSafeEqualStr(csrfToken, tx.csrfToken)) {
+      renderHtmlPage("Invalid Consent", `<p class="eyebrow">OAuth Error</p><h1>Authorization request expired</h1><p>Please restart the connection from your MCP client.</p>`, 400, res);
+      return;
+    }
+    if (decision !== "approve") {
+      redirectWithError(res, tx.redirectUri, "access_denied", "The user denied the authorization request.", tx.state);
+      return;
+    }
+    const scopes = resolveGrantedScopes(tx.requestedScope, tx.authenticatedFaculty);
+    const code = await issueAuthorizationCode({
+      clientId: tx.clientId,
+      redirectUri: tx.redirectUri,
+      codeChallenge: tx.codeChallenge,
+      codeChallengeMethod: tx.codeChallengeMethod,
+      scopes,
+      resource: tx.resource,
+      faculty: tx.authenticatedFaculty
+    });
+    const target = new URL(tx.redirectUri);
+    target.searchParams.set("code", code);
+    if (tx.state) target.searchParams.set("state", tx.state);
+    res.redirect(302, target.toString());
+  });
+  router.post("/oauth/token", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Pragma", "no-cache");
+    const ip = getClientIp(req);
+    const rate = await tokenRateLimiter.check(ip);
+    if (rate.limited) {
+      res.setHeader("Retry-After", String(rate.retryAfterSeconds));
+      res.status(429).json({ error: "too_many_requests", error_description: "Too many token requests." });
+      return;
+    }
+    const body = req.body ?? {};
+    const grantType = typeof body.grant_type === "string" ? body.grant_type.trim() : "";
+    const creds = parseClientCredentials(req);
+    if (!creds.clientId) {
+      await tokenRateLimiter.recordFailure(ip);
+      res.status(400).json({ error: "invalid_request", error_description: "Missing client_id." });
+      return;
+    }
+    let client2 = null;
+    try {
+      client2 = await resolveOAuthClient(creds.clientId, cimdFetcher);
+    } catch {
+      client2 = null;
+    }
+    if (!client2 || !authenticateClient(client2, creds.clientSecret)) {
+      await tokenRateLimiter.recordFailure(ip);
+      res.status(401).json({ error: "invalid_client", error_description: "Client authentication failed." });
+      return;
+    }
+    const origin = canonicalOrigin(req);
+    if (grantType === "authorization_code") {
+      const code = typeof body.code === "string" ? body.code.trim() : "";
+      const redirectUri = typeof body.redirect_uri === "string" ? body.redirect_uri.trim() : "";
+      const codeVerifier = typeof body.code_verifier === "string" ? body.code_verifier.trim() : "";
+      const rawResource = typeof body.resource === "string" ? body.resource.trim() : "";
+      if (!code || !redirectUri || !codeVerifier) {
+        await tokenRateLimiter.recordFailure(ip);
+        res.status(400).json({ error: "invalid_request", error_description: "Missing code, redirect_uri, or code_verifier." });
+        return;
+      }
+      const record = await consumeAuthorizationCode(code);
+      if (!record) {
+        await tokenRateLimiter.recordFailure(ip);
+        res.status(400).json({ error: "invalid_grant", error_description: "Authorization code is invalid, expired, or already used." });
+        return;
+      }
+      if (record.clientId !== client2.clientId || record.redirectUri !== redirectUri) {
+        await tokenRateLimiter.recordFailure(ip);
+        res.status(400).json({ error: "invalid_grant", error_description: "Client or redirect_uri mismatch." });
+        return;
+      }
+      if (!timingSafeEqualStr(sha256Base64Url(codeVerifier), record.codeChallenge)) {
+        await tokenRateLimiter.recordFailure(ip);
+        res.status(400).json({ error: "invalid_grant", error_description: "PKCE code_verifier verification failed." });
+        return;
+      }
+      if (rawResource && normalizeResourceUri(rawResource) !== record.resource) {
+        await tokenRateLimiter.recordFailure(ip);
+        res.status(400).json({ error: "invalid_target", error_description: "Resource audience mismatch." });
+        return;
+      }
+      const { refreshToken, familyId } = await issueRefreshToken({
+        clientId: client2.clientId,
+        scopes: record.scopes,
+        resource: record.resource,
+        faculty: record.faculty
+      });
+      const { token } = signMcpAccessToken({
+        iss: origin,
+        aud: record.resource,
+        faculty: record.faculty,
+        scopes: record.scopes,
+        clientId: client2.clientId,
+        familyId
+      });
+      await tokenRateLimiter.reset(ip);
+      res.json({
+        access_token: token,
+        token_type: "Bearer",
+        expires_in: ACCESS_TOKEN_TTL_SECONDS,
+        refresh_token: refreshToken,
+        scope: record.scopes.join(" ")
+      });
+      return;
+    }
+    if (grantType === "refresh_token") {
+      const refreshToken = typeof body.refresh_token === "string" ? body.refresh_token.trim() : "";
+      const rawResource = typeof body.resource === "string" ? body.resource.trim() : "";
+      const rotated = await rotateRefreshToken(refreshToken, client2.clientId);
+      if (!rotated.ok) {
+        await tokenRateLimiter.recordFailure(ip);
+        res.status(400).json({ error: "invalid_grant", error_description: rotated.reason });
+        return;
+      }
+      const { record } = rotated;
+      if (rawResource && normalizeResourceUri(rawResource) !== record.resource) {
+        await tokenRateLimiter.recordFailure(ip);
+        res.status(400).json({ error: "invalid_target", error_description: "Resource audience mismatch." });
+        return;
+      }
+      let liveFaculty = record.faculty;
+      if (databaseUrl() || deps.resolveFaculty) {
+        try {
+          const row = await resolveFaculty(record.faculty.email);
+          liveFaculty = toFacultyIdentity(row);
+        } catch {
+          await tokenRateLimiter.recordFailure(ip);
+          res.status(400).json({ error: "invalid_grant", error_description: "Faculty account is no longer active." });
+          return;
+        }
+      }
+      const liveAllowed = new Set(allowedScopesForIdentity(liveFaculty));
+      const refreshedScopes = record.scopes.filter((s) => liveAllowed.has(s));
+      const nextScopes = refreshedScopes.length > 0 ? refreshedScopes : ["timetable:read", "faculty:self"];
+      const nextRt = await issueRefreshToken({
+        familyId: record.familyId,
+        clientId: client2.clientId,
+        scopes: nextScopes,
+        resource: record.resource,
+        faculty: liveFaculty
+      });
+      const { token } = signMcpAccessToken({
+        iss: origin,
+        aud: record.resource,
+        faculty: liveFaculty,
+        scopes: nextScopes,
+        clientId: client2.clientId,
+        familyId: record.familyId
+      });
+      await tokenRateLimiter.reset(ip);
+      res.json({
+        access_token: token,
+        token_type: "Bearer",
+        expires_in: ACCESS_TOKEN_TTL_SECONDS,
+        refresh_token: nextRt.refreshToken,
+        scope: nextScopes.join(" ")
+      });
+      return;
+    }
+    await tokenRateLimiter.recordFailure(ip);
+    res.status(400).json({ error: "unsupported_grant_type", error_description: "Use authorization_code or refresh_token." });
+  });
+  router.post("/oauth/revoke", async (req, res) => {
+    const body = req.body ?? {};
+    const token = typeof body.token === "string" ? body.token.trim() : "";
+    if (token) {
+      await revokeToken(token);
+    }
+    res.status(200).json({ ok: true });
+  });
+  return router;
+}
+function createRequireMcpAuth(deps = {}) {
+  const resolveFaculty = deps.resolveFaculty ?? ((email) => lookupFacultyByEmail(email, { touchLastLogin: false }));
+  return async function requireMcpAuth(req, res, next) {
+    const origin = canonicalOrigin(req);
+    const challenge = `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource", scope="timetable:read faculty:self"`;
+    const authHeader = req.headers.authorization;
+    if (typeof authHeader !== "string" || !/^Bearer\s+/i.test(authHeader)) {
+      res.setHeader("WWW-Authenticate", challenge);
+      res.status(401).json({ error: "unauthorized", error_description: "Bearer token required." });
+      return;
+    }
+    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+    const payload = parseAndVerifyAccessTokenSignature(token);
+    if (!payload) {
+      res.setHeader("WWW-Authenticate", `${challenge}, error="invalid_token"`);
+      res.status(401).json({ error: "invalid_token", error_description: "Access token is invalid or expired." });
+      return;
+    }
+    const acceptedAudiences = acceptedResourceAudiences(req);
+    if (!acceptedAudiences.has(normalizeResourceUri(payload.aud))) {
+      res.setHeader("WWW-Authenticate", `${challenge}, error="invalid_token"`);
+      res.status(401).json({ error: "invalid_token", error_description: "Access token audience mismatch." });
+      return;
+    }
+    if (await isAccessTokenRevoked(payload)) {
+      res.setHeader("WWW-Authenticate", `${challenge}, error="invalid_token"`);
+      res.status(401).json({ error: "invalid_token", error_description: "Access token has been revoked." });
+      return;
+    }
+    let liveIdentity = {
+      id: 0,
+      email: payload.sub,
+      facultyName: payload.faculty,
+      canSeeAllFaculty: payload.canSeeAllFaculty,
+      coordinatorCohorts: payload.coordinatorCohorts ?? []
+    };
+    if (databaseUrl() || deps.resolveFaculty) {
+      try {
+        const row = await resolveFaculty(payload.sub);
+        liveIdentity = toFacultyIdentity(row);
+      } catch {
+        res.setHeader("WWW-Authenticate", `${challenge}, error="invalid_token"`);
+        res.status(401).json({ error: "invalid_token", error_description: "Faculty account is inactive or unauthorized." });
+        return;
+      }
+    } else if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
+      res.setHeader("WWW-Authenticate", `${challenge}, error="invalid_token"`);
+      res.status(401).json({ error: "invalid_token", error_description: "Faculty directory is unavailable." });
+      return;
+    }
+    const liveAllowed = new Set(allowedScopesForIdentity(liveIdentity));
+    const effectiveScopes = payload.scopes.filter((scope) => liveAllowed.has(scope));
+    const authContext = {
+      token,
+      clientId: payload.client_id,
+      scopes: effectiveScopes,
+      expiresAt: payload.exp,
+      resource: new URL(payload.aud),
+      extra: {
+        email: liveIdentity.email,
+        facultyName: liveIdentity.facultyName,
+        canSeeAllFaculty: liveIdentity.canSeeAllFaculty,
+        coordinatorCohorts: liveIdentity.coordinatorCohorts,
+        jti: payload.jti,
+        familyId: payload.familyId
+      }
+    };
+    req.auth = authContext;
+    next();
+  };
+}
+
+// server/src/mcp/server.ts
+var import_mcp = require("@modelcontextprotocol/sdk/server/mcp.js");
+var import_streamableHttp = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
+var import_express2 = __toESM(require("express"), 1);
+var import_zod = require("zod");
 function mondayOf(iso) {
   const date = /* @__PURE__ */ new Date(`${iso}T12:00:00Z`);
   date.setUTCDate(date.getUTCDate() - (date.getUTCDay() + 6) % 7);
   return date.toISOString().slice(0, 10);
 }
 function plusDays(iso, days) {
+  const date = /* @__PURE__ */ new Date(`${iso}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+function sortLectures(a, b) {
+  const date = (a.date ?? "").localeCompare(b.date ?? "");
+  if (date !== 0) return date;
+  if (a.startMinutes !== b.startMinutes) return a.startMinutes - b.startMinutes;
+  return a.division.localeCompare(b.division) || a.subject.localeCompare(b.subject);
+}
+function latestWeekWindow(lectures) {
+  const dated2 = lectures.map((l) => l.date).filter((d) => Boolean(d)).sort();
+  const latest = dated2[dated2.length - 1];
+  if (!latest) return { start: null, end: null, lectures };
+  const weekStart = mondayOf(latest);
+  const weekEnd = plusDays(weekStart, 6);
+  const filtered = lectures.filter((l) => l.date && l.date >= weekStart && l.date <= weekEnd);
+  const filteredDates = filtered.map((l) => l.date).filter((d) => Boolean(d)).sort();
+  return {
+    start: filteredDates[0] ?? weekStart,
+    end: filteredDates[filteredDates.length - 1] ?? weekEnd,
+    lectures: filtered
+  };
+}
+function filterByDateOrWeekday(lectures, date, weekday) {
+  let out = lectures;
+  if (date) {
+    const clean = date.trim();
+    out = out.filter((l) => l.date === clean);
+  }
+  if (weekday) {
+    const clean = weekday.trim().toLowerCase();
+    out = out.filter((l) => l.weekday.toLowerCase().startsWith(clean));
+  }
+  return out;
+}
+function compactLectureView(lecture) {
+  return {
+    id: lecture.id,
+    date: lecture.date,
+    weekday: lecture.weekday,
+    startLabel: lecture.startLabel,
+    endLabel: lecture.endLabel,
+    startMinutes: lecture.startMinutes,
+    endMinutes: lecture.endMinutes,
+    subject: lecture.subject,
+    faculty: lecture.faculty,
+    room: lecture.room,
+    course: lecture.course,
+    batch: lecture.batch,
+    semester: lecture.semester,
+    division: lecture.division,
+    kind: lecture.kind,
+    displayStatus: lecture.displayStatus,
+    reason: lecture.reason,
+    changeSummary: lecture.changeSummary
+  };
+}
+function jsonToolResult(data) {
+  return {
+    content: [{ type: "text", text: JSON.stringify(data, null, 2) }]
+  };
+}
+function toolError(message) {
+  return {
+    isError: true,
+    content: [{ type: "text", text: message }]
+  };
+}
+function getAuthFromExtra(extra) {
+  const auth = extra.authInfo;
+  return auth?.extra?.email ? auth : null;
+}
+function isAllowedOrigin(origin, req, config2) {
+  try {
+    const parsed = new URL(origin);
+    const reqOrigin = canonicalOrigin(req);
+    if (parsed.origin === reqOrigin) return true;
+    const host = parsed.hostname.toLowerCase();
+    if (parsed.protocol === "https:" && (host === "claude.ai" || host.endsWith(".claude.ai") || host === "chatgpt.com" || host.endsWith(".chatgpt.com") || host === "platform.openai.com")) {
+      return true;
+    }
+    const configured = (config2.clientOrigin || "").split(",").map((s) => s.trim()).filter(Boolean);
+    if (configured.includes(parsed.origin)) return true;
+    if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") {
+      const reqHost = (req.get("host") || "").toLowerCase();
+      const runningLocally = reqHost.startsWith("localhost") || reqHost.startsWith("127.0.0.1");
+      if (runningLocally || parsed.port === "6274") return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+async function loadTimetableContext(db2, config2, monday) {
+  await hydrateArchive(db2).catch(() => false);
+  const now = /* @__PURE__ */ new Date();
+  const snapshot = loadSnapshot(db2);
+  const changes = listChanges(db2, 100);
+  const restored = restoreRemovedLectures(snapshot, changes);
+  const liveLectures = restored.lectures.map((l) => presentLecture(l, now, config2.highlightHours)).sort(sortLectures);
+  if (monday) {
+    const cleanMonday = monday.trim();
+    const ids = readWeekSummaries(db2).filter((w) => mondayOf(w.start) === cleanMonday).map((w) => w.id);
+    if (ids.length > 0) {
+      await ensureWeeksHydrated(db2, ids);
+      const weeks = readWeekBackupsByIds(db2, ids);
+      const weekLectures = weeks.flatMap((w) => w.lectures).map((l) => presentLecture(l, now, config2.highlightHours)).sort(sortLectures);
+      const weekChanges = weeks.flatMap((w) => w.changes ?? []);
+      return {
+        now,
+        liveLectures,
+        lectures: weekLectures,
+        changes: weekChanges,
+        weekStart: cleanMonday,
+        weekEnd: plusDays(cleanMonday, 6),
+        isPastWeek: true
+      };
+    }
+  }
+  const latest = latestWeekWindow(liveLectures);
+  return {
+    now,
+    liveLectures,
+    lectures: latest.lectures,
+    changes,
+    weekStart: latest.start,
+    weekEnd: latest.end,
+    isPastWeek: false
+  };
+}
+function buildMcpServer(deps, origin) {
+  const { db: db2, config: config2 } = deps;
+  const listDirectory = deps.listDirectory ?? listFacultyDirectoryWithCache;
+  const server = new import_mcp.McpServer(
+    { name: "aayam-timetable", version: "1.0.0" },
+    {
+      instructions: "Aayam College Timetable MCP server. Call get_my_profile first to inspect the signed-in faculty member's permissions, get_my_schedule for their own classes, and list_cohorts_and_weeks before querying a specific cohort."
+    }
+  );
+  server.registerTool(
+    "get_my_profile",
+    {
+      title: "Get My Faculty Profile",
+      description: "Return the OAuth-authenticated faculty member's name, verified email, role tier (faculty, coordinator, or all-access), assigned coordinator cohorts, and granted MCP scopes.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
+    },
+    async (_args, extra) => {
+      const auth = getAuthFromExtra(extra);
+      if (!auth) return toolError("Authentication context missing.");
+      return jsonToolResult({
+        email: auth.extra.email,
+        facultyName: auth.extra.facultyName,
+        canSeeAllFaculty: auth.extra.canSeeAllFaculty,
+        coordinatorCohorts: auth.extra.coordinatorCohorts,
+        scopes: auth.scopes
+      });
+    }
+  );
+  server.registerTool(
+    "get_my_schedule",
+    {
+      title: "Get My Teaching Schedule",
+      description: "Return the authenticated faculty member's own classes for the current week or an optional date/weekday/past week. Does not return other faculty members' schedules \u2014 use get_faculty_schedule for that.",
+      inputSchema: {
+        date: import_zod.z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Optional ISO date filter (YYYY-MM-DD)."),
+        weekday: import_zod.z.string().optional().describe("Optional weekday filter such as Monday, Tue, Wednesday."),
+        monday: import_zod.z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Optional past week Monday (YYYY-MM-DD) from list_cohorts_and_weeks."),
+        includeCancelled: import_zod.z.boolean().default(true).describe("Include cancelled lectures (default true).")
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
+    },
+    async ({ date, weekday, monday, includeCancelled }, extra) => {
+      const auth = getAuthFromExtra(extra);
+      if (!auth) return toolError("Authentication context missing.");
+      const ctx = await loadTimetableContext(db2, config2, monday);
+      let lectures = ctx.lectures.filter(
+        (l) => l.kind !== "break" && lectureMatchesFaculty(l.faculty, auth.extra.facultyName)
+      );
+      if (!includeCancelled) {
+        lectures = lectures.filter((l) => l.displayStatus !== "cancelled");
+      }
+      lectures = filterByDateOrWeekday(lectures, date, weekday);
+      return jsonToolResult({
+        facultyName: auth.extra.facultyName,
+        weekStart: ctx.weekStart,
+        weekEnd: ctx.weekEnd,
+        totalClasses: lectures.length,
+        lectures: lectures.map(compactLectureView)
+      });
+    }
+  );
+  server.registerTool(
+    "get_cohort_timetable",
+    {
+      title: "Get Cohort Timetable",
+      description: "Return the published timetable for a specific student cohort/division (e.g. 'Sam Altman 2025' or 'Andrew NG'). Call list_cohorts_and_weeks if you need valid cohort names.",
+      inputSchema: {
+        division: import_zod.z.string().min(1).describe("Cohort or division name (e.g. 'Sam Altman 2025' or 'Andrew NG')."),
+        date: import_zod.z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Optional ISO date filter (YYYY-MM-DD)."),
+        weekday: import_zod.z.string().optional().describe("Optional weekday filter (e.g. Monday)."),
+        monday: import_zod.z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Optional past week Monday (YYYY-MM-DD)."),
+        includeBreaks: import_zod.z.boolean().default(false).describe("Include lunch/short breaks (default false).")
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
+    },
+    async ({ division, date, weekday, monday, includeBreaks }) => {
+      const ctx = await loadTimetableContext(db2, config2, monday);
+      const choices = cohortChoices(ctx.liveLectures);
+      const target = division.trim().toLowerCase();
+      const matched = choices.find(
+        (c) => c.division.toLowerCase() === target || cohortLabel(c.division).toLowerCase() === target || c.division.toLowerCase().startsWith(target)
+      );
+      let lectures = matched ? ctx.lectures.filter((l) => lectureInCohort(l, matched)) : ctx.lectures.filter((l) => l.division.toLowerCase() === target);
+      if (!includeBreaks) {
+        lectures = lectures.filter((l) => l.kind !== "break");
+      }
+      lectures = filterByDateOrWeekday(lectures, date, weekday);
+      if (lectures.length === 0 && !matched) {
+        return toolError(`Cohort "${division}" was not found. Call list_cohorts_and_weeks to see available divisions.`);
+      }
+      return jsonToolResult({
+        division: matched?.division ?? division,
+        course: matched?.course ?? lectures[0]?.course ?? null,
+        batch: matched?.batch ?? lectures[0]?.batch ?? null,
+        weekStart: ctx.weekStart,
+        weekEnd: ctx.weekEnd,
+        totalSlots: lectures.length,
+        lectures: lectures.map(compactLectureView)
+      });
+    }
+  );
+  server.registerTool(
+    "list_cohorts_and_weeks",
+    {
+      title: "List Cohorts and Saved Weeks",
+      description: "List active student cohorts (grouped by course and batch), the current published week range, and archived past weeks available for historical queries.",
+      inputSchema: {
+        course: import_zod.z.string().optional().describe("Optional course filter (e.g. BTech, MCA)."),
+        batch: import_zod.z.string().optional().describe("Optional batch filter (e.g. 2025-29).")
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
+    },
+    async ({ course, batch }) => {
+      await hydrateArchive(db2).catch(() => false);
+      const now = /* @__PURE__ */ new Date();
+      const snapshot = loadSnapshot(db2);
+      const live = snapshot.map((l) => presentLecture(l, now, config2.highlightHours));
+      const latest = latestWeekWindow(live);
+      let choices = cohortChoices(live);
+      if (course) {
+        choices = choices.filter((c) => c.course.toLowerCase() === course.trim().toLowerCase());
+      }
+      if (batch) {
+        choices = choices.filter((c) => c.batch.toLowerCase() === batch.trim().toLowerCase());
+      }
+      const savedWeeks = readWeekSummaries(db2).filter((w) => (!course || w.course.toLowerCase() === course.trim().toLowerCase()) && (!batch || w.batch.toLowerCase() === batch.trim().toLowerCase())).map((w) => ({
+        id: w.id,
+        course: w.course,
+        batch: w.batch,
+        start: w.start,
+        end: w.end,
+        monday: mondayOf(w.start)
+      }));
+      const state = readSyncState(db2);
+      return jsonToolResult({
+        today: zonedParts(now, config2.timezone).iso,
+        timezone: config2.timezone,
+        currentWeek: { start: latest.start, end: latest.end },
+        lastSyncedAt: state.lastSuccessAt,
+        cohorts: choices.map((c) => ({
+          division: c.division,
+          label: cohortLabel(c.division),
+          course: c.course,
+          batch: c.batch,
+          semester: c.semester
+        })),
+        savedWeeks
+      });
+    }
+  );
+  server.registerTool(
+    "get_timetable_changes",
+    {
+      title: "Get Timetable Changes",
+      description: "List recent timetable updates (cancellations, room changes, reschedules). Use scope='mine' for your own classes, 'cohort' for a division, or 'all' (requires coordinator or all-faculty access).",
+      inputSchema: {
+        scope: import_zod.z.enum(["mine", "cohort", "all"]).default("mine").describe("Which updates to return."),
+        division: import_zod.z.string().optional().describe("Required when scope='cohort'."),
+        limit: import_zod.z.number().int().min(1).max(100).default(25).describe("Maximum change events to return (1-100).")
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
+    },
+    async ({ scope, division, limit }, extra) => {
+      const auth = getAuthFromExtra(extra);
+      if (!auth) return toolError("Authentication context missing.");
+      await hydrateArchive(db2).catch(() => false);
+      const snapshot = loadSnapshot(db2);
+      const changes = listChanges(db2, 100);
+      if (scope === "mine") {
+        const myIds = new Set(
+          snapshot.filter((l) => l.kind !== "break" && lectureMatchesFaculty(l.faculty, auth.extra.facultyName)).map((l) => l.id)
+        );
+        const filtered = changes.filter((c) => changeMatchesFaculty(c, auth.extra.facultyName, myIds)).slice(0, limit);
+        return jsonToolResult({ scope, count: filtered.length, changes: filtered });
+      }
+      if (scope === "cohort") {
+        if (!division?.trim()) {
+          return toolError("Parameter 'division' is required when scope='cohort'.");
+        }
+        const target = division.trim().toLowerCase();
+        const filtered = changes.filter((c) => c.division?.toLowerCase() === target).slice(0, limit);
+        return jsonToolResult({ scope, division, count: filtered.length, changes: filtered });
+      }
+      if (auth.extra.canSeeAllFaculty && auth.scopes.includes("faculty:all")) {
+        const filtered = changes.slice(0, limit);
+        return jsonToolResult({ scope: "all", count: filtered.length, changes: filtered });
+      }
+      if (auth.extra.coordinatorCohorts.length > 0 && auth.scopes.includes("coordinator:read")) {
+        const filtered = changes.filter((c) => c.division && auth.extra.coordinatorCohorts.some((assigned) => divisionMatchesAssigned(c.division, assigned))).slice(0, limit);
+        return jsonToolResult({ scope: "coordinator", cohorts: auth.extra.coordinatorCohorts, count: filtered.length, changes: filtered });
+      }
+      return toolError("Access denied: viewing all changes across every cohort requires coordinator or all-faculty privileges. Use scope='mine' or scope='cohort'.");
+    }
+  );
+  server.registerTool(
+    "find_free_rooms_or_slots",
+    {
+      title: "Find Free Classrooms",
+      description: "Find classrooms that are unoccupied on a given date/weekday and optional time range across all published cohorts.",
+      inputSchema: {
+        date: import_zod.z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("ISO date (YYYY-MM-DD). Defaults to today if neither date nor weekday is supplied."),
+        weekday: import_zod.z.string().optional().describe("Weekday name (e.g. Monday, Tuesday)."),
+        startTime: import_zod.z.string().optional().describe("Start time (e.g. '14:00' or '2:00 PM')."),
+        endTime: import_zod.z.string().optional().describe("End time (e.g. '15:00' or '3:00 PM').")
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
+    },
+    async ({ date, weekday, startTime, endTime }) => {
+      const ctx = await loadTimetableContext(db2, config2);
+      const targetDate = date || (!weekday ? zonedParts(ctx.now, config2.timezone).iso : void 0);
+      const dayLectures = filterByDateOrWeekday(
+        ctx.lectures.filter((l) => l.kind === "lecture" && l.displayStatus !== "cancelled"),
+        targetDate,
+        weekday
+      );
+      const allRooms = [
+        ...new Set(
+          ctx.liveLectures.filter((l) => l.kind === "lecture" && l.room && !/^https?:\/\//i.test(l.room)).map((l) => l.room.trim())
+        )
+      ].sort();
+      const startMin = startTime ? parseTimeToken(startTime) : null;
+      const endMin = endTime ? parseTimeToken(endTime) : startMin !== null ? startMin + 60 : null;
+      if (startTime && startMin === null) {
+        return toolError(`Could not parse startTime "${startTime}". Use formats like "14:00" or "2:00 PM".`);
+      }
+      const relevant = startMin !== null && endMin !== null ? dayLectures.filter((l) => l.startMinutes >= 0 && l.startMinutes < endMin && l.endMinutes > startMin) : dayLectures;
+      const occupiedRooms = new Set(relevant.map((l) => l.room.trim()).filter(Boolean));
+      const freeRooms = allRooms.filter((r) => !occupiedRooms.has(r));
+      return jsonToolResult({
+        date: targetDate ?? null,
+        weekday: weekday ?? null,
+        window: startTime ? { startTime, endTime: endTime ?? null } : null,
+        freeRooms,
+        occupiedRooms: [...occupiedRooms].sort(),
+        totalKnownRooms: allRooms.length
+      });
+    }
+  );
+  server.registerTool(
+    "get_faculty_schedule",
+    {
+      title: "Get Another Faculty Member's Schedule",
+      description: "Confidential/privileged tool: look up a specific faculty member's teaching schedule. Regular faculty can only view their own schedule (prefer get_my_schedule); viewing other teachers requires can_see_all_faculty or coordinator scope.",
+      inputSchema: {
+        faculty: import_zod.z.string().min(1).describe("Faculty member name (e.g. 'Dr. Aarti P')."),
+        date: import_zod.z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Optional ISO date filter (YYYY-MM-DD)."),
+        weekday: import_zod.z.string().optional().describe("Optional weekday filter."),
+        monday: import_zod.z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Optional past week Monday (YYYY-MM-DD).")
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
+    },
+    async ({ faculty, date, weekday, monday }, extra) => {
+      const auth = getAuthFromExtra(extra);
+      if (!auth) return toolError("Authentication context missing.");
+      const isSelf = personMatch(faculty, auth.extra.facultyName);
+      const isAllAccess = auth.extra.canSeeAllFaculty && auth.scopes.includes("faculty:all");
+      const isCoordinator = auth.extra.coordinatorCohorts.length > 0 && auth.scopes.includes("coordinator:read");
+      if (!isSelf && !isAllAccess && !isCoordinator) {
+        return toolError(
+          "Access denied: viewing another faculty member's schedule requires can_see_all_faculty permission or coordinator ownership. Use get_my_schedule to view your own classes."
+        );
+      }
+      const ctx = await loadTimetableContext(db2, config2, monday);
+      let lectures = ctx.lectures.filter((l) => l.kind !== "break" && lectureMatchesFaculty(l.faculty, faculty));
+      if (!isSelf && !isAllAccess && isCoordinator) {
+        lectures = lectures.filter(
+          (l) => auth.extra.coordinatorCohorts.some((assigned) => divisionMatchesAssigned(l.division, assigned))
+        );
+      }
+      lectures = filterByDateOrWeekday(lectures, date, weekday);
+      return jsonToolResult({
+        facultyQuery: faculty,
+        scopeApplied: isSelf ? "self" : isAllAccess ? "all_faculty" : "coordinator_cohorts",
+        weekStart: ctx.weekStart,
+        weekEnd: ctx.weekEnd,
+        totalClasses: lectures.length,
+        lectures: lectures.map(compactLectureView)
+      });
+    }
+  );
+  server.registerTool(
+    "list_faculty_directory",
+    {
+      title: "List Confidential Faculty Directory",
+      description: "Confidential tool: list registered faculty accounts from faculty_directory including emails, permission flags (can_see_all_faculty), active status, and last login timestamp. Strictly requires can_see_all_faculty permission.",
+      inputSchema: {
+        search: import_zod.z.string().optional().describe("Optional name or email substring filter."),
+        activeOnly: import_zod.z.boolean().default(true).describe("Only return active directory accounts (default true).")
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
+    },
+    async ({ search, activeOnly }, extra) => {
+      const auth = getAuthFromExtra(extra);
+      if (!auth) return toolError("Authentication context missing.");
+      if (!auth.extra.canSeeAllFaculty || !auth.scopes.includes("faculty:directory")) {
+        return toolError(
+          "Access denied: the faculty directory contains confidential staff emails and permission flags and strictly requires can_see_all_faculty privileges."
+        );
+      }
+      let rows = await listDirectory();
+      if (activeOnly) rows = rows.filter((r) => r.is_active);
+      if (search?.trim()) {
+        const q = search.trim().toLowerCase();
+        rows = rows.filter((r) => r.faculty_name.toLowerCase().includes(q) || r.email.toLowerCase().includes(q));
+      }
+      return jsonToolResult({
+        total: rows.length,
+        directory: rows
+      });
+    }
+  );
+  server.registerTool(
+    "get_calendar_subscription_info",
+    {
+      title: "Get Calendar Subscription URL",
+      description: "Generate an iCalendar (.ics) subscription URL for the authenticated faculty member or a specific student cohort.",
+      inputSchema: {
+        target: import_zod.z.enum(["me", "cohort"]).default("me").describe("Whether to return your faculty feed or a cohort feed."),
+        division: import_zod.z.string().optional().describe("Required when target='cohort'.")
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
+    },
+    async ({ target, division }, extra) => {
+      const auth = getAuthFromExtra(extra);
+      if (!auth) return toolError("Authentication context missing.");
+      if (target === "cohort") {
+        if (!division?.trim()) {
+          return toolError("Parameter 'division' is required when target='cohort'.");
+        }
+        const q2 = encodeURIComponent(division.trim());
+        return jsonToolResult({
+          target: "cohort",
+          division: division.trim(),
+          feedUrl: `${origin}/api/calendar.ics?division=${q2}`,
+          downloadUrl: `${origin}/api/calendar.ics?division=${q2}&download=1`
+        });
+      }
+      const q = encodeURIComponent(auth.extra.facultyName);
+      return jsonToolResult({
+        target: "faculty",
+        facultyName: auth.extra.facultyName,
+        feedUrl: `${origin}/api/calendar.ics?faculty=${q}`,
+        downloadUrl: `${origin}/api/calendar.ics?faculty=${q}&download=1`
+      });
+    }
+  );
+  server.registerTool(
+    "refresh_timetable_sync",
+    {
+      title: "Refresh Timetable Sync",
+      description: "Privileged action: trigger an immediate sync from Google Sheets (rate-limited by Redis cooldown). Requires coordinator or all-faculty privileges.",
+      inputSchema: {},
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+    },
+    async (_args, extra) => {
+      const auth = getAuthFromExtra(extra);
+      if (!auth) return toolError("Authentication context missing.");
+      if (!auth.extra.canSeeAllFaculty && auth.extra.coordinatorCohorts.length === 0) {
+        return toolError("Access denied: triggering manual timetable sync requires coordinator or all-faculty access.");
+      }
+      const cooldownSec = Math.min(config2.syncIntervalSeconds, 15);
+      const allowed = await getRedis().setNx("sync:manual:mcp-cooldown", "1", cooldownSec).catch(() => true);
+      if (!allowed) {
+        return jsonToolResult({
+          ok: true,
+          skipped: true,
+          reason: `Sync recently ran. Try again after ${cooldownSec} seconds.`
+        });
+      }
+      const outcome = await deps.triggerSync();
+      return jsonToolResult({
+        ok: outcome.ok,
+        unchanged: outcome.unchanged,
+        changeCount: outcome.changeCount,
+        error: outcome.error
+      });
+    }
+  );
+  return server;
+}
+function createMcpRouter(deps) {
+  const router = import_express2.default.Router();
+  const requireAuth = createRequireMcpAuth(deps.oauth);
+  const mcpOriginAndCors = (req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin) {
+      if (!isAllowedOrigin(origin, req, deps.config)) {
+        res.status(403).json({ error: "forbidden_origin", error_description: "Origin is not permitted for MCP requests." });
+        return;
+      }
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+    } else {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+    }
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Authorization, Content-Type, Accept, Mcp-Session-Id, MCP-Protocol-Version"
+    );
+    res.setHeader("Access-Control-Expose-Headers", "WWW-Authenticate, Mcp-Session-Id, MCP-Protocol-Version");
+    res.setHeader("Access-Control-Max-Age", "86400");
+    if (req.method === "OPTIONS") {
+      res.status(204).end();
+      return;
+    }
+    next();
+  };
+  const handleMcpPost = async (req, res) => {
+    const accept = typeof req.headers.accept === "string" ? req.headers.accept : "";
+    if (!accept.includes("text/event-stream")) {
+      req.headers.accept = accept ? `${accept}, text/event-stream` : "application/json, text/event-stream";
+    }
+    const transport = new import_streamableHttp.StreamableHTTPServerTransport({
+      sessionIdGenerator: void 0,
+      enableJsonResponse: true
+    });
+    const server = buildMcpServer(deps, canonicalOrigin(req));
+    res.on("close", () => {
+      void transport.close();
+      void server.close();
+    });
+    try {
+      await server.connect(transport);
+      await transport.handleRequest(req, res, req.body);
+    } catch (err) {
+      console.error("[mcp] request error:", err);
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: "2.0",
+          error: { code: -32603, message: "Internal MCP server error." },
+          id: null
+        });
+      }
+    }
+  };
+  const handleMcpMethodNotAllowed = (_req, res) => {
+    res.setHeader("Allow", "POST, OPTIONS");
+    res.status(405).json({
+      jsonrpc: "2.0",
+      error: { code: -32e3, message: "Method not allowed. Use POST for stateless Streamable HTTP MCP requests." },
+      id: null
+    });
+  };
+  for (const mountPath of ["/mcp", "/api/mcp"]) {
+    router.use(mountPath, import_express2.default.json({ limit: "128kb" }), mcpOriginAndCors);
+    router.post(mountPath, requireAuth, handleMcpPost);
+    router.get(mountPath, requireAuth, handleMcpMethodNotAllowed);
+    router.delete(mountPath, requireAuth, handleMcpMethodNotAllowed);
+  }
+  return router;
+}
+
+// server/src/app.ts
+var import_meta2 = {};
+function mondayOf2(iso) {
+  const date = /* @__PURE__ */ new Date(`${iso}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - (date.getUTCDay() + 6) % 7);
+  return date.toISOString().slice(0, 10);
+}
+function plusDays2(iso, days) {
   const date = /* @__PURE__ */ new Date(`${iso}T12:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
@@ -4371,8 +6928,8 @@ function buildBootstrap(db2, config2, now = /* @__PURE__ */ new Date(), filter) 
   const dated2 = lectures.map((lecture) => lecture.date).filter((date) => Boolean(date)).sort();
   const latest = dated2[dated2.length - 1];
   if (latest) {
-    const weekStartDate = mondayOf(latest);
-    const weekEndDate = plusDays(weekStartDate, 6);
+    const weekStartDate = mondayOf2(latest);
+    const weekEndDate = plusDays2(weekStartDate, 6);
     lectures = lectures.filter((lecture) => lecture.date && lecture.date >= weekStartDate && lecture.date <= weekEndDate);
     relevantChanges = relevantChanges.filter((change) => !change.date || change.date >= weekStartDate && change.date <= weekEndDate);
   }
@@ -4436,12 +6993,46 @@ function buildBootstrap(db2, config2, now = /* @__PURE__ */ new Date(), filter) 
     })
   };
 }
-function securityHeaders(_req, res, next) {
+var dbScopeIds = /* @__PURE__ */ new WeakMap();
+var nextLocalScopeSeq = 0;
+function cacheNamespace(db2) {
+  if (databaseUrl()) return "shared";
+  let id = dbScopeIds.get(db2);
+  if (!id) {
+    nextLocalScopeSeq += 1;
+    id = `local_${nextLocalScopeSeq}`;
+    dbScopeIds.set(db2, id);
+  }
+  return id;
+}
+function hashScope(value) {
+  return import_node_crypto8.default.createHash("sha256").update(value).digest("hex").slice(0, 20);
+}
+function sendWithEtag(req, res, etagSeed, contentType, body, cacheControl = "public, max-age=0, must-revalidate") {
+  const etag = `W/"${hashScope(etagSeed)}"`;
+  res.setHeader("ETag", etag);
+  res.setHeader("Cache-Control", cacheControl);
+  if (req.headers["if-none-match"] === etag) {
+    res.status(304).end();
+    return;
+  }
+  if (contentType === "text/calendar") {
+    res.send(body);
+    return;
+  }
+  res.json(body);
+}
+function isMcpOrOAuthPath(url) {
+  return url === "/mcp" || url.startsWith("/mcp/") || url.startsWith("/mcp?") || url === "/api/mcp" || url.startsWith("/api/mcp/") || url.startsWith("/api/mcp?") || url.startsWith("/.well-known/") || url.startsWith("/oauth/");
+}
+function securityHeaders(req, res, next) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+  if (!isMcpOrOAuthPath(req.url || "/")) {
+    res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+  }
   if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
     res.setHeader("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
   }
@@ -4454,30 +7045,42 @@ function allowedOrigins(config2) {
   return ["http://localhost:5173", "http://127.0.0.1:5173", "http://[::1]:5173"];
 }
 function createApp(db2, config2, load, options) {
-  const app2 = (0, import_express.default)();
+  const app2 = (0, import_express3.default)();
   app2.disable("x-powered-by");
   if (process.env.VERCEL || process.env.TRUST_PROXY === "1") {
     app2.set("trust proxy", 1);
   }
   const origins = allowedOrigins(config2);
-  app2.use(
-    (0, import_cors.default)({
-      credentials: true,
-      origin(origin, callback) {
-        if (!origin || origins.includes(origin)) {
-          callback(null, true);
-          return;
-        }
-        callback(null, false);
+  const apiCors = (0, import_cors.default)({
+    credentials: true,
+    origin(origin, callback) {
+      if (!origin || origins.includes(origin)) {
+        callback(null, true);
+        return;
       }
-    })
-  );
+      callback(null, false);
+    }
+  });
+  app2.use((req, res, next) => {
+    if (isMcpOrOAuthPath(req.url || "/")) {
+      next();
+      return;
+    }
+    apiCors(req, res, next);
+  });
   app2.use(securityHeaders);
-  app2.use(import_express.default.json({ limit: "16kb" }));
+  app2.use((req, res, next) => {
+    const url = req.url || "/";
+    if (url === "/mcp" || url.startsWith("/mcp/") || url.startsWith("/mcp?") || url === "/api/mcp" || url.startsWith("/api/mcp/") || url.startsWith("/api/mcp?") || url.startsWith("/oauth/")) {
+      next();
+      return;
+    }
+    import_express3.default.json({ limit: "16kb" })(req, res, next);
+  });
   if (process.env.VERCEL) {
     app2.use((req, _res, next) => {
       const url = req.url || "/";
-      if (url === "/api" || url.startsWith("/api/") || url.startsWith("/api?")) {
+      if (url === "/api" || url.startsWith("/api/") || url.startsWith("/api?") || isMcpOrOAuthPath(url)) {
         next();
         return;
       }
@@ -4485,7 +7088,29 @@ function createApp(db2, config2, load, options) {
       next();
     });
   }
+  const ns = cacheNamespace(db2);
+  const redis = getRedis();
   const lastSyncBySheet = /* @__PURE__ */ new Map();
+  async function triggerFullSync() {
+    const outcome = await runSync({ db: db2, config: config2, load, loadAll: options?.loadAll });
+    const nowMs = Date.now();
+    for (const s of config2.spreadsheets) {
+      lastSyncBySheet.set(s.id, nowMs);
+      await redis.set(`${ns}:sync:sheet:${s.id}`, String(nowMs), config2.syncIntervalSeconds).catch(() => {
+      });
+    }
+    return outcome;
+  }
+  app2.use(createMcpAuthRouter(options?.mcpOAuth));
+  app2.use(
+    createMcpRouter({
+      db: db2,
+      config: config2,
+      triggerSync: triggerFullSync,
+      oauth: options?.mcpOAuth,
+      listDirectory: options?.listDirectory
+    })
+  );
   async function liveConfig() {
     const spreadsheets = await resolveSheetSources(config2.spreadsheets);
     const spreadsheetId = spreadsheets.find((sheet) => sheet.batch === "2025-29")?.id ?? spreadsheets[0]?.id ?? config2.spreadsheetId;
@@ -4494,7 +7119,11 @@ function createApp(db2, config2, load, options) {
   function syncPlan(filter, live) {
     const mark = (sheets) => {
       const startedAt = Date.now();
-      for (const sheet2 of sheets) lastSyncBySheet.set(sheet2.id, startedAt);
+      for (const sheet2 of sheets) {
+        lastSyncBySheet.set(sheet2.id, startedAt);
+        void redis.set(`${ns}:sync:sheet:${sheet2.id}`, String(startedAt), config2.syncIntervalSeconds).catch(() => {
+        });
+      }
     };
     if (filter.faculty || filter.all) {
       const sheets = live.spreadsheets;
@@ -4559,37 +7188,48 @@ function createApp(db2, config2, load, options) {
     const plan = syncPlan(filter, live);
     if (!plan) {
       if (filter.faculty || filter.all) {
-        const state2 = readSyncState(db2);
-        const age = state2.lastSuccessAt ? Date.now() - new Date(state2.lastSuccessAt).getTime() : Number.POSITIVE_INFINITY;
+        const state = readSyncState(db2);
+        const age = state.lastSuccessAt ? Date.now() - new Date(state.lastSuccessAt).getTime() : Number.POSITIVE_INFINITY;
         if (age > live.syncIntervalSeconds * 1e3) await runSync({ db: db2, config: live, load, loadAll: options.loadAll });
       }
       return;
     }
-    const state = readSyncState(db2);
-    const dbAge = state.lastSuccessAt ? Date.now() - new Date(state.lastSuccessAt).getTime() : Number.POSITIVE_INFINITY;
-    const isFresh = () => {
-      if (state.bootstrapped && dbAge < config2.syncIntervalSeconds * 1e3) return true;
-      return plan.sheets.every((sheet) => Date.now() - (lastSyncBySheet.get(sheet.id) ?? 0) < config2.syncIntervalSeconds * 1e3);
+    const sheetFresh = async (sheetId) => {
+      const localTs = lastSyncBySheet.get(sheetId) ?? 0;
+      if (Date.now() - localTs < live.syncIntervalSeconds * 1e3) return true;
+      if (redis.isShared || databaseUrl()) {
+        const remoteTsRaw = await redis.get(`${ns}:sync:sheet:${sheetId}`).catch(() => null);
+        const remoteTs = remoteTsRaw ? Number(remoteTsRaw) : 0;
+        if (Number.isFinite(remoteTs) && Date.now() - remoteTs < live.syncIntervalSeconds * 1e3) {
+          lastSyncBySheet.set(sheetId, remoteTs);
+          return true;
+        }
+      }
+      return false;
+    };
+    const isFresh = async () => {
+      const flags = await Promise.all(plan.sheets.map((sheet) => sheetFresh(sheet.id)));
+      return flags.every(Boolean);
     };
     const snapshot = loadSnapshot(db2);
     const currentSheets = plan.sheets.every((sheet) => storedSheetIsCurrent(sheet, snapshot));
     const saved = plan.everything ? readSyncState(db2).bootstrapped && snapshot.length > 0 && currentSheets : snapshot.some((lecture) => plan.sheets.some((sheet) => lecture.spreadsheetId === sheet.id || sheet.batch && lecture.course === sheet.course && lecture.batch === sheet.batch)) && currentSheets;
-    if (isFresh() && (saved || plan.everything)) return;
+    if (await isFresh() && (saved || plan.everything)) return;
     if (saved) {
-      const running = runSync(plan.ctx).then(() => {
-        for (const s of plan.sheets) lastSyncBySheet.set(s.id, Date.now());
-      }).catch((err) => {
+      const lockKey = `${ns}:sync:lock:${plan.everything ? "all" : plan.sheets.map((s) => s.id).join(",")}`;
+      const acquired = await redis.setNx(lockKey, "1", Math.min(25, live.syncIntervalSeconds)).catch(() => true);
+      if (!acquired) return;
+      const running = runSync(plan.ctx).catch((err) => {
         console.error("[sync]", err instanceof Error ? err.message : err);
-        for (const s of plan.sheets) lastSyncBySheet.set(s.id, Date.now());
+      }).finally(() => {
+        void redis.del(lockKey).catch(() => {
+        });
       });
       options.runInBackground?.(running);
       return;
     }
-    try {
-      await runSync(plan.ctx);
-    } finally {
-      for (const s of plan.sheets) lastSyncBySheet.set(s.id, Date.now());
-    }
+    await runSync(plan.ctx);
+    if (!await isFresh()) await runSync(plan.ctx);
   }
   app2.get("/api/health", async (req, res) => {
     const state = readSyncState(db2);
@@ -4621,9 +7261,18 @@ function createApp(db2, config2, load, options) {
     const faculty = typeof req.query.faculty === "string" ? req.query.faculty.trim() : "";
     const course = typeof req.query.course === "string" ? req.query.course.trim() : "";
     const batch = typeof req.query.batch === "string" ? req.query.batch.trim() : "";
+    const state = readSyncState(db2);
+    const scopeKey = hashScope(`${monday}|${division}|${faculty}|${course}|${batch}`);
+    const cacheKey = `${ns}:resp:week:${state.contentHash ?? "none"}:${scopeKey}`;
+    const cached = await redis.getJson(cacheKey).catch(() => null);
+    if (cached) {
+      sendWithEtag(req, res, `${cacheKey}:${state.lastSuccessAt ?? "none"}`, "json", cached, "public, max-age=60, stale-while-revalidate=300");
+      return;
+    }
     const filter = { division, faculty, course, batch };
     const choices = cohortChoices(loadSnapshot(db2).map((lecture) => presentLecture(lecture, /* @__PURE__ */ new Date(), config2.highlightHours)));
-    const ids = preferOneWeekCopies(readWeekSummaries(db2)).filter((week) => mondayOf(week.start) === monday).filter((week) => summaryInScope(week, filter, choices)).map((week) => week.id);
+    const ids = preferOneWeekCopies(readWeekSummaries(db2)).filter((week) => mondayOf2(week.start) === monday).filter((week) => summaryInScope(week, filter, choices)).map((week) => week.id);
+    await ensureWeeksHydrated(db2, ids);
     const now = /* @__PURE__ */ new Date();
     const changes = listChanges(db2, 80);
     const restoredIds = restoreRemovedLectures(loadSnapshot(db2), changes).restoredIds;
@@ -4636,7 +7285,14 @@ function createApp(db2, config2, load, options) {
       const choice = choices.find((item) => item.division === division);
       return choice ? lectureInCohort(lecture, choice) : lecture.division === division;
     }) : lectures;
-    res.json({ lectures: scopedLectures, changes: weekChanges, spreadsheetUrl: sheetId ? spreadsheetUrl(sheetId) : null });
+    const payload = {
+      lectures: scopedLectures,
+      changes: weekChanges,
+      spreadsheetUrl: sheetId ? spreadsheetUrl(sheetId) : null
+    };
+    await redis.setJson(cacheKey, payload, 300).catch(() => {
+    });
+    sendWithEtag(req, res, `${cacheKey}:${state.lastSuccessAt ?? "none"}`, "json", payload, "public, max-age=60, stale-while-revalidate=300");
   });
   app2.get("/api/bootstrap", async (req, res) => {
     const division = (typeof req.query.division === "string" ? req.query.division : typeof req.query.cohort === "string" ? req.query.cohort : "").trim();
@@ -4646,33 +7302,75 @@ function createApp(db2, config2, load, options) {
     const scope = { division, faculty, course, batch, all: req.query.all === "1" };
     await syncIfStale(scope);
     const live = await liveConfig();
-    const payload = buildBootstrap(db2, live, /* @__PURE__ */ new Date(), { division, faculty, course, batch });
-    const notices = await noticesForScope({ division, faculty, course, batch }, payload.choices ?? []);
-    res.json({ ...payload, notices, sync: { ...payload.sync, refreshing: syncInFlight(db2) } });
+    const now = /* @__PURE__ */ new Date();
+    const state = readSyncState(db2);
+    const refreshing = syncInFlight(db2);
+    const zone = zonedParts(now, live.timezone);
+    const noticesVer = await redis.get("notices:version").catch(() => null) || "0";
+    const sheetsSig = hashScope(live.spreadsheets.map((s) => s.id).join(","));
+    const scopeKey = hashScope(`${division}|${faculty}|${course}|${batch}|${req.query.all === "1" ? "1" : "0"}`);
+    const cacheKey = `${ns}:resp:bootstrap:${state.contentHash ?? "none"}:${state.lastSuccessAt ?? "none"}:${state.lastError ?? "ok"}:${zone.iso}:${sheetsSig}:${noticesVer}:${scopeKey}`;
+    let payload = !refreshing ? await redis.getJson(cacheKey).catch(() => null) : null;
+    if (!payload) {
+      const base = buildBootstrap(db2, live, now, { division, faculty, course, batch });
+      const notices = await noticesForScope({ division, faculty, course, batch }, base.choices ?? []);
+      payload = { ...base, notices };
+      if (!refreshing) {
+        await redis.setJson(cacheKey, payload, Math.min(live.syncIntervalSeconds, 30)).catch(() => {
+        });
+      }
+    } else {
+      payload = { ...payload, now: now.toISOString() };
+    }
+    const etagSeed = `${cacheKey}:${refreshing ? "syncing" : "idle"}`;
+    sendWithEtag(
+      req,
+      res,
+      etagSeed,
+      "json",
+      { ...payload, sync: { ...payload.sync, refreshing } },
+      "public, max-age=0, must-revalidate"
+    );
   });
   app2.get("/api/calendar.ics", async (req, res) => {
     const division = (typeof req.query.division === "string" ? req.query.division : typeof req.query.cohort === "string" ? req.query.cohort : "").trim();
     const faculty = typeof req.query.faculty === "string" ? req.query.faculty.trim() : "";
     await syncIfStale({ division, faculty });
-    const snapshot = buildBootstrap(db2, config2);
-    const choice = division ? cohortChoices(snapshot.lectures).find((item) => item.division === division) : void 0;
-    const lectures = faculty ? snapshot.lectures.filter((lecture) => lectureMatchesFaculty(lecture.faculty, faculty)) : choice ? snapshot.lectures.filter((lecture) => lectureInCohort(lecture, choice)) : division ? snapshot.lectures.filter((lecture) => lecture.division === division) : [];
-    if (!faculty && !division || lectures.length === 0) {
-      res.status(404).type("text/plain").send(faculty ? "No lectures for that faculty." : "Unknown cohort.");
-      return;
-    }
+    const state = readSyncState(db2);
+    const scopeKey = hashScope(`${division}|${faculty}`);
+    const cacheKey = `${ns}:resp:ics:${state.contentHash ?? "none"}:${state.lastSuccessAt ?? "none"}:${scopeKey}`;
     const name = faculty || cohortLabel(division);
+    let icsText2 = await redis.get(cacheKey).catch(() => null);
+    if (!icsText2) {
+      const snapshot = buildBootstrap(db2, config2);
+      const choice = division ? cohortChoices(snapshot.lectures).find((item) => item.division === division) : void 0;
+      const lectures = faculty ? snapshot.lectures.filter((lecture) => lectureMatchesFaculty(lecture.faculty, faculty)) : choice ? snapshot.lectures.filter((lecture) => lectureInCohort(lecture, choice)) : division ? snapshot.lectures.filter((lecture) => lecture.division === division) : [];
+      if (!faculty && !division || lectures.length === 0) {
+        res.status(404).type("text/plain").send(faculty ? "No lectures for that faculty." : "Unknown cohort.");
+        return;
+      }
+      icsText2 = calendarFile(lectures, config2.timezone, name, { includeCohort: Boolean(faculty) });
+      await redis.set(cacheKey, icsText2, 60).catch(() => {
+      });
+    }
     res.setHeader("Content-Type", "text/calendar; charset=utf-8");
-    res.setHeader("Cache-Control", "no-store");
     if (req.query.download === "1") {
       const file = `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "timetable"}.ics`;
       res.setHeader("Content-Disposition", `attachment; filename="${file}"`);
     }
-    res.send(calendarFile(lectures, config2.timezone, name, { includeCohort: Boolean(faculty) }));
+    sendWithEtag(req, res, cacheKey, "text/calendar", icsText2, "no-store");
   });
-  app2.get("/api/changes", (req, res) => {
+  app2.get("/api/changes", async (req, res) => {
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 80));
-    res.json({ changes: listChanges(db2, limit) });
+    const state = readSyncState(db2);
+    const cacheKey = `${ns}:resp:changes:${state.contentHash ?? "none"}:${state.lastSuccessAt ?? "none"}:${limit}`;
+    let changes = await redis.getJson(cacheKey).catch(() => null);
+    if (!changes) {
+      changes = listChanges(db2, limit);
+      await redis.setJson(cacheKey, changes, 30).catch(() => {
+      });
+    }
+    sendWithEtag(req, res, cacheKey, "json", { changes });
   });
   let lastForcedSync = 0;
   app2.post("/api/sync", async (req, res) => {
@@ -4684,7 +7382,8 @@ function createApp(db2, config2, load, options) {
     const live = await liveConfig();
     const target = everySheet ? void 0 : sheetForScope({ division, course, batch }, live.spreadsheets);
     const minGapMs = Math.min(config2.syncIntervalSeconds, 15) * 1e3;
-    if (Date.now() - lastForcedSync < minGapMs) {
+    const cooldownAllowed = Date.now() - lastForcedSync >= minGapMs && await redis.setNx(`${ns}:sync:forced:${target?.id ?? "all"}`, "1", Math.ceil(minGapMs / 1e3)).catch(() => true);
+    if (!cooldownAllowed) {
       res.setHeader("Retry-After", String(Math.ceil(minGapMs / 1e3)));
       const early = buildBootstrap(db2, live, /* @__PURE__ */ new Date(), { division, faculty, course, batch });
       const earlyNotices = await noticesForScope({ division, faculty, course, batch }, early.choices ?? []);
@@ -4705,10 +7404,20 @@ function createApp(db2, config2, load, options) {
           }
         ]
       });
-      lastSyncBySheet.set(target.id, Date.now());
+      const nowMs = Date.now();
+      lastSyncBySheet.set(target.id, nowMs);
+      await redis.set(`${ns}:sync:sheet:${target.id}`, String(nowMs), live.syncIntervalSeconds).catch(() => {
+      });
     } else if (everySheet) {
       await runSync({ db: db2, config: live, load, loadAll: options?.loadAll });
-      for (const s of live.spreadsheets) lastSyncBySheet.set(s.id, Date.now());
+      const nowMs = Date.now();
+      for (const s of live.spreadsheets) {
+        lastSyncBySheet.set(s.id, nowMs);
+        await redis.set(`${ns}:sync:sheet:${s.id}`, String(nowMs), live.syncIntervalSeconds).catch(() => {
+        });
+      }
+    } else {
+      await triggerFullSync();
     }
     const synced = buildBootstrap(db2, live, /* @__PURE__ */ new Date(), { division, faculty, course, batch });
     const syncedNotices = await noticesForScope({ division, faculty, course, batch }, synced.choices ?? []);
@@ -4733,13 +7442,13 @@ function createApp(db2, config2, load, options) {
   });
   app2.post("/api/auth/google", async (req, res) => {
     const ip = getClientIp(req);
-    const rateCheck = loginRateLimiter.check(ip);
+    const rateCheck = await distributedLoginRateLimiter.check(ip);
     if (rateCheck.limited) {
       res.setHeader("Retry-After", String(rateCheck.retryAfterSeconds));
       res.status(429).json({ ok: false, error: `Too many sign-in attempts. Try again in ${rateCheck.retryAfterSeconds} seconds.` });
       return;
     }
-    loginRateLimiter.recordFailure(ip);
+    await distributedLoginRateLimiter.recordFailure(ip);
     const credential = typeof req.body?.credential === "string" ? req.body.credential.trim() : "";
     if (!credential) {
       console.warn("[auth] Google login rejected: Missing credential payload.");
@@ -4756,7 +7465,7 @@ function createApp(db2, config2, load, options) {
         faculty: faculty.faculty_name,
         canSeeAllFaculty: faculty.can_see_all_faculty
       });
-      loginRateLimiter.reset(ip);
+      await distributedLoginRateLimiter.reset(ip);
       setSessionCookie(res, token);
       res.json({
         ok: true,
@@ -4777,7 +7486,7 @@ function createApp(db2, config2, load, options) {
   });
   app2.post("/api/auth/pin-verify", async (req, res) => {
     const ip = getClientIp(req);
-    const rateCheck = pinRateLimiter.check(ip);
+    const rateCheck = await distributedPinRateLimiter.check(ip);
     if (rateCheck.limited) {
       res.setHeader("Retry-After", String(rateCheck.retryAfterSeconds));
       res.status(429).json({
@@ -4792,17 +7501,17 @@ function createApp(db2, config2, load, options) {
       return;
     }
     if (!/^\d{6}$/.test(rawPin)) {
-      pinRateLimiter.recordFailure(ip);
+      await distributedPinRateLimiter.recordFailure(ip);
       res.status(400).json({ ok: false, error: "Invalid PIN format. PIN must be exactly 6 digits." });
       return;
     }
     try {
       const result = await verifyBatchPinWithNeon(rawPin);
       if (result && result.ok) {
-        pinRateLimiter.reset(ip);
+        await distributedPinRateLimiter.reset(ip);
         res.json({ ok: true, course: result.course, batch: result.batch });
       } else {
-        pinRateLimiter.recordFailure(ip);
+        await distributedPinRateLimiter.recordFailure(ip);
         res.status(401).json({ ok: false, error: "Invalid PIN. Please check with your class representative." });
       }
     } catch (err) {
@@ -4810,9 +7519,9 @@ function createApp(db2, config2, load, options) {
       res.status(500).json({ ok: false, error: "An unexpected error occurred while verifying PIN. Please try again." });
     }
   });
-  app2.post("/api/auth/batch-verify", (req, res) => {
+  app2.post("/api/auth/batch-verify", async (req, res) => {
     const ip = getClientIp(req);
-    const rateCheck = pinRateLimiter.check(ip);
+    const rateCheck = await distributedPinRateLimiter.check(ip);
     if (rateCheck.limited) {
       res.setHeader("Retry-After", String(rateCheck.retryAfterSeconds));
       res.status(429).json({
@@ -4829,7 +7538,7 @@ function createApp(db2, config2, load, options) {
       return;
     }
     if (!/^\d{6}$/.test(rawCode)) {
-      pinRateLimiter.recordFailure(ip);
+      await distributedPinRateLimiter.recordFailure(ip);
       res.status(400).json({ ok: false, error: "Invalid access code format. Must be exactly 6 digits." });
       return;
     }
@@ -4842,10 +7551,10 @@ function createApp(db2, config2, load, options) {
         return;
       }
       if (rawCode === expected) {
-        pinRateLimiter.reset(ip);
+        await distributedPinRateLimiter.reset(ip);
         res.json({ ok: true, course, batch });
       } else {
-        pinRateLimiter.recordFailure(ip);
+        await distributedPinRateLimiter.recordFailure(ip);
         res.status(401).json({ ok: false, error: `Invalid access code for ${course} ${batch}.` });
       }
     } catch (err) {
@@ -4871,14 +7580,19 @@ function createApp(db2, config2, load, options) {
         loadAll: async () => [{ ...file, course: source.course, spreadsheetId: source.id }],
         replaceProgram: source.batch ? { course: source.course, batch: source.batch } : void 0
       });
-      if (outcome.ok) lastSyncBySheet.set(source.id, Date.now());
+      if (outcome.ok) {
+        const nowMs = Date.now();
+        lastSyncBySheet.set(source.id, nowMs);
+        await redis.set(`${ns}:sync:sheet:${source.id}`, String(nowMs), config2.syncIntervalSeconds).catch(() => {
+        });
+      }
       return { ok: outcome.ok, error: outcome.error };
     }
   });
   if (!process.env.VERCEL) {
     const clientDist = import_node_path3.default.resolve(import_node_path3.default.dirname((0, import_node_url2.fileURLToPath)(import_meta2.url)), "../../client/dist");
     if (import_node_fs3.default.existsSync(clientDist)) {
-      app2.use(import_express.default.static(clientDist));
+      app2.use(import_express3.default.static(clientDist));
       app2.get(/^(?!\/api).*/, (_req, res) => {
         res.sendFile(import_node_path3.default.join(clientDist, "index.html"));
       });

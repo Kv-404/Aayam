@@ -33,3 +33,30 @@
 ### P2 (Future Optimizations)
 1. Automated week-rollover notifications.
 2. Enhanced offline IndexedDB caching for faculty lens preferences.
+
+---
+
+## 3. Phase 6 Extension Debate: Supabase Egress Crisis & Remote MCP with OAuth 2.1
+
+### Topic 4: Why Supabase Egress Limits Are Exhausting & How Redis Eliminates Them
+- **Systems Hacker**: "Found the bleeding artery in `durableState.ts` and `neonRows.ts`. Every single Vercel serverless cold start has an empty `/tmp/timetable.sqlite`, so `hydrateArchive()` calls `readRemote()` — which executes **both** `readBlob()` (downloading the entire `timetable_archive` JSONB blob) **and** `readNeonRows()` (downloading all 2,781+ lectures across live + 15 historical weeks, plus 827 changes)! Even worse, `publishArchive()` runs `readRemote()` *again* on cold lambdas because `lastSignature` is module-local, and `lastSyncBySheet` + rate limiters are in-memory `Map`s! With 4s client polling and serverless fan-out, we're pulling megabytes from Supabase on every cold start and sync!"
+- **Commercial Strategist**: "That's unsustainable on Supabase's egress quota and slows down cold starts. Putting **Upstash Redis** (supporting both REST for zero-connection Vercel lambdas and `REDIS_URL` TCP for flexibility) in front of Supabase fixes everything:
+  1. **Gzipped Archive in Redis**: Cold starts hydrate from Redis in ~15ms -> **0 bytes of Supabase egress**.
+  2. **Stop Double-Reading & Stop Loading Past Weeks on Cold Start**: Only load `live` rows + week summaries on cold miss; load past weeks on demand via `GET /api/week` and cache each week in Redis.
+  3. **Shared Redis Signature, Sync Cooldown & Lock**: Eliminate duplicate sync storms and redundant `readRemote()` calls in `publishArchive()`.
+  4. **Redis Response Cache + HTTP `ETag`/`304` + Auth Lookup Cache**: Cache `/api/bootstrap`, `/api/week`, `faculty_directory`, `batch_access_codes`, and rate-limiter counters in Redis."
+
+### Topic 5: Remote MCP Server with Proper OAuth 2.1 for Confidential Data
+- **Commercial Strategist**: "Faculty want to ask Claude, Cursor, or ChatGPT about their schedule, room availability, and department coverage. But `faculty_directory` (staff emails, `can_see_all_faculty` flags, login timestamps) and cross-faculty schedules are **confidential**! We cannot expose an unauthenticated MCP server or hand-roll insecure bearer strings."
+- **Systems Hacker**: "Agreed. Let's embed a **Remote Streamable-HTTP MCP Server** (`/mcp`) right inside our Vercel Express API using `@modelcontextprotocol/sdk` (`McpServer` + `StreamableHTTPServerTransport` in stateless mode) and a full **OAuth 2.1 Authorization Server** (supporting **CIMD** `client_id_metadata_document_supported: true` + **DCR** `/oauth/register` + **PKCE S256** + **RFC 8707 `resource` audience binding** + **refresh token rotation** stored in Redis) backed by **Google OAuth + `faculty_directory`**! Every token carries verified faculty identity and exact DB-derived scopes (`timetable:read`, `faculty:self`, plus `faculty:all` / `faculty:directory` strictly when `can_see_all_faculty = true`)."
+
+### Updated Executive Mandate (Phase 6–10)
+- **P0 (Immediate)**:
+  1. Implement dual-driver Redis service (Upstash REST + `REDIS_URL` TCP + in-memory test/dev fallback).
+  2. Fix Supabase egress: Redis-first compressed archive hydration, eliminate `readBlob()` + `readNeonRows()` double-read, on-demand past-week loading, Redis signature short-circuit in `publishArchive`, shared Redis sync lock/cooldown, HTTP `ETag`/`304`, and Redis-cached auth/rate-limiting.
+  3. Build OAuth 2.1 Authorization Server (CIMD + DCR + PKCE S256 + RFC 8707 + Google OAuth + consent page + Redis token store).
+  4. Build Remote Streamable-HTTP MCP Server (`/mcp`) with RBAC-enforced faculty & timetable tools.
+  5. Add in-app **Connect AI (`McpConnectModal`)** install prompts, one-click deeplinks (Cursor / VS Code), exact JSON/CLI configs (Claude, Claude Code, ChatGPT, Windsurf, Gemini CLI), and role-aware starter prompts so faculty can connect in seconds.
+- **P1 (Quality & Verification)**:
+  1. Comprehensive unit & integration test coverage for Redis caching, egress minimization, OAuth 2.1 security checks (PKCE, audience, DCR/CIMD, scopes), and MCP tool authorization.
+  2. Update `vercel.json`, `.env.example`, `npm run typecheck`, `npm test`, and `npm run build` (`api/[[...path]].js`).

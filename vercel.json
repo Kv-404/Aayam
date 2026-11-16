@@ -30,11 +30,27 @@
   ],
   "rewrites": [
     {
+      "source": "/.well-known/:path*",
+      "destination": "/api/[[...path]]"
+    },
+    {
+      "source": "/mcp",
+      "destination": "/api/[[...path]]"
+    },
+    {
+      "source": "/mcp/:path*",
+      "destination": "/api/[[...path]]"
+    },
+    {
+      "source": "/oauth/:path*",
+      "destination": "/api/[[...path]]"
+    },
+    {
       "source": "/api/:path*",
       "destination": "/api/[[...path]]"
     },
     {
-      "source": "/((?!api/).*)",
+      "source": "/((?!api/|mcp$|mcp/|oauth/|\\.well-known/).*)",
       "destination": "/index.html"
     }
   ]

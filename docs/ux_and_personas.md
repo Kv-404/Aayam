@@ -50,3 +50,30 @@ Avoid robotic system jargon. Use tactile, conversational, human language.
 | Multi-class cell overflow | `OVERFLOW_COUNT: +5 ROWS` | `+5 more cohorts` |
 | Class cancelled | `STATUS_FLAG_TERMINATED` | `Cancelled · Prof unavailable` |
 | Off day | `NON_OPERATIONAL_PERIOD` | `Whole day OFF` |
+
+---
+
+## 4. Phase 6 Extension: Remote MCP Server & OAuth 2.1 Journeys
+
+### Journey 3: Faculty Member Connects Claude / AI Assistant to Aayam MCP
+1. **Discovery & Prompt**: Dr. Aarti Pardesi adds `https://timetable.kv404.dev/mcp` in Claude Connectors (`Settings → Connectors`) or Claude Code.
+2. **OAuth Handshake**: MCP endpoint responds with `401 Unauthorized` and `WWW-Authenticate: Bearer resource_metadata="..."`. Claude discovers OAuth metadata (CIMD preferred, DCR fallback) and opens the browser to `/oauth/authorize`.
+3. **Google Verification**: Aayam redirects to Google OAuth (`select_account`), validates `@itm.edu` / `@isu.ac.in` domain, and checks `faculty_directory` (cached in Redis).
+4. **Explicit Consent**: Aayam renders a clear 1-step consent page showing Dr. Aarti's name, email, and exact scopes (`Read timetable`, `Read your personal faculty schedule`). Clicking **Allow** redirects back to Claude with a PKCE-bound single-use code.
+5. **Scoped Execution**: Dr. Aarti asks *"What classes do I have tomorrow and are any rooms free at 2 PM?"* Claude calls `get_my_schedule` and `find_free_rooms_or_slots`. If she asks for another professor's schedule (`get_faculty_schedule`) or emails (`list_faculty_directory`) without `can_see_all_faculty`, the tool politely explains why access is scoped to her own schedule.
+
+### Journey 4: All-Access Faculty / Dean Inspects Directory & Cross-Faculty Schedules
+1. Dean / Coordinator with `can_see_all_faculty = true` authenticates through the same Google + `faculty_directory` OAuth flow.
+2. Consent screen explicitly highlights elevated `faculty:all` and `faculty:directory` scopes.
+3. Tools like `get_faculty_schedule`, `list_faculty_directory`, and `refresh_timetable_sync` execute seamlessly with Redis-backed responses (zero Supabase egress per query).
+
+### MCP & OAuth Human Microcopy Guide
+
+| Scenario | Avoid (Robotic / Cryptic) | Use (Human / Clear) |
+|---|---|---|
+| Unauthorized email / not in `faculty_directory` | `ERR_AUTH_403_DIRECTORY_MISS` | `Your Google account isn't listed in the active faculty directory. Ask your timetable admin to add you.` |
+| Non-all-access teacher asks for another teacher's timetable | `FORBIDDEN_SCOPE_FACULTY_ALL` | `You can inspect your own teaching schedule (`get_my_schedule`) and cohort timetables, but viewing another faculty member's private schedule requires all-faculty access.` |
+| Non-all-access teacher calls `list_faculty_directory` | `403_UNAUTHORIZED_RESOURCE` | `Access restricted: the faculty directory contains staff emails and permission metadata and requires all-faculty access.` |
+| Consent screen heading | `OAUTH2_CONSENT_GRANT_REQUEST` | `Connect your Aayam faculty timetable` |
+| MCP install modal header | `REMOTE_MCP_CONFIGURATION_WIZARD` | `Connect your AI assistant` |
+| MCP copy button feedback | `COPIED_TO_SYSTEM_CLIPBOARD` | `Copied` |

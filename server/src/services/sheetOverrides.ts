@@ -1,6 +1,7 @@
 import { cleanSpreadsheetId, type SheetSource } from "../config.ts";
 import { ensureAdminSchema } from "./adminSchema.ts";
 import { databaseUrl, getSql } from "./postgres.ts";
+import { getRedis } from "./redis.ts";
 
 const SHEET_ID = /^[a-zA-Z0-9-_]{20,80}$/;
 
@@ -35,20 +36,32 @@ export interface StoredSheetLink {
 
 let cache: { at: number; sources: SheetSource[] } | null = null;
 
+const SHEET_OVERRIDES_CACHE_KEY = "admin:sheet-overrides";
+
 export function clearSheetSourceCache() {
   cache = null;
+  void getRedis().del(SHEET_OVERRIDES_CACHE_KEY).catch(() => {});
 }
 
 export async function readSheetOverrides(): Promise<StoredSheetLink[]> {
   if (!databaseUrl()) return [];
+  const redis = getRedis();
+  try {
+    const cached = await redis.getJson<StoredSheetLink[]>(SHEET_OVERRIDES_CACHE_KEY);
+    if (Array.isArray(cached)) return cached;
+  } catch {
+    // Fall through to Postgres.
+  }
   await ensureAdminSchema();
   const sql = getSql();
   const rows = await sql<{ course: string; batch: string; spreadsheet_id: string }[]>`
     SELECT course, batch, spreadsheet_id FROM timetable_sheet_links
   `;
-  return rows
+  const overrides = rows
     .filter((row) => row.course && row.batch && acceptSpreadsheetId(row.spreadsheet_id))
     .map((row) => ({ course: row.course, batch: row.batch, spreadsheetId: row.spreadsheet_id }));
+  await redis.setJson(SHEET_OVERRIDES_CACHE_KEY, overrides, 120).catch(() => {});
+  return overrides;
 }
 
 export async function resolveSheetSources(fallback: SheetSource[]): Promise<SheetSource[]> {

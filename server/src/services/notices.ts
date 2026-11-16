@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type { StudentNotice } from "../../../shared/types.ts";
 import { ensureAdminSchema } from "./adminSchema.ts";
 import { databaseUrl, getSql } from "./postgres.ts";
+import { getRedis } from "./redis.ts";
 
 export interface NoticeAudience {
   course: string | null;
@@ -38,6 +39,15 @@ function stamp(value: Date | string) {
 
 export async function listMatchingNotices(course: string, batch: string): Promise<StudentNotice[]> {
   if (!databaseUrl()) return [];
+  const redis = getRedis();
+  const ver = (await redis.get("notices:version").catch(() => null)) || "0";
+  const cacheKey = `notices:list:${ver}:${course.trim().toLowerCase()}:${batch.trim().toLowerCase()}`;
+  try {
+    const cached = await redis.getJson<StudentNotice[]>(cacheKey);
+    if (Array.isArray(cached)) return cached;
+  } catch {
+    // Fall through to Postgres.
+  }
   await ensureAdminSchema();
   const sql = getSql();
   const rows = await sql<{ id: string; title: string; body: string; created_at: Date | string }[]>`
@@ -49,12 +59,14 @@ export async function listMatchingNotices(course: string, batch: string): Promis
     ORDER BY created_at DESC
     LIMIT 5
   `;
-  return rows.map((row) => ({
+  const result = rows.map((row) => ({
     id: row.id,
     title: row.title,
     body: row.body,
     createdAt: stamp(row.created_at),
   }));
+  await redis.setJson(cacheKey, result, 120).catch(() => {});
+  return result;
 }
 
 export async function noticesForScope(
@@ -119,6 +131,7 @@ export async function insertNotice(title: string, body: string, audience: Notice
     VALUES (${id}, ${title}, ${body}, ${audience.course}, ${audience.batch})
   `;
   await sql`DELETE FROM student_notices WHERE created_at < now() - interval '30 days'`;
+  await getRedis().set("notices:version", `${Date.now().toString(36)}`, 24 * 60 * 60).catch(() => {});
   return id;
 }
 

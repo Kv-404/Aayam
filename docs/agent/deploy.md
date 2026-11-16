@@ -15,6 +15,11 @@ Env files, first existing wins for each key: repo `.env`, then `.env.local`, the
 | `DATE_ORDER` | `DMY` | Numeric dates in the sheet |
 | `DATABASE_PATH` | `./data/timetable.sqlite` | Local SQLite |
 | `DATABASE_URL` | Supabase pooler URI | Supabase Postgres for the faculty directory, batch PINs, and the timetable archive across cold starts |
+| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | unset | Upstash Redis REST API (also checks `KV_REST_API_*`); primary cold-start cache & MCP OAuth store |
+| `REDIS_URL` | unset | Alternative TCP/TLS Redis URI (`ioredis`); used when Upstash REST vars are unset |
+| `MCP_PUBLIC_URL` | unset | Canonical HTTPS origin (e.g. `https://timetable.kv404.dev`) used as OAuth 2.1 issuer & MCP audience |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | unset | Google OAuth credentials for faculty web sign-in and MCP OAuth 2.1 authorization code flow |
+| `AUTH_SECRET` | dev fallback in non-prod | HMAC signing secret (>=32 chars required in production) for faculty sessions & MCP OAuth tokens |
 | `DEV_BATCH_PINS` | unset | Local PIN checks when there is no database: `course:batch:pin`, comma separated. Ignored in production |
 | `COLLEGE_NAME` | ITM Skills University | Shown in bootstrap |
 | `CLIENT_ORIGIN` | unset | CORS when the client is on another origin |

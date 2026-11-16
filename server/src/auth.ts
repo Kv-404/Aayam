@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type { Request, Response } from "express";
 import { databaseUrl, getSql } from "./services/postgres.ts";
+import { getRedis } from "./services/redis.ts";
 
 export interface FacultySessionPayload {
   email: string;
@@ -17,7 +18,7 @@ function isProduction() {
   return process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL);
 }
 
-function getAuthSecret(): string | null {
+export function getAuthSecret(): string | null {
   const secret = process.env.AUTH_SECRET?.trim() || "";
   if (secret.length >= 32) return secret;
   if (isProduction()) return null;
@@ -28,7 +29,7 @@ function getDatabaseUrl(): string {
   return databaseUrl();
 }
 
-function getAllowedDomains(): string[] {
+export function getAllowedDomains(): string[] {
   const raw = `${process.env.ALLOWED_EMAIL_DOMAINS || ""} ${process.env.ALLOWED_EMAIL_DOMAIN || ""} itm.edu isu.ac.in`;
   const set = new Set<string>();
   for (const part of raw.split(/[,\s]+/)) {
@@ -38,8 +39,12 @@ function getAllowedDomains(): string[] {
   return [...set];
 }
 
-function getGoogleClientId(): string {
+export function getGoogleClientId(): string {
   return (process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || "").trim();
+}
+
+export function getGoogleClientSecret(): string {
+  return (process.env.GOOGLE_CLIENT_SECRET || "").trim();
 }
 
 export function signSession(payload: Omit<FacultySessionPayload, "exp">, expiresInDays = 7): string {
@@ -144,40 +149,127 @@ export async function verifyGoogleCredential(credential: string): Promise<{ emai
   return { email, name };
 }
 
-export async function authenticateFacultyWithNeon(email: string): Promise<{
+export interface FacultyDirectoryRecord {
+  id: number;
+  email: string;
+  faculty_name: string;
+  can_see_all_faculty: boolean;
+  is_active: boolean;
+  last_login_at: string | null;
+}
+
+function sha256Hex(value: string) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+export async function lookupFacultyByEmail(
+  email: string,
+  options?: { touchLastLogin?: boolean },
+): Promise<{
   id: number;
   email: string;
   faculty_name: string;
   can_see_all_faculty: boolean;
 }> {
+  const normalizedEmail = email.toLowerCase().trim();
   const dbUrl = getDatabaseUrl();
   if (!dbUrl) {
     throw new Error("DATABASE_URL is not configured.");
   }
-  let rows: any[];
-  try {
-    const sql = getSql();
-    rows = await sql`
-      SELECT id, email, faculty_name, can_see_all_faculty, is_active 
-      FROM faculty_directory 
-      WHERE LOWER(email) = ${email.toLowerCase()} AND is_active = true 
-      LIMIT 1
-    `;
-  } catch (err) {
-    console.error("[auth] Faculty lookup error:", err);
-    throw new Error("Faculty directory service is temporarily unavailable.");
-  }
-  if (!rows || rows.length === 0) {
-    throw new Error(`The account ${email} is not registered in the authorized faculty directory.`);
-  }
-  const faculty = rows[0] as { id: number; email: string; faculty_name: string; can_see_all_faculty?: boolean; is_active: boolean };
 
-  // Update last login
+  const redis = getRedis();
+  const cacheKey = `auth:faculty:${sha256Hex(normalizedEmail)}`;
+  let faculty: {
+    id: number;
+    email: string;
+    faculty_name: string;
+    can_see_all_faculty: boolean;
+    is_active: boolean;
+  } | null = null;
+
   try {
-    const sql = getSql();
-    await sql`UPDATE faculty_directory SET last_login_at = NOW() WHERE id = ${faculty.id}`;
+    const cached = await redis.getJson<{
+      found: boolean;
+      id?: number;
+      email?: string;
+      faculty_name?: string;
+      can_see_all_faculty?: boolean;
+      is_active?: boolean;
+    }>(cacheKey);
+    if (cached) {
+      if (!cached.found) {
+        throw new Error(`The account ${email} is not registered in the authorized faculty directory.`);
+      }
+      if (cached.id && cached.email && cached.faculty_name) {
+        faculty = {
+          id: cached.id,
+          email: cached.email,
+          faculty_name: cached.faculty_name,
+          can_see_all_faculty: Boolean(cached.can_see_all_faculty),
+          is_active: Boolean(cached.is_active),
+        };
+      }
+    }
   } catch (err) {
-    console.error("Failed to update last_login_at:", err);
+    if (err instanceof Error && err.message.includes("not registered in the authorized faculty directory")) {
+      throw err;
+    }
+    // Fall through to Supabase on transient Redis error.
+  }
+
+  if (!faculty) {
+    let rows: any[];
+    try {
+      const sql = getSql();
+      rows = await sql`
+        SELECT id, email, faculty_name, can_see_all_faculty, is_active
+        FROM faculty_directory
+        WHERE LOWER(email) = ${normalizedEmail} AND is_active = true
+        LIMIT 1
+      `;
+    } catch (err) {
+      console.error("[auth] Faculty lookup error:", err);
+      throw new Error("Faculty directory service is temporarily unavailable.");
+    }
+    if (!rows || rows.length === 0) {
+      try {
+        await redis.setJson(cacheKey, { found: false }, 60);
+      } catch {
+        // Ignore Redis error.
+      }
+      throw new Error(`The account ${email} is not registered in the authorized faculty directory.`);
+    }
+    const row = rows[0] as {
+      id: number;
+      email: string;
+      faculty_name: string;
+      can_see_all_faculty?: boolean;
+      is_active: boolean;
+    };
+    faculty = {
+      id: Number(row.id),
+      email: String(row.email),
+      faculty_name: String(row.faculty_name),
+      can_see_all_faculty: Boolean(row.can_see_all_faculty),
+      is_active: Boolean(row.is_active),
+    };
+    try {
+      await redis.setJson(cacheKey, { found: true, ...faculty }, 600);
+    } catch {
+      // Ignore Redis error.
+    }
+  }
+
+  if (options?.touchLastLogin !== false) {
+    try {
+      const shouldTouch = await redis.setNx(`auth:login-touch:${faculty.id}`, "1", 3600);
+      if (shouldTouch) {
+        const sql = getSql();
+        await sql`UPDATE faculty_directory SET last_login_at = NOW() WHERE id = ${faculty.id}`;
+      }
+    } catch (err) {
+      console.error("Failed to update last_login_at:", err);
+    }
   }
 
   return {
@@ -186,6 +278,44 @@ export async function authenticateFacultyWithNeon(email: string): Promise<{
     faculty_name: faculty.faculty_name,
     can_see_all_faculty: Boolean(faculty.can_see_all_faculty),
   };
+}
+
+export async function authenticateFacultyWithNeon(email: string) {
+  return lookupFacultyByEmail(email, { touchLastLogin: true });
+}
+
+export async function listFacultyDirectoryWithCache(): Promise<FacultyDirectoryRecord[]> {
+  const dbUrl = getDatabaseUrl();
+  if (!dbUrl) return [];
+  const redis = getRedis();
+  const cacheKey = "auth:faculty_directory:all";
+  try {
+    const cached = await redis.getJson<FacultyDirectoryRecord[]>(cacheKey);
+    if (Array.isArray(cached)) return cached;
+  } catch {
+    // Fall through.
+  }
+
+  const sql = getSql();
+  const rows = await sql`
+    SELECT id, email, faculty_name, can_see_all_faculty, is_active, last_login_at::text AS last_login_at
+    FROM faculty_directory
+    ORDER BY faculty_name ASC, id ASC
+  `;
+  const records: FacultyDirectoryRecord[] = (rows as any[]).map((row) => ({
+    id: Number(row.id),
+    email: String(row.email),
+    faculty_name: String(row.faculty_name),
+    can_see_all_faculty: Boolean(row.can_see_all_faculty),
+    is_active: Boolean(row.is_active),
+    last_login_at: row.last_login_at ? String(row.last_login_at) : null,
+  }));
+  try {
+    await redis.setJson(cacheKey, records, 300);
+  } catch {
+    // Ignore.
+  }
+  return records;
 }
 
 export interface PinRateLimitStatus {
@@ -265,6 +395,64 @@ export class PinRateLimiter {
 export const pinRateLimiter = new PinRateLimiter(5, 5 * 60 * 1000);
 export const loginRateLimiter = new PinRateLimiter(8, 10 * 60 * 1000);
 
+export interface DistributedRateLimiter {
+  check(ip: string): Promise<PinRateLimitStatus>;
+  recordFailure(ip: string): Promise<void>;
+  reset(ip: string): Promise<void>;
+}
+
+export function createDistributedRateLimiter(
+  namespace: string,
+  fallback: PinRateLimiter,
+  maxAttempts: number,
+  windowSeconds: number,
+): DistributedRateLimiter {
+  const keyFor = (ip: string) => `ratelimit:${namespace}:${sha256Hex(ip)}`;
+  return {
+    async check(ip: string): Promise<PinRateLimitStatus> {
+      const redis = getRedis();
+      if (!redis.isShared) return fallback.check(ip);
+      try {
+        const raw = await redis.get(keyFor(ip));
+        const count = raw ? Number.parseInt(raw, 10) || 0 : 0;
+        if (count >= maxAttempts) {
+          return { limited: true, remainingAttempts: 0, retryAfterSeconds: windowSeconds };
+        }
+        return {
+          limited: false,
+          remainingAttempts: Math.max(0, maxAttempts - count),
+          retryAfterSeconds: 0,
+        };
+      } catch {
+        return fallback.check(ip);
+      }
+    },
+    async recordFailure(ip: string): Promise<void> {
+      fallback.recordFailure(ip);
+      const redis = getRedis();
+      if (!redis.isShared) return;
+      try {
+        await redis.incrWindow(keyFor(ip), windowSeconds);
+      } catch {
+        // Fallback already recorded in memory.
+      }
+    },
+    async reset(ip: string): Promise<void> {
+      fallback.reset(ip);
+      const redis = getRedis();
+      if (!redis.isShared) return;
+      try {
+        await redis.del(keyFor(ip));
+      } catch {
+        // Ignore transient Redis error.
+      }
+    },
+  };
+}
+
+export const distributedPinRateLimiter = createDistributedRateLimiter("pin", pinRateLimiter, 5, 5 * 60);
+export const distributedLoginRateLimiter = createDistributedRateLimiter("login", loginRateLimiter, 8, 10 * 60);
+
 export function getClientIp(req: Request): string {
   const trustProxy = Boolean(process.env.VERCEL) || process.env.TRUST_PROXY === "1";
   if (trustProxy && req.ip) return req.ip;
@@ -290,6 +478,19 @@ export async function verifyBatchPinWithNeon(pin: string): Promise<{
 
   const dbUrl = getDatabaseUrl();
   if (dbUrl) {
+    const redis = getRedis();
+    const cacheKey = `auth:pin:${sha256Hex(cleanPin)}`;
+    try {
+      const cached = await redis.getJson<{ ok: boolean; course?: string; batch?: string }>(cacheKey);
+      if (cached) {
+        return cached.ok && cached.course && cached.batch
+          ? { ok: true, course: cached.course, batch: cached.batch }
+          : null;
+      }
+    } catch {
+      // Fall through to Supabase on Redis error.
+    }
+
     try {
       const sql = getSql();
       const rows = await sql`
@@ -299,11 +500,22 @@ export async function verifyBatchPinWithNeon(pin: string): Promise<{
         LIMIT 1
       `;
       if (rows && rows.length > 0 && rows[0]?.course && rows[0]?.batch) {
-        return {
+        const result = {
           ok: true,
           course: String(rows[0].course),
           batch: String(rows[0].batch),
         };
+        try {
+          await redis.setJson(cacheKey, result, 600);
+        } catch {
+          // Ignore Redis error.
+        }
+        return result;
+      }
+      try {
+        await redis.setJson(cacheKey, { ok: false }, 60);
+      } catch {
+        // Ignore Redis error.
       }
       return null;
     } catch (err) {

@@ -22,6 +22,12 @@ Express API in `server/src`. Local entry `server/src/index.ts`. Vercel entry `se
 | `POST /api/admin/sheets` | Signed-in admin replaces one batch's spreadsheet id in `timetable_sheet_links`, then syncs that sheet. A sheet that cannot be read is not kept |
 | `POST /api/admin/notices` | Signed-in admin stores a student notice and sends a web push to matching subscriptions |
 | `GET /api/push/public-key` | Public half of the VAPID key. The private half stays in `push_vapid` |
+| `GET /.well-known/oauth-protected-resource` | RFC 9728 metadata for the `/mcp` resource server |
+| `GET /.well-known/oauth-authorization-server` | RFC 8414 metadata advertising CIMD (`client_id_metadata_document_supported`), DCR, and PKCE `S256` |
+| `POST /oauth/register` | Dynamic Client Registration (rate-limited, stored in Redis) |
+| `GET /oauth/authorize` → `/oauth/callback` → `POST /oauth/consent` | OAuth 2.1 authorization code + PKCE `S256` + Google Workspace sign-in (`@itm.edu`, `@isu.ac.in`) + `faculty_directory` check + CSRF-protected consent page |
+| `POST /oauth/token`, `POST /oauth/revoke` | Authorization code & rotating refresh token exchange (`RFC 8707` resource binding) + token revocation |
+| `POST /mcp`, `POST /api/mcp` | Stateless Streamable-HTTP MCP server protected by `requireMcpAuth` with faculty/coordinator/`can_see_all_faculty` RBAC |
 
 `buildBootstrap` presents each stored lecture through `presentLecture`, restores removed lectures as cancelled, and sorts by date, time, division, subject. `BootstrapResponse` is `shared/types.ts`. The client must not depend on fields that are not on that type.
 
@@ -53,9 +59,9 @@ One sync per database at a time (`inflight` weak map).
 
 Change types the client may alert: `cancelled`, `restored`, `rescheduled`, `room_change`, `faculty_change`, `subject_change`, `details_changed`, `replaced`, `added`, `removed`, `reverted`, `tab_added`, `tab_removed`.
 
-## Archive
+## Archive and Redis
 
-`durableState.ts` reads and writes Supabase Postgres through `postgres.ts`. Live lectures, saved weeks, and updates are rows: `timetable_lectures` (one row per lecture, `week_id = live` or a saved week), `timetable_changes` (one row per update, with `week_id`), `timetable_weeks`, and `timetable_sync`. `timetable_archive.archive` stays as the single JSON document an older bundle can still hydrate. New code merges that document with the rows. `timetableArchive.ts` merges two archives. A non-overlapping saved week is a fresh baseline: its change rows leave the live log and stay on that week. The outgoing week is kept, up to 8 past weeks per course and batch, and the published week is stored too so the next upload does not depend on a last-second copy. The client hides the published week from `savedWeeks` and lists the older ones. Same-week removals stay cancelled. `server/test/archive.test.ts`, `sync.test.ts`, and `weeks.test.ts` cover this.
+`server/src/services/redis.ts` connects to Upstash Redis REST (`UPSTASH_REDIS_REST_URL`/`TOKEN` or `KV_REST_API_*`), standard Redis TCP (`REDIS_URL` via `ioredis`), or an in-memory fallback for local dev/tests. `durableState.ts` hydrates SQLite from gzipped Redis (`archive:live`) first, falling back to Supabase Postgres (`readNeonLiveRows` for live rows + week summaries; past weeks load lazily via `ensureWeeksHydrated` and cache under `archive:week:<id>`). `publishArchive` short-circuits via `archive:sig` in Redis so unchanged syncs do not query Supabase. `app.ts` also caches scoped responses (`/api/bootstrap`, `/api/week`, `/api/changes`, `/api/calendar.ics`) with `ETag` (`304 Not Modified`), coordinates sync cooldowns/locks in Redis, and `auth.ts` caches `faculty_directory` and `batch_access_codes` lookups plus distributed rate limits in Redis. `timetable_archive.archive` stays updated for older bundles. `server/test/archive.test.ts`, `sync.test.ts`, `weeks.test.ts`, `redisCache.test.ts`, `mcpOAuth.test.ts`, and `mcpServer.test.ts` cover this.
 
 SQLite is `server/src/db.ts`. Local file defaults to `server/data/timetable.sqlite` (gitignored). Vercel uses `/tmp/timetable.sqlite`, wiped on cold start, then refilled from Supabase.
 

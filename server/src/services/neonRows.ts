@@ -417,7 +417,12 @@ function insertChanges(sql: Sql, rows: ChangeRow[]) {
   `;
 }
 
-export async function readNeonRows(): Promise<TimetableArchive | null> {
+export interface NeonMeta {
+  savedAt: string;
+  sync: TimetableArchive["sync"];
+}
+
+export async function readNeonMeta(): Promise<NeonMeta | null> {
   const url = neonUrl();
   if (!url) return null;
   try {
@@ -440,12 +445,9 @@ export async function readNeonRows(): Promise<TimetableArchive | null> {
     }>;
     const sync = syncRows[0];
     if (!sync?.bootstrapped) return null;
-    const lectures = await sql`SELECT * FROM timetable_lectures` as LectureRow[];
-    const changes = await sql`SELECT * FROM timetable_changes ORDER BY id` as ChangeRow[];
-    const weeks = await sql`SELECT id, course, batch, start_date, end_date FROM timetable_weeks` as WeekRow[];
-    return rowsToArchive(
-      sync.saved_at,
-      {
+    return {
+      savedAt: sync.saved_at,
+      sync: {
         lastSuccessAt: sync.last_success_at,
         lastAttemptAt: sync.last_attempt_at,
         lastError: sync.last_error,
@@ -455,15 +457,92 @@ export async function readNeonRows(): Promise<TimetableArchive | null> {
         parseIssues: json(sync.parse_issues, []),
         spreadsheetTitle: sync.spreadsheet_title,
       },
+    };
+  } catch (error) {
+    console.error("[archive] meta read error:", error);
+    return null;
+  }
+}
+
+/** Cold-start fast path: reads only live week lectures/changes + week date summaries (avoids dumping past weeks). */
+export async function readNeonLiveRows(): Promise<{ archive: TimetableArchive; unhydratedWeekIds: Set<string> } | null> {
+  const url = neonUrl();
+  if (!url) return null;
+  try {
+    const sql = getSql();
+    await ensureSchema(sql);
+    const meta = await readNeonMeta();
+    if (!meta) return null;
+    const [lectures, changes, weeks] = await Promise.all([
+      sql`SELECT * FROM timetable_lectures WHERE week_id = ${LIVE}` as Promise<LectureRow[]>,
+      sql`SELECT * FROM timetable_changes WHERE week_id = ${LIVE} ORDER BY id` as Promise<ChangeRow[]>,
+      sql`SELECT id, course, batch, start_date, end_date FROM timetable_weeks` as Promise<WeekRow[]>,
+    ]);
+    const archive = rowsToArchive(meta.savedAt, meta.sync, { lectures, changes, weeks });
+    return {
+      archive,
+      unhydratedWeekIds: new Set(weeks.map((w) => w.id)),
+    };
+  } catch (error) {
+    console.error("[archive] live row read error:", error);
+    return null;
+  }
+}
+
+/** Lazy loader for past weeks: reads only requested week_ids on demand. */
+export async function readNeonWeeksByIds(weekIds: string[]) {
+  const url = neonUrl();
+  if (!url || weekIds.length === 0) return [];
+  try {
+    const sql = getSql();
+    await ensureSchema(sql);
+    const [weeks, lectures, changes] = await Promise.all([
+      sql`SELECT id, course, batch, start_date, end_date FROM timetable_weeks WHERE id = ANY(${weekIds})` as Promise<WeekRow[]>,
+      sql`SELECT * FROM timetable_lectures WHERE week_id = ANY(${weekIds})` as Promise<LectureRow[]>,
+      sql`SELECT * FROM timetable_changes WHERE week_id = ANY(${weekIds}) ORDER BY id` as Promise<ChangeRow[]>,
+    ]);
+    const restored = rowsToArchive(
+      new Date().toISOString(),
+      {
+        lastSuccessAt: null,
+        lastAttemptAt: null,
+        lastError: null,
+        bootstrapped: true,
+        contentHash: null,
+        tabNames: [],
+        parseIssues: [],
+        spreadsheetTitle: null,
+      },
       { lectures, changes, weeks },
     );
+    return restored.weeks ?? [];
+  } catch (error) {
+    console.error("[archive] week row read error:", error);
+    return [];
+  }
+}
+
+export async function readNeonRows(): Promise<TimetableArchive | null> {
+  const url = neonUrl();
+  if (!url) return null;
+  try {
+    const sql = getSql();
+    await ensureSchema(sql);
+    const meta = await readNeonMeta();
+    if (!meta) return null;
+    const [lectures, changes, weeks] = await Promise.all([
+      sql`SELECT * FROM timetable_lectures` as Promise<LectureRow[]>,
+      sql`SELECT * FROM timetable_changes ORDER BY id` as Promise<ChangeRow[]>,
+      sql`SELECT id, course, batch, start_date, end_date FROM timetable_weeks` as Promise<WeekRow[]>,
+    ]);
+    return rowsToArchive(meta.savedAt, meta.sync, { lectures, changes, weeks });
   } catch (error) {
     console.error("[archive] row read error:", error);
     return null;
   }
 }
 
-export async function writeNeonRows(archive: TimetableArchive) {
+export async function writeNeonRows(archive: TimetableArchive, hydratedWeekIds?: Set<string>) {
   const url = neonUrl();
   if (!url) return false;
   const sql = getSql();
@@ -472,19 +551,46 @@ export async function writeNeonRows(archive: TimetableArchive) {
   const weekPayload = JSON.stringify(rows.weeks);
   const tabNames = JSON.stringify(archive.sync.tabNames);
   const parseIssues = JSON.stringify(archive.sync.parseIssues);
+  const keptWeekIds = rows.weeks.map((w) => w.id);
+
   await sql.begin(async (tx) => {
-    await tx`DELETE FROM timetable_lectures`;
-    await tx`DELETE FROM timetable_changes`;
-    await tx`DELETE FROM timetable_weeks`;
+    if (!hydratedWeekIds) {
+      await tx`DELETE FROM timetable_lectures`;
+      await tx`DELETE FROM timetable_changes`;
+      await tx`DELETE FROM timetable_weeks`;
+      for (const chunk of chunks(rows.lectures, 200)) await insertLectures(tx, chunk);
+      for (const chunk of chunks(rows.changes, 200)) await insertChanges(tx, chunk);
+    } else {
+      const targetWeeks = [LIVE, ...hydratedWeekIds];
+      await tx`DELETE FROM timetable_lectures WHERE week_id = ANY(${targetWeeks})`;
+      await tx`DELETE FROM timetable_changes WHERE week_id = ANY(${targetWeeks})`;
+      if (keptWeekIds.length > 0) {
+        await tx`DELETE FROM timetable_lectures WHERE week_id <> ${LIVE} AND NOT (week_id = ANY(${keptWeekIds}))`;
+        await tx`DELETE FROM timetable_changes WHERE week_id <> ${LIVE} AND NOT (week_id = ANY(${keptWeekIds}))`;
+        await tx`DELETE FROM timetable_weeks WHERE NOT (id = ANY(${keptWeekIds}))`;
+      } else {
+        await tx`DELETE FROM timetable_lectures WHERE week_id <> ${LIVE}`;
+        await tx`DELETE FROM timetable_changes WHERE week_id <> ${LIVE}`;
+        await tx`DELETE FROM timetable_weeks`;
+      }
+      const targetSet = new Set(targetWeeks);
+      const lecturesToInsert = rows.lectures.filter((r) => targetSet.has(r.week_id));
+      const changesToInsert = rows.changes.filter((r) => targetSet.has(r.week_id));
+      for (const chunk of chunks(lecturesToInsert, 200)) await insertLectures(tx, chunk);
+      for (const chunk of chunks(changesToInsert, 200)) await insertChanges(tx, chunk);
+    }
     await tx`DELETE FROM timetable_sync`;
-    for (const chunk of chunks(rows.lectures, 200)) await insertLectures(tx, chunk);
-    for (const chunk of chunks(rows.changes, 200)) await insertChanges(tx, chunk);
     await tx`
       INSERT INTO timetable_weeks (id, course, batch, start_date, end_date)
       SELECT id, course, batch, start_date, end_date
       FROM jsonb_to_recordset(${weekPayload}::jsonb) AS x(
         id text, course text, batch text, start_date text, end_date text
       )
+      ON CONFLICT (id) DO UPDATE SET
+        course = EXCLUDED.course,
+        batch = EXCLUDED.batch,
+        start_date = EXCLUDED.start_date,
+        end_date = EXCLUDED.end_date
     `;
     await tx`
       INSERT INTO timetable_sync (

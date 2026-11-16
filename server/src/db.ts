@@ -58,7 +58,8 @@ export function openDatabase(file: string) {
       start_date TEXT NOT NULL,
       end_date TEXT NOT NULL,
       lectures_json TEXT NOT NULL,
-      changes_json TEXT NOT NULL DEFAULT '[]'
+      changes_json TEXT NOT NULL DEFAULT '[]',
+      hydrated INTEGER NOT NULL DEFAULT 1
     );
 
     CREATE TABLE IF NOT EXISTS sync_state (
@@ -80,6 +81,9 @@ export function openDatabase(file: string) {
   const weekColumns = db.prepare("PRAGMA table_info(week_backups)").all() as { name: string }[];
   if (!weekColumns.some((column) => column.name === "changes_json")) {
     db.exec("ALTER TABLE week_backups ADD COLUMN changes_json TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!weekColumns.some((column) => column.name === "hydrated")) {
+    db.exec("ALTER TABLE week_backups ADD COLUMN hydrated INTEGER NOT NULL DEFAULT 1");
   }
   return db;
 }
@@ -206,13 +210,61 @@ export function readWeekBackups(db: AppDatabase): WeekBackupRecord[] {
   }));
 }
 
-export function replaceWeekBackups(db: AppDatabase, weeks: WeekBackupRecord[]) {
-  db.exec("DELETE FROM week_backups");
-  const insert = db.prepare(`
-    INSERT INTO week_backups (id, course, batch, start_date, end_date, lectures_json, changes_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+export function readUnhydratedWeekIds(db: AppDatabase, ids: string[]): string[] {
+  if (ids.length === 0) return [];
+  const marks = ids.map(() => "?").join(", ");
+  const rows = db.prepare(`
+    SELECT id, hydrated FROM week_backups WHERE id IN (${marks})
+  `).all(...ids) as Array<{ id: string; hydrated: number }>;
+  const hydratedMap = new Map(rows.map((r) => [r.id, r.hydrated !== 0]));
+  return ids.filter((id) => !hydratedMap.get(id));
+}
+
+export function readHydratedWeekIds(db: AppDatabase): Set<string> {
+  const rows = db.prepare("SELECT id FROM week_backups WHERE hydrated = 1").all() as Array<{ id: string }>;
+  return new Set(rows.map((r) => r.id));
+}
+
+export function upsertWeekBackups(db: AppDatabase, weeks: WeekBackupRecord[], hydrated = true) {
+  if (weeks.length === 0) return;
+  const upsert = db.prepare(`
+    INSERT INTO week_backups (id, course, batch, start_date, end_date, lectures_json, changes_json, hydrated)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      course = excluded.course,
+      batch = excluded.batch,
+      start_date = excluded.start_date,
+      end_date = excluded.end_date,
+      lectures_json = excluded.lectures_json,
+      changes_json = excluded.changes_json,
+      hydrated = excluded.hydrated
   `);
   for (const week of weeks) {
+    upsert.run(
+      week.id,
+      week.course,
+      week.batch,
+      week.start,
+      week.end,
+      JSON.stringify(week.lectures),
+      JSON.stringify(week.changes ?? []),
+      hydrated ? 1 : 0,
+    );
+  }
+}
+
+export function replaceWeekBackups(db: AppDatabase, weeks: WeekBackupRecord[], unhydratedIds?: Set<string>) {
+  const priorUnhydrated = new Set(
+    (db.prepare("SELECT id FROM week_backups WHERE hydrated = 0").all() as Array<{ id: string }>).map((r) => r.id),
+  );
+  db.exec("DELETE FROM week_backups");
+  const insert = db.prepare(`
+    INSERT INTO week_backups (id, course, batch, start_date, end_date, lectures_json, changes_json, hydrated)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  for (const week of weeks) {
+    const isUnhydrated =
+      unhydratedIds?.has(week.id) || (priorUnhydrated.has(week.id) && week.lectures.length === 0);
     insert.run(
       week.id,
       week.course,
@@ -221,6 +273,7 @@ export function replaceWeekBackups(db: AppDatabase, weeks: WeekBackupRecord[]) {
       week.end,
       JSON.stringify(week.lectures),
       JSON.stringify(week.changes ?? []),
+      isUnhydrated ? 0 : 1,
     );
   }
 }
