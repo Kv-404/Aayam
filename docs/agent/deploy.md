@@ -54,6 +54,8 @@ Vite proxies `/api` to `:8787`. The job writes `wrangler dev`'s local D1 file (`
 
 ## Connecting kv404.dev (registered at Spaceship) without transferring it
 
+**Done on 2026-11-18.** The zone is active on Cloudflare (`laylah`/`rob.ns.cloudflare.com`), `aayam.kv404.dev` is a Worker custom domain (pinned in `wrangler.jsonc` `routes`), and the Vercel timetable project is deleted. `kv404.dev`/`www` are grey-cloud records to the portfolio on Vercel. Kept as the procedure for reference.
+
 The domain stays registered and billed at Spaceship. Only its DNS moves to Cloudflare (free). Cloudflare's free plan cannot attach a Worker to a domain whose DNS is elsewhere, so a nameserver change is the way to "connect".
 
 1. **Add the site.** dash.cloudflare.com → Account home → **Onboard a domain** (Add a site) → `kv404.dev` → "Quick scan for DNS records" → plan **Free**.
@@ -69,20 +71,16 @@ The domain stays registered and billed at Spaceship. Only its DNS moves to Cloud
 3. **SSL mode.** SSL/TLS → Overview → **Full (strict)**.
 4. **Switch nameservers at Spaceship.** spaceship.com → Domain Manager → `kv404.dev` → **Nameservers** → change from "Spaceship nameservers" to **Custom** → paste the two `*.ns.cloudflare.com` names Cloudflare showed you → Save. If DNSSEC is on at Spaceship, turn it off first (re-enable later from Cloudflare → DNS → Settings → DNSSEC, then paste the DS record back at Spaceship).
 5. **Wait for "Active".** Cloudflare emails you, or press "Check nameservers" on the overview page. Usually minutes, at most 24 h. The portfolio keeps working throughout because the records match.
-6. **Attach the Worker.** In `wrangler.jsonc` uncomment `"routes": [{ "pattern": "aayam.kv404.dev", "custom_domain": true }]` and push `main` (or `npm run deploy`). Cloudflare creates the `aayam` DNS record and certificate itself. Equivalent dashboard path: Workers & Pages → `timetable` → Settings → Domains & Routes → Add → Custom domain → `aayam.kv404.dev`.
+6. **Attach the Worker.** Declare `"routes": [{ "pattern": "aayam.kv404.dev", "custom_domain": true }]` in `wrangler.jsonc` and push (delete any existing `aayam` DNS record first) `main` (or `npm run deploy`). Cloudflare creates the `aayam` DNS record and certificate itself. Equivalent dashboard path: Workers & Pages → `timetable` → Settings → Domains & Routes → Add → Custom domain → `aayam.kv404.dev`.
 7. **Verify.** `curl -s https://aayam.kv404.dev/api/health` returns `{"ok":true,...}` and `dig +short NS kv404.dev` shows Cloudflare.
 
 Rollback before step 6: set Spaceship nameservers back to "Spaceship nameservers". Nothing else changes.
-
-## Until cutover: the Vercel bridge
-
-Until `kv404.dev` DNS is on Cloudflare, `aayam.kv404.dev` still points at the Vercel project `aayam`, which builds the SPA from `main` and forwards `/api/*`, `/mcp`, `/oauth/*`, and `/.well-known/*` to `https://timetable.kv404.workers.dev` (`vercel.json`). Through the bridge the Worker sees the `workers.dev` host, so MCP clients connecting to `https://aayam.kv404.dev/mcp` need the var `MCP_PUBLIC_URL=https://aayam.kv404.dev` until cutover (it is also correct after). All data and logic are already on Cloudflare. After step 6 above, delete `vercel.json` and the Vercel project.
 
 ## After cutover: removing the old hosting
 
 Only once `aayam.kv404.dev` serves from Cloudflare and a sync has run:
 
-- **Vercel**: delete only the project that served `aayam.kv404.dev` (the timetable, formerly `time-table`). Keep the portfolio project for `kv404.dev`/`www`.
+- **Vercel**: done, the timetable project is deleted. The portfolio project for `kv404.dev`/`www` stays until the portfolio itself moves.
 - **Supabase**: everything was copied to D1 (archive merged from the rows and the legacy JSON document, faculty directory, push subscriptions, VAPID keys, notices). Take a final backup (Database → Backups, or `pg_dump`) and then pause or delete the project.
 - **Upstash Redis**: delete the database if one exists; nothing reads it.
 - Google OAuth client secret: only MCP sign-in uses it (`GOOGLE_CLIENT_SECRET`); otherwise it can be rotated or deleted.

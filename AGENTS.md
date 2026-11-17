@@ -32,7 +32,7 @@ Shared types and faculty matching are in `docs/agent/server.md`. Read a second f
 - Snapshot keys come only from `shared/scope.ts` (`scopeKey`, `snapshotKeys`). Job and Worker both call it; never build a key by hand.
 - D1 is the only database. Do not add another one, a KV/Redis cache, or any write path to Google Sheets. Schema changes are a new `migrations/000N_*.sql`, additive; never edit an applied migration.
 - All SQL goes through `SqlDb` (`server/src/d1/sql.ts`). Timestamps are ISO strings.
-- Only `/api/*` and the MCP paths (`/mcp`, `/mcp/*`, `/oauth/*`, `/.well-known/*`) run the Worker (`run_worker_first`; mirror them in `vercel.json` until cutover). Static assets stay free; do not route pages through the Worker.
+- Only `/api/*` and the MCP paths (`/mcp`, `/mcp/*`, `/oauth/*`, `/.well-known/*`) run the Worker (`run_worker_first`). Static assets stay free; do not route pages through the Worker.
 - Expensive crypto (scrypt, push encryption fan-out) does not go in the Worker. Pushes are sent by the job.
 - The browser never gets a Google key. Sheets stay "anyone with the link can view".
 

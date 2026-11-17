@@ -23,8 +23,7 @@
   ],
   // Every 5 minutes: ask GitHub Actions to run the sync job. One subrequest, almost no CPU.
   "triggers": { "crons": ["*/5 * * * *"] },
-  // Custom domain: add after kv404.dev is an active zone on this account (see docs/agent/deploy.md).
-  // "routes": [{ "pattern": "aayam.kv404.dev", "custom_domain": true }],
+  "routes": [{ "pattern": "aayam.kv404.dev", "custom_domain": true }],
   "workers_dev": true,
   "preview_urls": false,
   "vars": {
