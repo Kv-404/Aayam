@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { cohortLabel, cohortPrograms, cohortYears, cohortsInYear, type CohortChoice, DEFAULT_COHORT_CHOICES } from "@shared/cohort";
 import { ArrowLeft, ArrowRight } from "lucide-react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import { AayamIcon } from "@/components/AayamLogo";
 import { DatabaseStatus } from "@/components/DatabaseStatus";
 import { ColorSwitch } from "@/components/ColorSwitch";
@@ -155,7 +155,7 @@ export function HomePage({
 
       <div className="flex flex-1 flex-col justify-center">
         <AnimatePresence mode="wait" initial={false}>
-          <motion.div
+          <m.div
             key={step}
             initial={calm ? { opacity: 0 } : { opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -257,7 +257,7 @@ export function HomePage({
                 )}
               </ul>
             )}
-          </motion.div>
+          </m.div>
         </AnimatePresence>
       </div>
 

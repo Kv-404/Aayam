@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { openDatabase, readAllChanges, readLectures, writeSyncState } from "../src/db.ts";
 import type { StoredLecture } from "../src/model.ts";
-import { exportArchive, importArchive } from "../src/services/durableState.ts";
+import { exportArchive, importArchive } from "../src/services/archiveRows.ts";
 import { mergeArchives, type TimetableArchive } from "../src/services/timetableArchive.ts";
 
 function lecture(id: string, overrides: Partial<StoredLecture> = {}): StoredLecture {

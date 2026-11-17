@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
-import { animate, motion, useMotionValue, useReducedMotion, useTransform } from "motion/react";
+import { animate, m, useMotionValue, useReducedMotion, useTransform } from "motion/react";
 import "./BellToggle.css";
 
 const SPRING_UI = { type: "spring" as const, duration: 0.3, bounce: 0 };
@@ -196,7 +196,7 @@ export default function BellToggle({
   const showBadge = badge && on && count > 0;
 
   return (
-    <motion.span
+    <m.span
       ref={rootRef}
       className={`bell-toggle${className ? ` ${className}` : ""}`}
       data-on={on ? "true" : "false"}
@@ -279,6 +279,6 @@ export default function BellToggle({
           </span>
         </span>
       </button>
-    </motion.span>
+    </m.span>
   );
 }

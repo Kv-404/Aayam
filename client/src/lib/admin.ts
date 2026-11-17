@@ -26,7 +26,7 @@ async function send(path: string, body?: unknown) {
     headers: body === undefined ? undefined : { "Content-Type": "application/json", "X-Aayam-Admin": "1" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; error?: string; signedIn?: boolean; sheets?: AdminSheet[]; notices?: AdminNotice[]; delivered?: number };
+  const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; error?: string; signedIn?: boolean; sheets?: AdminSheet[]; notices?: AdminNotice[]; delivered?: number; syncing?: boolean; queued?: boolean };
   if (!response.ok) throw new Error(payload.error || "That did not work.");
   return payload;
 }

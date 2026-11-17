@@ -5,9 +5,9 @@ export { eventTitle, googleCalendarUrl, googleStamp } from "@shared/calendar";
 export { cohortName };
 
 export function calendarFeedUrl(scope: { division?: string; faculty?: string }, download = false, external = false) {
-  let origin = typeof window !== "undefined" ? window.location.origin : "https://timetable.kv404.dev";
+  let origin = typeof window !== "undefined" ? window.location.origin : "https://aayam.kv404.dev";
   if (external && typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" || !window.location.hostname)) {
-    origin = "https://timetable.kv404.dev";
+    origin = "https://aayam.kv404.dev";
   }
   const feed = new URL("/api/calendar.ics", origin);
   if (scope.faculty) feed.searchParams.set("faculty", scope.faculty);

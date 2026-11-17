@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { openDatabase, readWeekBackups, type StoredChange } from "../src/db.ts";
 import type { StoredLecture } from "../src/model.ts";
-import { archiveToRows, rowsToArchive } from "../src/services/neonRows.ts";
+import { archiveToRows, rowsToArchive } from "../src/services/archiveRows.ts";
 import type { TimetableArchive } from "../src/services/timetableArchive.ts";
 import { changesForWeek, rememberPublishedWeeks, rememberReplacedWeeks, weeksFromLectures } from "../src/services/weekBackup.ts";
 

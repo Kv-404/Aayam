@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
-import { animate, motion, useMotionValue, useReducedMotion, useTransform } from "motion/react";
+import { animate, m, useMotionValue, useReducedMotion, useTransform } from "motion/react";
 import "./RubberSegment.css";
 
 const EASE_OUT = [0.23, 1, 0.32, 1] as const;
@@ -390,14 +390,14 @@ export default function RubberSegment({
           {item.label}
         </button>
       ))}
-      <motion.div className="rubber-segment__thumb" aria-hidden="true" style={{ clipPath }}>
+      <m.div className="rubber-segment__thumb" aria-hidden="true" style={{ clipPath }}>
         {list.map((item) => (
           <span key={item.value} className="rubber-segment__item rubber-segment__copy">
             {item.icon}
             {item.label}
           </span>
         ))}
-      </motion.div>
+      </m.div>
     </div>
   );
 }

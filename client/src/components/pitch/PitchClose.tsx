@@ -15,7 +15,7 @@ import {
 const beginner = [
   "Day list and weekly grid",
   "Cancellations, rooms, and lecture details",
-  "Batch PIN and section choice",
+  "Batch and section choice",
   "Faculty sign-in on an institutional account",
   "Calendar export and lecture reminders",
 ];
@@ -92,7 +92,7 @@ export function PitchClose({
             <h2 className="max-w-xl text-3xl font-medium tracking-tight text-balance sm:text-4xl">
               Open the timetable.
             </h2>
-            <p className="mt-3 max-w-md text-sm text-white/60">Students use a batch PIN. Faculty use an institutional Google account.</p>
+            <p className="mt-3 max-w-md text-sm text-white/60">Students pick a batch and section. Faculty use an institutional Google account.</p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <button type="button" onClick={onOpenStudent} className={`rounded-lg bg-white px-4 py-2.5 text-sm font-medium text-[#07080c] ${focusRing}`}>

@@ -8,7 +8,6 @@ import { recordChanges } from "./changeHistoryService.ts";
 import { programKey } from "../program.ts";
 import { contentFingerprint, normalizeWorkbook } from "./timetableNormalizer.ts";
 import { parseTimetableSource } from "./timetableParser.ts";
-import { hydrateArchive, publishArchive } from "./durableState.ts";
 import { persistCancelledRemovals } from "./persistCancelled.ts";
 import { loadSnapshot, saveSnapshot, toNormalized } from "./timetableSnapshotService.ts";
 import { rememberPublishedWeeks, rememberReplacedWeeks } from "./weekBackup.ts";
@@ -95,7 +94,6 @@ async function performSync(ctx: SyncContext): Promise<SyncOutcome> {
   const now = ctx.now ?? new Date();
   const attemptAt = now.toISOString();
   try {
-    await hydrateArchive(ctx.db);
     const current = readSyncState(ctx.db);
     const files = ctx.loadAll
       ? await ctx.loadAll()
@@ -165,7 +163,6 @@ async function performSync(ctx: SyncContext): Promise<SyncOutcome> {
     if (current.bootstrapped && current.contentHash === contentHash) {
       rememberPublishedWeeks(ctx.db, previous);
       writeSyncState(ctx.db, successState(current, attemptAt, contentHash, tabNames, retained.issues, ctx.config.spreadsheetTitle));
-      await publishArchive(ctx.db);
       return { ok: true, unchanged: true, changeCount: 0, error: null };
     }
 
@@ -205,7 +202,6 @@ async function performSync(ctx: SyncContext): Promise<SyncOutcome> {
       ctx.db.exec("ROLLBACK");
       throw error;
     }
-    await publishArchive(ctx.db);
     return { ok: true, unchanged: false, changeCount: events.length, error: null };
   } catch (error) {
     const detail = error instanceof Error ? error.message : "The spreadsheet could not be read.";

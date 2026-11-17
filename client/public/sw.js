@@ -1,3 +1,8 @@
+// Push and notification clicks only. There is no fetch handler: pages, assets, and /api go to the network
+// and the HTTP cache, so ETag revalidation and new releases work as if no worker were installed.
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+
 self.addEventListener("push", (event) => {
   let payload = { title: "Aayam", body: "", tag: "aayam-notice" };
   try {

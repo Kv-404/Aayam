@@ -71,10 +71,10 @@ export function PitchStory({
             <article id="students" className="flex h-full scroll-mt-24 flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-6">
               <h3 className="text-lg font-medium">Students</h3>
               <p className="mt-2 text-sm leading-relaxed text-white/60">
-                Enter the 6-digit PIN for your batch, then choose your section. The timetable shows only that section, with the faculty name on each class.
+                Pick your batch, then choose your section. The timetable shows only that section, with the faculty name on each class.
               </p>
               <ol className="mt-5 grid gap-2 text-sm text-white/75">
-                <li>1. PIN for the batch</li>
+                <li>1. Pick the batch</li>
                 <li>2. Pick the section</li>
                 <li>3. Day, week, and changes for that section</li>
               </ol>

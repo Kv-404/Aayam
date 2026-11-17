@@ -50,7 +50,7 @@ export function PrivacyPolicy({ onBack }: { onBack?: () => void }) {
           <section className="space-y-3">
             <h2 className="text-lg font-semibold text-foreground">3. Faculty sign-in</h2>
             <p className="text-muted-foreground">
-              Faculty sign in with Google. Aayam receives the name and email on the Google ID token, and only for an <code>@itm.edu</code> or <code>@isu.ac.in</code> address that is already listed in the faculty directory. That directory is a table in Supabase Postgres. The check stores the email, the faculty name, whether that person can see every class, and the time of the last sign-in.
+              Faculty sign in with Google. Aayam receives the name and email on the Google ID token, and only for an <code>@itm.edu</code> or <code>@isu.ac.in</code> address that is already listed in the faculty directory. That directory is a table in the Aayam database on Cloudflare. The check stores the email, the faculty name, whether that person can see every class, and the time of the last sign-in.
             </p>
             <p className="text-muted-foreground">
               A signed-in session is an HttpOnly cookie named <code>timetable_faculty_session</code>, kept for 7 days, plus a copy of the same token in this browser so a home-screen icon can stay signed in. Sign-out deletes both. The Google data is used to open that person’s timetable. It is not sold, and it is not used for advertising.

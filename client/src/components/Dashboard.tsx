@@ -4,9 +4,8 @@ import { findCoordinator } from "@shared/coordinators";
 import { changeMatchesFaculty, listFacultyNames } from "@shared/faculty";
 import { Bell, CalendarPlus, Check, ChevronDown, Download, FileSpreadsheet, GraduationCap, LogOut, RefreshCw, Settings, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { FacultyLoginModal } from "@/components/FacultyLoginModal";
 import { FacultyScopeMenu } from "@/components/FacultyScopeMenu";
 import { DatabaseStatus } from "@/components/DatabaseStatus";
 import { fetchCurrentAuth, logoutFaculty } from "@/lib/auth";
@@ -25,12 +24,14 @@ import { useLectureReminders } from "@/hooks/useLectureReminders";
 import { appleWeekCalendarUrl, calendarFeedUrl, googleWeekCalendarUrl, outlookWeekCalendarUrl } from "@/lib/calendar";
 import { lensFromScopeId, resolveFacultyView, signInFacultyLens } from "@/lib/facultyView";
 import { useAnyMenuOpen, useMenuBackdrop } from "@/lib/menuBackdrop";
-import { clearFacultyBrowse, clearStudentAuth, closeExamNotice, closeNotifyHint, hasChosenRole, readCanSeeAllFaculty, readExamNoticeClosed, readFacultyEmail, readFacultyLens, readFacultyPreview, readNotifyHintClosed, readRole, readSetup, readStoredCohort, readStoredFaculty, readStudentBatch, saveCanSeeAllFaculty, saveCohort, saveFaculty, saveFacultyEmail, saveFacultyLens, saveFacultyPreview, saveSetup, themes, type FacultyLens, type MeetAction, type ThemeId, type ViewerRole } from "@/lib/prefs";
+import { clearFacultyBrowse, clearStudentAuth, closeExamNotice, closeNotifyHint, hasChosenRole, readCanSeeAllFaculty, readDeviceFacultySession, readExamNoticeClosed, readFacultyEmail, readFacultySession, readFacultyLens, readFacultyPreview, readNotifyHintClosed, readRole, readSetup, readStoredCohort, readStoredFaculty, readStudentBatch, saveCanSeeAllFaculty, saveCohort, saveFaculty, saveFacultyEmail, saveFacultyLens, saveFacultyPreview, saveSetup, themes, type FacultyLens, type MeetAction, type ThemeId, type ViewerRole } from "@/lib/prefs";
 import { ColorEditor } from "@/components/ColorEditor";
 import { ColorSwitch } from "@/components/ColorSwitch";
 import { formatClockTime, formatCompactRange, zonedNow } from "@/lib/time";
 import { applyFilters, collapseFullOffDays, defaultFilters, groupSavedWeeks, mondayOf, slotPhase, splitByLatestWeek, unique, type Filters, type WeekGroup } from "@/lib/view";
 import { AayamLogo } from "@/components/AayamLogo";
+
+const FacultyLoginModal = lazy(() => import("@/components/FacultyLoginModal").then((m) => ({ default: m.FacultyLoginModal })));
 
 const dayOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
@@ -171,7 +172,8 @@ export function Dashboard({
       return fetchSavedWeek(weekId, scopeAll ? { all: true } : role === "faculty" ? { faculty } : { division: cohort });
     },
     enabled: weekId !== "live",
-    staleTime: 5 * 60 * 1000,
+    // A saved week does not change after it is archived.
+    staleTime: Infinity,
   });
   const lectureFeed = !selectedWeek ? liveLectures : pastWeek.data?.lectures ?? [];
   const board = resolveFacultyView({
@@ -196,6 +198,8 @@ export function Dashboard({
       setLens(readFacultyLens());
       return;
     }
+    // A student with no faculty sign-in on this device has nothing to check. Saves a request per visit.
+    if (readRole() === "student" && !readFacultySession() && !readDeviceFacultySession()) return;
     let cancelled = false;
     fetchCurrentAuth().then((auth) => {
       if (cancelled || auth.offline) return;
@@ -1047,11 +1051,15 @@ export function Dashboard({
           </button>
         </div>
       )}
-      <FacultyLoginModal
-        open={loginModalOpen}
-        onClose={() => setLoginModalOpen(false)}
-        onSuccess={handleFacultyLoginSuccess}
-      />
+      {loginModalOpen ? (
+        <Suspense fallback={null}>
+          <FacultyLoginModal
+            open={loginModalOpen}
+            onClose={() => setLoginModalOpen(false)}
+            onSuccess={handleFacultyLoginSuccess}
+          />
+        </Suspense>
+      ) : null}
     </Tabs>
   );
 }

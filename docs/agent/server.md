@@ -1,45 +1,79 @@
 # Server and shared model
 
-Express API in `server/src`. Local entry `server/src/index.ts`. Vercel entry `server/src/vercel.ts`. Tests are `server/test/*.test.ts`, run with `npm test`. There is no client test suite.
+Two programs share `server/src` and `shared/`:
 
-## Request path
+| Program | Entry | Runs on | Does |
+| --- | --- | --- | --- |
+| **Worker** | `server/src/edge/index.ts` | Cloudflare Workers Free | Static SPA plus a thin `/api/*` over D1. Never parses a sheet, never builds a timetable |
+| **Sync job** | `server/src/job/run.ts` | GitHub Actions (`.github/workflows/sync.yml`), Node 24 | Downloads and parses the sheets, diffs, archives, renders every API response into D1, sends queued web pushes |
 
-`createApp` in `server/src/app.ts`.
+Why split: Workers Free allows 10 ms CPU per invocation (cron included). ExcelJS takes 150–400 ms per sheet. The Worker therefore looks up a prebuilt row and concatenates strings; it never `JSON.parse`s a timetable. A ~400 KB bootstrap assembles in about 0.3 ms (`server/test/edgeBench.test.ts` fails above 1 ms). Keep it that way: any new read feature is rendered by the job and stored as a snapshot.
+
+The Worker must stay free of `node:` imports, `process`, and npm packages. It may import `shared/*.ts`, `server/src/config.ts` (keep that file free of Node built-ins), and `server/src/d1/sql.ts`. Check with `npm run check:worker` (bundle is ~15 KB gzip).
+
+## Database: D1 `timetable`, binding `DB`
+
+Schema is `migrations/*.sql`, applied by `wrangler d1 migrations apply timetable` (deploy does it). Add a new numbered file; never edit an applied one. Every reader and writer goes through `SqlDb` (`server/src/d1/sql.ts`): `fromD1` in the Worker, `d1RestDb` (`server/src/d1/rest.ts`, D1 REST API, chunked, retried) in the job, `sqliteDb` (`server/src/d1/sqlite.ts`, node:sqlite + migrations) in tests and local dev.
+
+| Tables | Written by | Read by |
+| --- | --- | --- |
+| `timetable_sync`, `timetable_lectures`, `timetable_changes`, `timetable_weeks` (the archive; `week_id = 'live'` or a saved week id) | job | job |
+| `snapshots` (key, body, hash) | job | Worker |
+| `job_state` (requested/dispatched/finished) | both | both |
+| `timetable_sheet_links` | Worker (admin) | job |
+| `student_notices`, `push_subscriptions`, `push_vapid` | Worker; job sets `pushed_at` and prunes dead subscriptions | both |
+| `faculty_directory`, `admin_password`, `admin_sessions`, `rate_limits` | Worker | Worker |
+
+Timestamps are ISO strings (`toISOString()`), compared as text. `rate_limits.reset_at` is epoch ms.
+
+## Snapshots (the read model)
+
+Keys come only from `shared/scope.ts`: `scopeKey(scope, index)` turns a request into `all`, `none`, `b:<course>|<batch>`, `d:<division>`, or `f:<faculty>` (lowercased; faculty and division are resolved with `matchFaculty` / `matchChoice`). The job writes with the same function, so a request lands on the row the job wrote.
+
+| Key | Body |
+| --- | --- |
+| `index` | `SnapshotIndex`: choices, faculties, batches, timezone |
+| `sync` | `SyncInfo` without `refreshing` |
+| `changes` | `{"changes":[...]}`, newest 200 |
+| `boot:<scope>` | `BootstrapResponse` without `now`, `today`, `sync`, `notices` |
+| `week:<monday>:<scope>` | `/api/week` body. Omitted when empty |
+| `ics:<scope>` | ICS text, `d:` and `f:` only |
+
+The job renders with `server/src/views.ts` (`buildBootstrap`, week and calendar views; golden output in `server/test/views.test.ts`) and writes only rows whose hash changed (`server/src/job/snapshots.ts`). An unchanged run writes about 3 rows.
+
+## Worker routes (`server/src/edge/`)
 
 | Route | Behaviour |
 | --- | --- |
-| `GET /api/bootstrap` | The public payload. On Vercel, a sheet older than the interval syncs in the background unless there is no saved copy to show. `?all=1` or `?faculty=` covers every sheet. Accepts optional `?division=`, `?faculty=`, `?course=`, `?batch=` to scope lectures and changes |
-| `POST /api/sync` | Sync now, return the same payload |
-| `GET /api/calendar.ics` | `?division=` one cohort, or `?faculty=` every matching lecture. Faculty events put the cohort in `SUMMARY`. `download=1` sets Content-Disposition |
-| `GET /api/changes` | Recent change rows |
-| `GET /api/health` | 200 after a successful sync, else 503 |
-| `POST /api/auth/pin-verify` | Verify 6-digit student batch access PIN against Supabase Postgres `batch_access_codes` |
-| `POST /api/auth/google` | Verify Google ID token, restrict to allowed domains (`@itm.edu`, `@isu.ac.in`), match `faculty_directory` in Supabase Postgres, issue HttpOnly session cookie and return the same token for the client to keep |
-| `GET /api/auth/me` | Current authenticated faculty session. Accepts the cookie or `Authorization: Bearer` |
-| `POST /api/auth/logout` | Clear faculty session cookie |
-| `GET /api/auth/config` | Returns Google OAuth client ID |
-| `POST /api/admin/login` | Check the admin password. The only read of `admin_password.password_hash` is `readAdminPasswordHash`. The response never includes the hash. Session cookie `aayam_admin` is HttpOnly |
-| `POST /api/admin/sheets` | Signed-in admin replaces one batch's spreadsheet id in `timetable_sheet_links`, then syncs that sheet. A sheet that cannot be read is not kept |
-| `POST /api/admin/notices` | Signed-in admin stores a student notice and sends a web push to matching subscriptions |
-| `GET /api/push/public-key` | Public half of the VAPID key. The private half stays in `push_vapid` |
+| `GET /api/bootstrap` | `?division=` (alias `cohort`), `?faculty=`, `?course=`, `?batch=`, `?all=1`. One D1 round trip. Adds `now`, `today` (in `index.timezone`), `sync.refreshing`, and `notices` (student scopes: course/batch match, 14 days, newest 5). ETag + 304, `Cache-Control: no-cache`. 503 + `Retry-After` before the first job run. A read older than 12 min asks for a sync in the background |
+| `POST /api/sync` | Records a user request, dispatches the job (at most once a minute), returns the current bootstrap with `refreshing: true` |
+| `GET /api/week?monday=` | Stored body, scoped like bootstrap. Missing → empty lists |
+| `GET /api/calendar.ics` | `?division=` or `?faculty=`, `download=1` sets Content-Disposition |
+| `GET /api/changes`, `/api/health`, `/api/db-status` | From snapshots; D1 ping |
+| `/api/auth/config`, `/me`, `/google`, `/logout` | Google ID token via tokeninfo, allowed domains, `faculty_directory` (case-insensitive, active). HMAC session with `AUTH_SECRET`, cookie `timetable_faculty_session`, or `Authorization: Bearer`. 8 tries / 10 min / IP |
+| `/api/admin/session`, `/login`, `/logout`, `/password` | Hash `hmac-sha256:<salt>:<digest>` keyed by `AUTH_SECRET` (scrypt does not fit 10 ms). Seeded from secret `ADMIN_PASSWORD` when empty or when an old scrypt hash is found. 5 failures / 15 min / IP. Cookie `aayam_admin`, 12 h. The only read of `password_hash` is in `edge/admin.ts` |
+| `POST /api/admin/sheets` | Checks the public xlsx export starts with `PK`, stores the link, asks for a sync. Response has `syncing: true` |
+| `POST /api/admin/notices` | Stores the notice (`pushed_at` NULL), asks for a sync; the job sends the push. Response has `queued: true` |
+| `GET /api/push/public-key`, `POST /api/push/subscribe` | VAPID public key; upsert subscription |
 
-`buildBootstrap` presents each stored lecture through `presentLecture`, restores removed lectures as cancelled, and sorts by date, time, division, subject. `BootstrapResponse` is `shared/types.ts`. The client must not depend on fields that are not on that type.
+`scheduled` (cron `*/5`) only dispatches the job. Cron and stale reads never set `refreshing`; only `/api/sync` and admin actions do (`server/src/edge/sync.ts`).
 
-## Sync
+## Sync job (`server/src/job/pipeline.ts`)
 
-`server/src/services/syncScheduler.ts` is the only place that turns a download into a snapshot.
+1. Read `timetable_sync.revision` from D1. The working DB is `server/data/job.sqlite` (cached between Actions runs); hydrate it from the D1 archive only when the cached revision or database id differs.
+2. Resolve sheet sources: D1 `timetable_sheet_links` first, then env, then the fallbacks in `server/src/config.ts`. A program whose stored lectures came from another workbook was repointed by an admin: sync it with `replaceProgram`.
+3. `runSync` (`server/src/services/syncScheduler.ts`, the only place that turns a download into a snapshot):
+   1. Download the public xlsx (`googleSheetsService.ts`), `parseTimetableSource`, `normalizeWorkbook`.
+   2. `persistCancelledRemovals` so a removal already recorded stays cancelled.
+   3. A tab that failed to parse and produced no lectures keeps its last good copy.
+   4. Same content hash: touch sync state, emit nothing.
+   5. Bootstrapped and the new dates share nothing with the saved dates: `replacesPublishedWeek` replaces the snapshot, saves the outgoing week, clears the live change log, emits no events.
+   6. Otherwise `compareSnapshots`, save, `recordChanges`.
+   7. Download or parse failure: keep the last snapshot, set `lastError`. The `sync` snapshot is still published, so the client shows the error and the old grid.
+4. `publishToD1` (`server/src/job/archive.ts`): only changed rows (tracked in `published_rows`), deletes then upserts then the sync row with `revision + 1`. Safe to repeat after a crash.
+5. Render and write snapshots, send queued pushes (`pushes.ts`: `pushed_at` set before sending, 404/410 subscriptions deleted, notices older than 24 h are marked without a push), set `job_state.finished_at` (always).
 
-1. `hydrateArchive` if this process has an empty database and `DATABASE_URL` is set. That URL is the Supabase transaction pooler.
-2. Download the public xlsx (`googleSheetsService.ts`).
-3. `parseTimetableSource` then `normalizeWorkbook`.
-4. `persistCancelledRemovals` so a removal already recorded stays cancelled in the snapshot.
-5. If a tab failed to parse and produced no lectures, keep the last good copy of that tab.
-6. Same content hash: touch sync state, publish the archive, emit nothing.
-7. If bootstrapped and the new dates share nothing with the saved dates, `replacesPublishedWeek`: replace the snapshot, clear the change log, emit no events.
-8. Otherwise `compareSnapshots`, save, `recordChanges`, publish the archive.
-9. On download or parse failure, keep the last snapshot and set `lastError`. The client shows that error and the old grid.
-
-One sync per database at a time (`inflight` weak map).
+Run it: `npm run sync` (needs `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `D1_DATABASE_ID`), or `npm run sync -- --local-auto` against `wrangler dev`'s local D1, `--local <file>`, `--watch <s>`, `--data-dir <dir>`. A run takes 3–6 s, mostly downloading and parsing.
 
 ## Cancellations
 
@@ -48,16 +82,10 @@ One sync per database at a time (`inflight` weak map).
 - Same slot key and same core: no event.
 - A lecture that disappears while another non-break class remains on that tab and date becomes one cancelled event. It is not re-emitted later.
 - If the whole day is gone, it is a removed event and drops off the grid. Replacing a whole day must not mark the old classes cancelled.
-- `restoreRemoved.ts` writes that removed lecture back into the snapshot as cancelled. `persistCancelled.ts` rewrites the change row from `removed` to `cancelled`. Both run on sync and on bootstrap.
+- `restoreRemoved.ts` writes that removed lecture back into the snapshot as cancelled. `persistCancelled.ts` rewrites the change row from `removed` to `cancelled`. Both run on sync and when the job renders a bootstrap.
 - A faculty+room change on the same subject is a different session, not a move (`pairMoves`).
 
 Change types the client may alert: `cancelled`, `restored`, `rescheduled`, `room_change`, `faculty_change`, `subject_change`, `details_changed`, `replaced`, `added`, `removed`, `reverted`, `tab_added`, `tab_removed`.
-
-## Archive
-
-`durableState.ts` reads and writes Supabase Postgres through `postgres.ts`. Live lectures, saved weeks, and updates are rows: `timetable_lectures` (one row per lecture, `week_id = live` or a saved week), `timetable_changes` (one row per update, with `week_id`), `timetable_weeks`, and `timetable_sync`. `timetable_archive.archive` stays as the single JSON document an older bundle can still hydrate. New code merges that document with the rows. `timetableArchive.ts` merges two archives. A non-overlapping saved week is a fresh baseline: its change rows leave the live log and stay on that week. The outgoing week is kept, up to 8 past weeks per course and batch, and the published week is stored too so the next upload does not depend on a last-second copy. The client hides the published week from `savedWeeks` and lists the older ones. Same-week removals stay cancelled. `server/test/archive.test.ts`, `sync.test.ts`, and `weeks.test.ts` cover this.
-
-SQLite is `server/src/db.ts`. Local file defaults to `server/data/timetable.sqlite` (gitignored). Vercel uses `/tmp/timetable.sqlite`, wiped on cold start, then refilled from Supabase.
 
 ## Parser
 
@@ -88,3 +116,7 @@ Tests: `server/test/faculty.test.ts`.
 ## Presenting a lecture
 
 `presentLecture.ts` turns a stored row into `PublicLecture`: display status, highlight window (`HIGHLIGHT_HOURS`, default 72), previous values, and the public id. The client colours and badges from `displayStatus` and `kind` (`lecture`, `break`, `off`).
+
+## Archive and weeks
+
+`archiveRows.ts` maps the working DB to rows and back; `timetableArchive.ts` merges two archives. A non-overlapping saved week is a fresh baseline: its change rows leave the live log and stay on that week. The outgoing week is kept, up to 8 past weeks per course and batch, and the published week is stored too. `views.ts` collapses overlapping copies of one week (`preferOneWeekCopies`). The client hides the published week from `savedWeeks`. Same-week removals stay cancelled across job runs and cache loss because the archive is in D1. `server/test/archive.test.ts`, `sync.test.ts`, `weeks.test.ts`, `job.test.ts` cover this.

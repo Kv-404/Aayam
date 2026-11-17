@@ -23,7 +23,7 @@ function applyEnvFile(file: string) {
 }
 
 export function loadEnvFiles() {
-  // The Vercel bundle is CommonJS, where import.meta.url is empty. Env then comes from the host.
+  // Only the local job reads .env files. In CI the workflow supplies env; the Worker never calls this.
   if (!import.meta.url) return;
   const here = path.dirname(fileURLToPath(import.meta.url));
   applyEnvFile(path.resolve(here, "../../.env"));

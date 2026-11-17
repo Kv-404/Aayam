@@ -26,10 +26,12 @@ const facultyEmailKey = "timetable-faculty-email";
 const facultyLensKey = "timetable-faculty-lens";
 const facultyPreviewKey = "timetable-faculty-preview";
 const facultySessionKey = "timetable-faculty-session";
+/** Left by the removed batch PIN gate. Student logout still clears it. */
 const unlockedBatchesKey = "timetable-unlocked-batches";
 const studentBatchKey = "timetable-student-batch";
 const notifyHintKey = "timetable-notify-hint";
 const examNoticeKey = "timetable-exam-notice";
+const pushSyncedKey = "timetable-push-synced";
 
 export type MeetAction = "open" | "copy";
 
@@ -47,6 +49,15 @@ function storageSet(key: string, value: string) {
   } catch {
     // Choices still apply for this visit when storage is blocked.
   }
+}
+
+/** The push subscription last sent to the server, with the day it was sent. Re-sent at most once a day. */
+export function readPushSynced() {
+  return storageGet(pushSyncedKey) ?? "";
+}
+
+export function savePushSynced(signature: string) {
+  storageSet(pushSyncedKey, signature);
 }
 
 export function readSetup() {
@@ -158,45 +169,8 @@ export function clearFacultyBrowse() {
   }
 }
 
-export function readUnlockedBatches(): string[] {
-  const raw = storageGet(unlockedBatchesKey);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-export function isBatchUnlocked(course: string, batch: string): boolean {
-  if (!course || !batch) return false;
-  const key = `${course.trim()}:${batch.trim()}`;
-  const list = readUnlockedBatches();
-  if (list.includes(key)) return true;
-  const student = readStudentBatch();
-  if (
-    student &&
-    student.course.trim().toLowerCase() === course.trim().toLowerCase() &&
-    student.batch.trim().toLowerCase() === batch.trim().toLowerCase()
-  ) {
-    return true;
-  }
-  return false;
-}
-
-export function saveUnlockedBatch(course: string, batch: string) {
-  if (!course || !batch) return;
-  const key = `${course.trim()}:${batch.trim()}`;
-  const current = readUnlockedBatches();
-  if (!current.includes(key)) {
-    storageSet(unlockedBatchesKey, JSON.stringify([...current, key]));
-  }
-}
-
 export function saveStudentBatch(course: string, batch: string) {
   storageSet(studentBatchKey, JSON.stringify({ course, batch }));
-  saveUnlockedBatch(course, batch);
 }
 
 export function readStudentBatch(): { course: string; batch: string } | null {

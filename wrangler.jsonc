@@ -1,0 +1,36 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "timetable",
+  // Thin API over D1. It never parses a sheet: the sync job (GitHub Actions) prebuilds every response.
+  "main": "server/src/edge/index.ts",
+  "compatibility_date": "2026-11-17",
+  "observability": { "enabled": true, "head_sampling_rate": 0.2 },
+  "assets": {
+    "directory": "client/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    // Only the API runs the Worker. Everything else is a static asset request, which is free and unmetered.
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "timetable",
+      "database_id": "b11cefa5-4ea3-4c4c-984a-9718843fc49b",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // Every 5 minutes: ask GitHub Actions to run the sync job. One subrequest, almost no CPU.
+  "triggers": { "crons": ["*/5 * * * *"] },
+  // Custom domain: add after kv404.dev is an active zone on this account (see docs/agent/deploy.md).
+  // "routes": [{ "pattern": "aayam.kv404.dev", "custom_domain": true }],
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "COLLEGE_NAME": "ITM Skills University",
+    "TIMEZONE": "Asia/Kolkata",
+    "GITHUB_REPO": "Kv-404/Aayam",
+    "GITHUB_WORKFLOW": "sync.yml"
+  }
+  // Secrets (wrangler secret put): AUTH_SECRET, GOOGLE_CLIENT_ID, ALLOWED_EMAIL_DOMAINS, ADMIN_PASSWORD, GITHUB_TOKEN
+}

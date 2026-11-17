@@ -1,7 +1,7 @@
 import type { ChangeEvent } from "@shared/types";
 import { useEffect, useState } from "react";
 import { alertCopy, takeAlerts } from "@/lib/notifyChanges";
-import { readStoredCohort, readStudentBatch } from "@/lib/prefs";
+import { readPushSynced, readStoredCohort, readStudentBatch, savePushSynced } from "@/lib/prefs";
 
 const seenKey = "timetable-notified-ids";
 const optInKey = "timetable-notify";
@@ -81,13 +81,13 @@ export async function syncPushSubscription() {
   const worker = await registration();
   if (!worker?.pushManager) return;
   try {
-    const response = await fetch("/api/push/public-key");
-    if (!response.ok) return;
-    const payload = (await response.json()) as { publicKey?: string | null };
-    const publicKey = payload.publicKey ?? "";
-    if (!publicKey) return;
     let subscription = await worker.pushManager.getSubscription();
     if (!subscription) {
+      const response = await fetch("/api/push/public-key");
+      if (!response.ok) return;
+      const payload = (await response.json()) as { publicKey?: string | null };
+      const publicKey = payload.publicKey ?? "";
+      if (!publicKey) return;
       subscription = await worker.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(publicKey),
@@ -96,17 +96,22 @@ export async function syncPushSubscription() {
     const json = subscription.toJSON();
     if (!json.endpoint || !json.keys?.p256dh || !json.keys.auth) return;
     const batch = readStudentBatch();
-    await fetch("/api/push/subscribe", {
+    const body = JSON.stringify({
+      endpoint: json.endpoint,
+      keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
+      course: batch?.course ?? "",
+      batch: batch?.batch ?? "",
+      division: readStoredCohort(),
+    });
+    // The same subscription for the same class was sent today. A new day sends it again in case the server lost it.
+    const signature = `${new Date().toISOString().slice(0, 10)}|${body}`;
+    if (readPushSynced() === signature) return;
+    const sent = await fetch("/api/push/subscribe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        endpoint: json.endpoint,
-        keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
-        course: batch?.course ?? "",
-        batch: batch?.batch ?? "",
-        division: readStoredCohort(),
-      }),
+      body,
     });
+    if (sent.ok) savePushSynced(signature);
   } catch {
     // The message still appears on the timetable.
   }

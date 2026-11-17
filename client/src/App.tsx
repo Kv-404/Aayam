@@ -2,17 +2,11 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { cohortLabel, DEFAULT_COHORT_CHOICES, type CohortChoice } from "@shared/cohort";
 import { coordinatorPreview, findCoordinator } from "@shared/coordinators";
 import { DEFAULT_FACULTY_NAMES } from "@shared/faculty";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useEffect, useState, type ReactNode } from "react";
-import { AdminPage } from "@/components/AdminPage";
-import { Dashboard } from "@/components/Dashboard";
-import { FacultyLoginModal } from "@/components/FacultyLoginModal";
+import { AnimatePresence, m, useReducedMotion } from "motion/react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { HomePage } from "@/components/HomePage";
-import { PitchPage } from "@/components/PitchPage";
 import { LoadingScreen } from "@/components/LoadingScreen";
-import { PrivacyPolicy } from "@/components/PrivacyPolicy";
 import { Setup } from "@/components/Setup";
-import { TermsOfService } from "@/components/TermsOfService";
 import { fetchBootstrap, refreshBootstrap, type BootstrapScope } from "@/lib/api";
 import { fetchCurrentAuth } from "@/lib/auth";
 import { isHomeScreenApp, recoverFacultySession, storedFacultyScope } from "@/lib/facultyBoot";
@@ -51,6 +45,24 @@ import {
   type ViewerRole,
 } from "@/lib/prefs";
 import { cohortToSlug, slugToCohort } from "@/lib/slug";
+
+// Pages a timetable visit never opens load on demand.
+const loadDashboard = () => import("@/components/Dashboard");
+const Dashboard = lazy(() => loadDashboard().then((m) => ({ default: m.Dashboard })));
+const AdminPage = lazy(() => import("@/components/AdminPage").then((m) => ({ default: m.AdminPage })));
+const PitchPage = lazy(() => import("@/components/PitchPage").then((m) => ({ default: m.PitchPage })));
+const PrivacyPolicy = lazy(() => import("@/components/PrivacyPolicy").then((m) => ({ default: m.PrivacyPolicy })));
+const TermsOfService = lazy(() => import("@/components/TermsOfService").then((m) => ({ default: m.TermsOfService })));
+const FacultyLoginModal = lazy(() => import("@/components/FacultyLoginModal").then((m) => ({ default: m.FacultyLoginModal })));
+
+/**
+ * The data job runs every few minutes and a sync in progress lands within one or two. After a Refresh tap
+ * the page checks every 20 seconds. A sync the scheduler started on its own gets one check every 90 seconds.
+ * Either stops after three minutes and falls back to the normal five-minute check.
+ */
+const REFRESH_POLL_MS = 20 * 1000;
+const BACKGROUND_SYNC_POLL_MS = 90 * 1000;
+const REFRESH_POLL_LIMIT_MS = 3 * 60 * 1000;
 
 function readScopeFromUrl(choices: CohortChoice[]): {
   scope: BootstrapScope;
@@ -248,6 +260,18 @@ function facultyReadScope(name: string): BootstrapScope {
   return wide ? { all: true, faculty: name } : { faculty: name };
 }
 
+/** A saved timetable visit fetches the grid code alongside the bootstrap request. The home page fetches it once idle. */
+function usePreloadDashboard(home: boolean) {
+  useEffect(() => {
+    if (!home) {
+      void loadDashboard();
+      return;
+    }
+    const timer = window.setTimeout(() => void loadDashboard(), 2000);
+    return () => window.clearTimeout(timer);
+  }, [home]);
+}
+
 export function App() {
   const preferences = usePreferences();
   const calmMotion = useReducedMotion();
@@ -280,6 +304,8 @@ export function App() {
     if (urlScope?.role || urlScope?.matchedCohort) return true;
     return readSetup() && hasChosenRole();
   });
+
+  usePreloadDashboard(!configured);
 
   const [scope, setScope] = useState<BootstrapScope>(() => {
     if (boot) return boot;
@@ -432,35 +458,36 @@ export function App() {
     }
   }
 
-  const [refreshPollingCount, setRefreshPollingCount] = useState(0);
+  // When the server says a background sync is running, when that started. Polling fast stops after a few minutes.
+  const refreshingSince = useRef<number | null>(null);
+  // Mirrors `awaitingSync` below for the interval callback.
+  const userAsked = useRef(false);
 
   const query = useQuery({
     queryKey: ["bootstrap", scope],
     queryFn: () => fetchBootstrap(scope),
     initialData: () => readCachedBootstrap(scope),
     placeholderData: keepPreviousData,
+    // Focus or a reconnect asks again at most once a minute. An unchanged copy comes back as a 304.
     staleTime: 60 * 1000,
     gcTime: 10 * 60 * 1000,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchIntervalInBackground: false,
     enabled: Boolean(configured || scope.division || scope.faculty || scope.all || (scope.course && scope.batch)),
-    // While the server refreshes in the background, ask again soon to pick up the new copy (limited to 3 rapid checks to prevent polling loops)
     refetchInterval: (result) => {
-      const isRefreshing = Boolean(result.state.data?.sync?.refreshing);
-      if (isRefreshing && refreshPollingCount < 3) {
-        return 4000;
+      if (result.state.data?.sync?.refreshing) {
+        refreshingSince.current ??= Date.now();
+        if (Date.now() - refreshingSince.current < REFRESH_POLL_LIMIT_MS) {
+          return userAsked.current ? REFRESH_POLL_MS : BACKGROUND_SYNC_POLL_MS;
+        }
+      } else {
+        refreshingSince.current = null;
       }
       const intervalSec = result.state.data?.sync?.intervalSeconds ?? 300;
-      return Math.max(intervalSec, 120) * 1000;
+      return Math.max(intervalSec, 300) * 1000;
     },
   });
-
-  useEffect(() => {
-    if (query.data?.sync?.refreshing) {
-      setRefreshPollingCount((prev) => prev + 1);
-    } else {
-      setRefreshPollingCount(0);
-    }
-  }, [query.data?.sync?.refreshing, query.dataUpdatedAt]);
 
   useEffect(() => {
     if (query.data && query.data.lectures && query.data.lectures.length > 0) {
@@ -468,9 +495,28 @@ export function App() {
     }
   }, [query.data, scope]);
 
+  // Refresh only asks the server to run its sync job. The button keeps spinning until that copy arrives.
+  const [awaitingSync, setAwaitingSync] = useState(false);
+  const refreshing = Boolean(query.data?.sync?.refreshing);
+  userAsked.current = awaitingSync;
+  useEffect(() => {
+    if (!awaitingSync) return;
+    if (!refreshing) {
+      setAwaitingSync(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setAwaitingSync(false), REFRESH_POLL_LIMIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [awaitingSync, refreshing]);
+
   const refresh = useMutation({
     mutationFn: () => refreshBootstrap(scope),
     onSuccess: (data) => {
+      const waiting = Boolean(data.sync?.refreshing);
+      userAsked.current = waiting;
+      // A tap starts a fresh three-minute window even if the scheduler's sync was already running.
+      if (waiting) refreshingSince.current = Date.now();
+      setAwaitingSync(waiting);
       queryClient.setQueryData(["bootstrap", scope], data);
       saveCachedBootstrap(scope, data);
     },
@@ -638,27 +684,31 @@ export function App() {
             }
           }}
         />
-        <FacultyLoginModal
-          open={facultyModalOpen}
-          onClose={() => setFacultyModalOpen(false)}
-          onSuccess={(fac, email, allFac) => {
-            const allowed = Boolean(allFac);
-            const lens = signInFacultyLens(email, fac, allowed);
-            saveFaculty(fac);
-            saveFacultyEmail(email);
-            saveRole("faculty");
-            saveCanSeeAllFaculty(allowed);
-            saveFacultyPreview(false);
-            saveFacultyLens(lens);
-            setFacultyModalOpen(false);
-            const wide = allowed || Boolean(findCoordinator(email, fac));
-            if (typeof window !== "undefined") {
-              window.history.pushState(null, "", keepPreview(`/?faculty=${encodeURIComponent(fac)}`));
-            }
-            setScope(wide ? { all: true, faculty: fac } : { faculty: fac });
-            setConfigured(true);
-          }}
-        />
+        {facultyModalOpen ? (
+          <Suspense fallback={null}>
+            <FacultyLoginModal
+              open={facultyModalOpen}
+              onClose={() => setFacultyModalOpen(false)}
+              onSuccess={(fac, email, allFac) => {
+                const allowed = Boolean(allFac);
+                const lens = signInFacultyLens(email, fac, allowed);
+                saveFaculty(fac);
+                saveFacultyEmail(email);
+                saveRole("faculty");
+                saveCanSeeAllFaculty(allowed);
+                saveFacultyPreview(false);
+                saveFacultyLens(lens);
+                setFacultyModalOpen(false);
+                const wide = allowed || Boolean(findCoordinator(email, fac));
+                if (typeof window !== "undefined") {
+                  window.history.pushState(null, "", keepPreview(`/?faculty=${encodeURIComponent(fac)}`));
+                }
+                setScope(wide ? { all: true, faculty: fac } : { faculty: fac });
+                setConfigured(true);
+              }}
+            />
+          </Suspense>
+        ) : null}
       </ColorProvider>
     )];
   }
@@ -684,7 +734,7 @@ export function App() {
       <Dashboard
         data={query.data}
         now={now}
-        pending={refresh.isPending}
+        pending={refresh.isPending || awaitingSync}
         onRefresh={() => refresh.mutate()}
         theme={preferences.theme}
         colors={preferences.colors}
@@ -706,15 +756,15 @@ export function App() {
   // Fade only. A transform here would make this wrapper the anchor for the fixed bottom bar and sticky header.
   return (
     <AnimatePresence mode="wait" initial={false} onExitComplete={() => window.scrollTo(0, 0)}>
-      <motion.div
+      <m.div
         key={page}
         data-page={page}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1, transition: { duration: calmMotion ? 0 : 0.24, ease: "easeOut" } }}
         exit={{ opacity: 0, transition: { duration: calmMotion ? 0 : 0.12, ease: "easeIn" } }}
       >
-        {content}
-      </motion.div>
+        <Suspense fallback={<LoadingScreen />}>{content}</Suspense>
+      </m.div>
     </AnimatePresence>
   );
 }

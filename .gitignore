@@ -10,8 +10,9 @@ server/data
 .env
 .env.*
 .DS_Store
-.vercel
 .env*
 !.env.example
 .claude/
-supabase/.temp
+.wrangler/
+.dev.vars*
+.vercel/

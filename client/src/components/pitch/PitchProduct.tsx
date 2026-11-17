@@ -18,7 +18,7 @@ export function PitchProduct() {
           The timetable is the product. The rest of campus life can plug into it.
         </h2>
         <p className="mt-4 max-w-xl text-sm leading-relaxed text-white/60">
-          These modules are planned. You cannot open them yet. The timetable, the batch PIN, and faculty sign-in are what work today.
+          These modules are planned. You cannot open them yet. The timetable, batch and section choice, and faculty sign-in are what work today.
         </p>
       </Reveal>
       <ul className="mt-10 grid gap-px overflow-hidden rounded-2xl border border-white/10 bg-white/10 sm:grid-cols-2 lg:grid-cols-3">

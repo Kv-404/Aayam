@@ -4,7 +4,7 @@ Vite + React + Tailwind. Entry `client/src/main.tsx` → `App.tsx` → `Dashboar
 
 ## Boot
 
-`App.tsx` loads `GET /api/bootstrap` with React Query and refetches on `sync.intervalSeconds`, or after 4 seconds while `sync.refreshing` is true. Bootstrap carries the current week only. `savedWeeks` lists older weeks without their lectures. Opening one calls `GET /api/week?monday=`. `useNow` ticks every 15s. Theme, class colours, and bold colours apply on `documentElement` from `client/src/lib/prefs.ts`.
+`App.tsx` loads `GET /api/bootstrap` with React Query and refetches every `max(sync.intervalSeconds, 300)` seconds while the tab is visible (never while hidden), and on focus at most once a minute. While `sync.refreshing` is true it checks every 20 s for up to 3 minutes after the user taps Refresh, otherwise every 90 s. Do not add cache-busting params or `no-store`: the Worker answers 304 to the browser's ETag revalidation, and the free plan allows 100k API requests a day. Bootstrap carries the current week only. `savedWeeks` lists older weeks without their lectures. Opening one calls `GET /api/week?monday=`. `useNow` ticks every 15s. Theme, class colours, and bold colours apply on `documentElement` from `client/src/lib/prefs.ts`.
 
 A saved faculty sign-in opens that faculty's timetable when the address is `/` or `/?faculty=`, including a phone home-screen icon. The public home page stays for a visit with no faculty token. That page is a short gate: "I am", then Student or Faculty, with a small Admin link at the top right. A student then picks B.Tech or MCA, a batch such as 2025–29, a cohort, and a theme. Tapping the batch starts that batch’s sheet only. Faculty sign-in reads every sheet. A student request does not download the other batches. Faculty sign in with Google. The product pitch lives at `/pitch`. Admin sign-in, sheet links, and student notices live at `/admin`. Motion on the gate is a short fade between steps and is off when the user prefers reduced motion. The icon is a standalone web app (`manifest.webmanifest`). Install icons are PNG (`apple-touch-icon.png`, `icon-192.png`, `icon-512.png`) because a phone home screen ignores an SVG. An icon added before those files existed must be removed and added again, or the phone keeps the old empty icon.
 
@@ -19,7 +19,7 @@ Setup shows when `readSetup()` is false or `hasChosenRole()` is false, or the sa
 
 The header cohort menu for students lists cohorts restricted to their authenticated batch.
 
-`saveSetup` writes `timetable-role`, and the cohort or faculty name, then `timetable-setup=1`. It does not clear the theme, colours, or Meet choice. Student logout in the settings menu clears `timetable-student-batch`, `timetable-unlocked-batches`, `timetable-cohort`, `timetable-role`, `timetable-setup`, and cleans the URL to `/`.
+`saveSetup` writes `timetable-role`, and the cohort or faculty name, then `timetable-setup=1`. It does not clear the theme, colours, or Meet choice. Student logout in the settings menu clears `timetable-student-batch`, `timetable-unlocked-batches` (legacy, still cleared), `timetable-cohort`, `timetable-role`, `timetable-setup`, and cleans the URL to `/`.
 
 ## Page transitions
 
@@ -32,7 +32,7 @@ The header cohort menu for students lists cohorts restricted to their authentica
 | `timetable-setup` | `"1"` after setup |
 | `timetable-role` | `student` or `faculty`. Absent means ask again |
 | `timetable-student-batch` | JSON `{ course, batch }` for the batch the student picked |
-| `timetable-unlocked-batches` | JSON array of unlocked `course:batch` pairs |
+| `timetable-push-synced` | Last day a push subscription and cohort were sent to `/api/push/subscribe`, so it is re-sent at most daily |
 | `timetable-can-see-all-faculty` | `"1"` or `"0"` for faculty permissions |
 | `timetable-faculty-email` | Signed-in faculty email. Used to recognise a coordinator |
 | `timetable-faculty-lens` | JSON view: `self`, `all`, `cohorts`, one `cohort`, or one `faculty` |

@@ -1,6 +1,5 @@
 import { cleanSpreadsheetId, type SheetSource } from "../config.ts";
-import { ensureAdminSchema } from "./adminSchema.ts";
-import { databaseUrl, getSql } from "./postgres.ts";
+import type { SqlDb } from "../d1/sql.ts";
 
 const SHEET_ID = /^[a-zA-Z0-9-_]{20,80}$/;
 
@@ -39,50 +38,56 @@ export function clearSheetSourceCache() {
   cache = null;
 }
 
-export async function readSheetOverrides(): Promise<StoredSheetLink[]> {
-  if (!databaseUrl()) return [];
-  await ensureAdminSchema();
-  const sql = getSql();
-  const rows = await sql<{ course: string; batch: string; spreadsheet_id: string }[]>`
-    SELECT course, batch, spreadsheet_id FROM timetable_sheet_links
-  `;
+/** Admin sheet links from D1 `timetable_sheet_links`. No database means no overrides. */
+export async function readSheetOverrides(sql?: SqlDb): Promise<StoredSheetLink[]> {
+  if (!sql) return [];
+  const rows = await sql.all<{ course: string; batch: string; spreadsheet_id: string }>(
+    "SELECT course, batch, spreadsheet_id FROM timetable_sheet_links",
+  );
   return rows
     .filter((row) => row.course && row.batch && acceptSpreadsheetId(row.spreadsheet_id))
     .map((row) => ({ course: row.course, batch: row.batch, spreadsheetId: row.spreadsheet_id }));
 }
 
-export async function resolveSheetSources(fallback: SheetSource[]): Promise<SheetSource[]> {
+/** The configured sheets with any admin replacement applied. A failed read keeps the configured sheets. */
+export async function resolveSheetSources(fallback: SheetSource[], sql?: SqlDb): Promise<SheetSource[]> {
   const now = Date.now();
   if (cache && now - cache.at < 3000) return cache.sources;
   let sources = fallback;
   try {
-    const overrides = await readSheetOverrides();
-    sources = mergeSheetOverrides(fallback, overrides);
-  } catch {
+    sources = mergeSheetOverrides(fallback, await readSheetOverrides(sql));
+  } catch (error) {
+    console.warn("[sheets] could not read sheet links:", error instanceof Error ? error.message : error);
     sources = fallback;
   }
   cache = { at: now, sources };
   return sources;
 }
 
-export async function writeSheetOverride(course: string, batch: string, spreadsheetId: string) {
-  await ensureAdminSchema();
-  const sql = getSql();
-  await sql`
-    INSERT INTO timetable_sheet_links (course, batch, spreadsheet_id, updated_at)
-    VALUES (${course}, ${batch}, ${spreadsheetId}, now())
-    ON CONFLICT (course, batch) DO UPDATE
-      SET spreadsheet_id = EXCLUDED.spreadsheet_id, updated_at = now()
-  `;
+function requireDb(sql: SqlDb | undefined): SqlDb {
+  if (!sql) throw new Error("Sheet links need the database.");
+  return sql;
+}
+
+export async function writeSheetOverride(course: string, batch: string, spreadsheetId: string, sql?: SqlDb) {
+  await requireDb(sql).run([
+    {
+      sql: `INSERT INTO timetable_sheet_links (course, batch, spreadsheet_id, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT (course, batch) DO UPDATE
+          SET spreadsheet_id = excluded.spreadsheet_id, updated_at = excluded.updated_at`,
+      params: [course, batch, spreadsheetId, new Date().toISOString()],
+    },
+  ]);
   clearSheetSourceCache();
 }
 
-export async function deleteSheetOverride(course: string, batch: string) {
-  await ensureAdminSchema();
-  const sql = getSql();
-  await sql`
-    DELETE FROM timetable_sheet_links
-    WHERE lower(course) = lower(${course}) AND lower(batch) = lower(${batch})
-  `;
+export async function deleteSheetOverride(course: string, batch: string, sql?: SqlDb) {
+  await requireDb(sql).run([
+    {
+      sql: "DELETE FROM timetable_sheet_links WHERE lower(course) = lower(?) AND lower(batch) = lower(?)",
+      params: [course, batch],
+    },
+  ]);
   clearSheetSourceCache();
 }

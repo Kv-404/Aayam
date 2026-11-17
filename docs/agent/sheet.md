@@ -40,7 +40,7 @@ Monday and Saturday OFF cells are white. The word `OFF` cancels the slot. The wh
 
 When someone publishes next week's sheet, its dates do not overlap this week's dates. Sync treats that as a new baseline: the old change log leaves the live Updates list, nothing on the new grid is marked cancelled, and the new grid is the starting point. The previous week stays saved, lectures and updates included, and can be opened from the week menu. Same-week edits still diff. The current batch workbooks are the fallbacks in `server/src/config.ts`.
 
-Deleting `server/data/timetable.sqlite` and restarting local dev also starts clean. Supabase still has the saved weeks and the live timetable, and `mergeArchives` decides whether that history reattaches. See `docs/agent/server.md`.
+Deleting the job's working copy (`server/data/`, or the Actions cache) is safe: the next run hydrates the saved weeks and live timetable back from D1. See `docs/agent/server.md`.
 
 ## People
 

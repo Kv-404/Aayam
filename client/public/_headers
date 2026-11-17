@@ -1,0 +1,21 @@
+# Cloudflare static assets. Applies to files in dist only, never to /api responses from the Worker.
+# Vite hashes every file under /assets, so a new release has new names and these can be kept forever.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# The shell, the service worker, and the manifest name the current release. Always revalidate (ETag, 304).
+/
+  Cache-Control: no-cache
+/index.html
+  Cache-Control: no-cache
+/sw.js
+  Cache-Control: no-cache
+/manifest.webmanifest
+  Cache-Control: no-cache
+
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Strict-Transport-Security: max-age=63072000; includeSubDomains

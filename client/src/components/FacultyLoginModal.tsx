@@ -1,7 +1,7 @@
 import { coordinatorPreviews } from "@shared/coordinators";
 import { useEffect, useRef, useState } from "react";
 import { AlertCircle, Lock, X } from "lucide-react";
-import { fetchGoogleClientId, loginWithGoogleCredential } from "@/lib/auth";
+import { fetchGoogleClientId, loadGoogleScript, loginWithGoogleCredential } from "@/lib/auth";
 
 declare global {
   interface Window {
@@ -52,6 +52,7 @@ export function FacultyLoginModal({
       return;
     }
 
+    loadGoogleScript();
     let checkInterval: number | undefined;
 
     async function initButton() {

@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { ColorSwitch } from "@/components/ColorSwitch";
 import { MeetChoice } from "@/components/MeetLink";
 import { Input } from "@/components/ui/input";
-import { fetchGoogleClientId, loginWithGoogleCredential } from "@/lib/auth";
+import { fetchGoogleClientId, loadGoogleScript, loginWithGoogleCredential } from "@/lib/auth";
 import { signInFacultyLens } from "@/lib/facultyView";
 import {
   readFacultyEmail,
@@ -101,6 +101,7 @@ export function Setup({
   useEffect(() => {
     if (step !== "faculty" || name) return;
 
+    loadGoogleScript();
     let checkInterval: number | undefined;
     async function init() {
       if (!window.google?.accounts?.id || !googleBtnRef.current) return false;

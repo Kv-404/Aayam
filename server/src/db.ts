@@ -4,11 +4,12 @@ import { DatabaseSync } from "node:sqlite";
 import type { ChangeEvent, ParseIssue } from "../../shared/types.ts";
 import type { ChangeDraft, StoredLecture } from "./model.ts";
 
+/** The sync job's working database. Always real node:sqlite: the job runs on Node, never in the Worker. */
+export type AppDatabase = DatabaseSync;
+
 export interface StoredChange extends ChangeDraft {
   id: number;
 }
-
-export type AppDatabase = DatabaseSync;
 
 export interface SyncState {
   lastSuccessAt: string | null;
@@ -21,7 +22,7 @@ export interface SyncState {
   spreadsheetTitle: string | null;
 }
 
-export function openDatabase(file: string) {
+export function openDatabase(file: string): AppDatabase {
   if (file !== ":memory:") {
     fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
   }

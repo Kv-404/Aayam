@@ -80,7 +80,9 @@ export function AdminPage({ onHome }: { onHome: () => void }) {
       const result = await saveAdminSheet(sheet.course, sheet.batch, url);
       if (result.sheets) setSheets(result.sheets);
       setDrafts((prev) => ({ ...prev, [key]: "" }));
-      setNote(`Updated ${programLabel(sheet.course)} ${batchLabel(sheet.batch)}.`);
+      const label = `${programLabel(sheet.course)} ${batchLabel(sheet.batch)}`;
+      // The sheet is read by a background job, so the timetable catches up a little later.
+      setNote(result.syncing ? `Saved ${label}. The timetable updates within about a minute.` : `Updated ${label}.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "The sheet could not be saved.");
     } finally {
@@ -99,7 +101,14 @@ export function AdminPage({ onHome }: { onHome: () => void }) {
       setTitle("");
       setMessage("");
       const delivered = typeof result.delivered === "number" ? result.delivered : 0;
-      setNote(delivered > 0 ? `Sent. ${delivered} phone${delivered === 1 ? "" : "s"} got it in the background.` : "Sent. Students see it the next time the timetable is open.");
+      // Push is sent by a background job. The notice itself is already live on the timetable.
+      setNote(
+        result.queued
+          ? "Notice posted. Push notifications go out within a minute."
+          : delivered > 0
+            ? `Sent. ${delivered} phone${delivered === 1 ? "" : "s"} got it in the background.`
+            : "Sent. Students see it the next time the timetable is open.",
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "The message could not be sent.");
     } finally {
