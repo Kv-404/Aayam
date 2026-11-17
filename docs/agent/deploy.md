@@ -74,6 +74,10 @@ The domain stays registered and billed at Spaceship. Only its DNS moves to Cloud
 
 Rollback before step 6: set Spaceship nameservers back to "Spaceship nameservers". Nothing else changes.
 
+## Until cutover: the Vercel bridge
+
+Until `kv404.dev` DNS is on Cloudflare, `aayam.kv404.dev` still points at the Vercel project `aayam`, which builds the SPA from `main` and forwards `/api/*` to `https://timetable.kv404.workers.dev` (`vercel.json`). All data and logic are already on Cloudflare. After step 6 above, delete `vercel.json` and the Vercel project.
+
 ## After cutover: removing the old hosting
 
 Only once `aayam.kv404.dev` serves from Cloudflare and a sync has run:
