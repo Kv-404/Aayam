@@ -54,3 +54,35 @@ When viewing "All classes" (`active.kind === "all"`) or multi-cohort scopes:
 ### D. Single Latest Timetable Focus
 - Header banner prominently indicates the active week range (`e.g. 2 Nov – 7 Nov 2026 (Latest)`).
 - If past ranges exist, they are tucked neatly into the `Past weeks` dropdown menu, preventing accidental display of stale or earliest timetable data.
+
+---
+
+## 4. Phase 6 Extension: MCP OAuth 2.1 Consent Surface (`/oauth/authorize` & `/oauth/callback`)
+
+When an AI MCP host (Claude Desktop, Claude.ai, Claude Code, Cursor, ChatGPT) initiates an OAuth 2.1 handshake, the browser briefly passes through Aayam's lightweight server-rendered consent page after Google Workspace verification.
+
+### Design Tokens & Visual Language
+- **Zero-Bundle HTML Surface**: Pure server-rendered HTML/CSS using inline system + monospace font stack, matching Aayam's Swiss modernist timetable aesthetic without pulling client JS bundles.
+- **Palette**:
+  - Light canvas `#f8fafc` (`#0f172a` ink), card surface `#ffffff` with hairline `1px solid #e2e8f0`, dark-mode media query support (`#09090b` canvas, `#18181b` card, `#27272a` border).
+  - Verified faculty badge: emerald pill (`#10b981/10`, `#059669` text).
+  - Confidential scope warning badge: amber hairline badge when `faculty:all` / `faculty:directory` scopes are granted (`can_see_all_faculty = true`).
+- **Layout & Hierarchy**:
+  1. **Brand Mark + Requesting Client**: Clearly displays client name/domain (from CIMD metadata URL or DCR client name) and verified `redirect_uri` host.
+  2. **Authenticated Identity Card**: Shows verified faculty name, `@itm.edu`/`@isu.ac.in` email, and role tier (`Faculty`, `Coordinator`, or `All-Access Faculty`).
+  3. **Explicit Scope Checklist**: Plain-English list of exact permissions being granted (`timetable:read`, `faculty:self`, and if elevated, `faculty:all` / `faculty:directory`).
+  4. **Primary Actions**: Crisp full-width "Authorize Access" primary action and secondary "Deny & Return" button.
+
+---
+
+## 5. Phase 10 Extension: AI Agent & App MCP Install Modal (`McpConnectModal`)
+
+To connect Aayam's remote MCP server without guessing configuration keys (`url` vs `serverUrl` vs `httpUrl` vs connector UI), the app provides a single-surface **Connect AI** dialog built using Aayam's semantic theme variables (`bg-background`, `bg-muted`, `border-border`, `text-foreground`, `text-muted-foreground`).
+
+### Layout & Visual Hierarchy
+- **Endpoint Header Bar**: Monospace endpoint URL (`https://<origin>/mcp`) with an instant Copy action and an OAuth 2.1 access badge (`@itm.edu` / `@isu.ac.in` Faculty OAuth).
+- **App Selector Tablist**: Accessible horizontal tab strip (`Claude`, `Claude Code`, `Cursor`, `VS Code`, `ChatGPT`, `Windsurf`, `Gemini CLI`) switching a single unified instruction panel rather than stacking 7 repetitive boxes.
+- **Native Action Surfaces**:
+  - One-click deeplink triggers for **Cursor** (`cursor://anysphere.cursor-deeplink/mcp/install?...`) and **VS Code** (`vscode:mcp/install?...`).
+  - Copyable CLI / JSON config snippets tailored strictly to each host's schema (`serverUrl` for Windsurf, `httpUrl` for Gemini CLI, `type: "http"` for VS Code, Connector instructions for Claude & ChatGPT).
+- **Starter Prompt Chips**: One-click copyable natural-language test prompts aligned to the user's permission tier (self schedule, free rooms, changes, or all-faculty directory).
