@@ -106,6 +106,17 @@ async function readWithIndex(db: SqlDb, fixed: Plan, plan: (index: SnapshotIndex
 
 const snapshot = (rows: Row[], key: string) => rows.find((row) => row.kind === "s" && row.a === key);
 
+/**
+ * Snapshot bodies for keys that depend on the index (resolved with `scopeKey`), plus fixed keys, in one
+ * round trip when this isolate already has the current index. `index` is null before the first job run.
+ */
+export async function readSnapshots(db: SqlDb, keysFor: (index: SnapshotIndex) => string[], fixedKeys: string[] = []) {
+  const { index, rows } = await readWithIndex(db, { keys: fixedKeys, parts: [] }, (current) => ({ keys: keysFor(current), parts: [] }));
+  const bodies = new Map<string, string>();
+  for (const row of rows) if (row.kind === "s" && row.a && row.a !== "index" && row.c !== null) bodies.set(row.a, row.c);
+  return { index, bodies };
+}
+
 export function readScope(url: URL): ReadScope {
   const param = (name: string) => url.searchParams.get(name)?.trim() ?? "";
   return {

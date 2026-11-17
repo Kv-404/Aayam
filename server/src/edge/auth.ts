@@ -1,4 +1,5 @@
 import { base64UrlToBytes, bytesToBase64Url, fromUtf8, hmacSha256, timingSafeEqual, utf8 } from "./crypto.ts";
+import type { SqlDb } from "../d1/sql.ts";
 import { authSecret, type Ctx, type Env } from "./env.ts";
 import { bearerToken, clearedCookie, clientIp, cookie, errorJson, json, parseCookies, readJson } from "./http.ts";
 import { checkRate, clearRate, recordFailure } from "./rateLimit.ts";
@@ -84,23 +85,37 @@ export async function verifyGoogleCredential(env: Env, credential: string) {
   if (!domains.some((domain) => email.endsWith(`@${domain}`))) {
     throw new Error(`Only accounts from [${domains.join(", ")}] are allowed.`);
   }
-  return { email };
+  return { email, nonce: typeof data.nonce === "string" ? data.nonce : "" };
 }
 
-/** An active `faculty_directory` row for this email, case-insensitive. */
-async function facultyByEmail(ctx: Ctx, email: string) {
-  const rows = await ctx.db.all<{ id: number; email: string; faculty_name: string; can_see_all_faculty: number }>(
+export interface FacultyRow {
+  id: number;
+  email: string;
+  faculty_name: string;
+  can_see_all_faculty: boolean;
+}
+
+/** An active `faculty_directory` row for this email, case-insensitive. Sign-ins also stamp `last_login_at`. */
+export async function lookupFaculty(db: SqlDb, email: string, options: { touchLastLogin?: boolean } = {}): Promise<FacultyRow> {
+  const rows = await db.all<{ id: number; email: string; faculty_name: string; can_see_all_faculty: number }>(
     "SELECT id, email, faculty_name, can_see_all_faculty FROM faculty_directory WHERE email = ? COLLATE NOCASE AND is_active = 1 LIMIT 1",
     [email],
   );
   const row = rows[0];
   if (!row) throw new Error(`The account ${email} is not registered in the authorized faculty directory.`);
-  try {
-    await ctx.db.run([{ sql: "UPDATE faculty_directory SET last_login_at = ? WHERE id = ?", params: [new Date().toISOString(), row.id] }]);
-  } catch (error) {
-    console.error("[auth] last_login_at update failed", error instanceof Error ? error.message : error);
+  if (options.touchLastLogin !== false) {
+    try {
+      await db.run([{ sql: "UPDATE faculty_directory SET last_login_at = ? WHERE id = ?", params: [new Date().toISOString(), row.id] }]);
+    } catch (error) {
+      console.error("[auth] last_login_at update failed", error instanceof Error ? error.message : error);
+    }
   }
-  return { email: row.email, faculty: row.faculty_name, canSeeAllFaculty: Boolean(row.can_see_all_faculty) };
+  return { id: Number(row.id), email: row.email, faculty_name: row.faculty_name, can_see_all_faculty: Boolean(row.can_see_all_faculty) };
+}
+
+async function facultyByEmail(ctx: Ctx, email: string) {
+  const row = await lookupFaculty(ctx.db, email);
+  return { email: row.email, faculty: row.faculty_name, canSeeAllFaculty: row.can_see_all_faculty };
 }
 
 export function authConfig(ctx: Ctx) {

@@ -57,6 +57,20 @@ export async function sha256Hex(value: string) {
   return hex;
 }
 
+export async function sha256Base64Url(value: string) {
+  return bytesToBase64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", utf8(value) as BufferSource)));
+}
+
+/** `bytes` random bytes as base64url. */
+export function randomToken(bytes = 32) {
+  return bytesToBase64Url(randomBytes(bytes));
+}
+
+/** Constant-time string compare. */
+export function timingSafeEqualStr(a: string, b: string) {
+  return timingSafeEqual(utf8(a), utf8(b));
+}
+
 /** Same length and same bytes, without an early exit. */
 export function timingSafeEqual(a: Uint8Array, b: Uint8Array) {
   let diff = a.length ^ b.length;

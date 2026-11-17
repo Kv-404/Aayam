@@ -9,7 +9,23 @@
       "destination": "https://timetable.kv404.workers.dev/api/:path*"
     },
     {
-      "source": "/((?!api/|assets/).*)",
+      "source": "/mcp",
+      "destination": "https://timetable.kv404.workers.dev/mcp"
+    },
+    {
+      "source": "/mcp/:path*",
+      "destination": "https://timetable.kv404.workers.dev/mcp/:path*"
+    },
+    {
+      "source": "/oauth/:path*",
+      "destination": "https://timetable.kv404.workers.dev/oauth/:path*"
+    },
+    {
+      "source": "/.well-known/:path*",
+      "destination": "https://timetable.kv404.workers.dev/.well-known/:path*"
+    },
+    {
+      "source": "/((?!api/|assets/|mcp$|mcp/|oauth/|\\.well-known/).*)",
       "destination": "/index.html"
     }
   ],

@@ -27,12 +27,12 @@ Shared types and faculty matching are in `docs/agent/server.md`. Read a second f
 
 ## Platform rules (free plan)
 
-- **The Worker (`server/src/edge/`) never parses a sheet, builds a timetable, or `JSON.parse`s a timetable body.** It reads a prebuilt `snapshots` row and concatenates strings. Workers Free is 10 ms CPU per request; one sheet costs 150–400 ms. New read features are rendered by the job (`server/src/views.ts`, `server/src/job/snapshots.ts`) and stored as snapshots.
+- **The Worker (`server/src/edge/`) never parses a sheet, builds a timetable, or `JSON.parse`s a timetable body.** It reads a prebuilt `snapshots` row and concatenates strings. Workers Free is 10 ms CPU per request; one sheet costs 150–400 ms. New read features are rendered by the job (`server/src/views.ts`, `server/src/job/snapshots.ts`) and stored as snapshots. Only exception: MCP tools (`edge/mcp.ts`) may parse one scoped `boot:`/`week:` row and `changes`, never `boot:all` (ask D1 with `json_extract`/`json_each` instead).
 - The Worker has no `node:` imports, no `process`, no npm packages. It may import `shared/*.ts`, `server/src/config.ts` (keep that file free of Node built-ins), and `server/src/d1/sql.ts`. `npm run check:worker` must pass.
 - Snapshot keys come only from `shared/scope.ts` (`scopeKey`, `snapshotKeys`). Job and Worker both call it; never build a key by hand.
 - D1 is the only database. Do not add another one, a KV/Redis cache, or any write path to Google Sheets. Schema changes are a new `migrations/000N_*.sql`, additive; never edit an applied migration.
 - All SQL goes through `SqlDb` (`server/src/d1/sql.ts`). Timestamps are ISO strings.
-- Only `/api/*` runs the Worker (`run_worker_first`). Static assets stay free; do not route pages through the Worker.
+- Only `/api/*` and the MCP paths (`/mcp`, `/mcp/*`, `/oauth/*`, `/.well-known/*`) run the Worker (`run_worker_first`; mirror them in `vercel.json` until cutover). Static assets stay free; do not route pages through the Worker.
 - Expensive crypto (scrypt, push encryption fan-out) does not go in the Worker. Pushes are sent by the job.
 - The browser never gets a Google key. Sheets stay "anyone with the link can view".
 

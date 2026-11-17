@@ -1,12 +1,16 @@
 import { fromD1, type D1Like, type SqlDb } from "../d1/sql.ts";
 
-/** Worker bindings and vars. Secrets: AUTH_SECRET, ADMIN_PASSWORD, GITHUB_TOKEN. */
+/** Worker bindings and vars. Secrets: AUTH_SECRET, ADMIN_PASSWORD, GITHUB_TOKEN, GOOGLE_CLIENT_SECRET. */
 export interface Env {
   DB: D1Like;
   ASSETS: { fetch(request: Request): Promise<Response> };
   /** At least 32 characters. Signs faculty sessions and keys the admin password hash. */
   AUTH_SECRET: string;
   GOOGLE_CLIENT_ID: string;
+  /** MCP OAuth only: Google authorization code exchange. Without it, MCP sign-in reuses the site's faculty session. */
+  GOOGLE_CLIENT_SECRET?: string;
+  /** MCP OAuth only: the public origin used as issuer and resource (such as `https://aayam.kv404.dev`). Default: the request origin. */
+  MCP_PUBLIC_URL?: string;
   ALLOWED_EMAIL_DOMAINS: string;
   /** Seeds `admin_password` when the table is empty. */
   ADMIN_PASSWORD?: string;

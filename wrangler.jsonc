@@ -9,8 +9,9 @@
     "directory": "client/dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    // Only the API runs the Worker. Everything else is a static asset request, which is free and unmetered.
-    "run_worker_first": ["/api/*"]
+    // Only the API and the MCP server (endpoint, OAuth, discovery) run the Worker. Everything else is a
+    // static asset request, which is free and unmetered.
+    "run_worker_first": ["/api/*", "/mcp", "/mcp/*", "/oauth/*", "/.well-known/*"]
   },
   "d1_databases": [
     {
@@ -30,7 +31,10 @@
     "COLLEGE_NAME": "ITM Skills University",
     "TIMEZONE": "Asia/Kolkata",
     "GITHUB_REPO": "Kv-404/Aayam",
-    "GITHUB_WORKFLOW": "sync.yml"
+    "GITHUB_WORKFLOW": "sync.yml",
+    "MCP_PUBLIC_URL": "https://aayam.kv404.dev"
   }
-  // Secrets (wrangler secret put): AUTH_SECRET, GOOGLE_CLIENT_ID, ALLOWED_EMAIL_DOMAINS, ADMIN_PASSWORD, GITHUB_TOKEN
+  // Optional var MCP_PUBLIC_URL pins the OAuth issuer and MCP resource origin (default: the request origin).
+  // Secrets (wrangler secret put): AUTH_SECRET, GOOGLE_CLIENT_ID, ALLOWED_EMAIL_DOMAINS, ADMIN_PASSWORD, GITHUB_TOKEN,
+  // optional GOOGLE_CLIENT_SECRET (MCP sign-in through Google; without it MCP reuses the site's faculty session)
 }

@@ -9,7 +9,7 @@ Two programs share `server/src` and `shared/`:
 
 Why split: Workers Free allows 10 ms CPU per invocation (cron included). ExcelJS takes 150–400 ms per sheet. The Worker therefore looks up a prebuilt row and concatenates strings; it never `JSON.parse`s a timetable. A ~400 KB bootstrap assembles in about 0.3 ms (`server/test/edgeBench.test.ts` fails above 1 ms). Keep it that way: any new read feature is rendered by the job and stored as a snapshot.
 
-The Worker must stay free of `node:` imports, `process`, and npm packages. It may import `shared/*.ts`, `server/src/config.ts` (keep that file free of Node built-ins), and `server/src/d1/sql.ts`. Check with `npm run check:worker` (bundle is ~15 KB gzip).
+The Worker must stay free of `node:` imports, `process`, and npm packages. It may import `shared/*.ts`, `server/src/config.ts` (keep that file free of Node built-ins), and `server/src/d1/sql.ts`. Check with `npm run check:worker` (bundle is ~37 KB gzip).
 
 ## Database: D1 `timetable`, binding `DB`
 
@@ -23,8 +23,9 @@ Schema is `migrations/*.sql`, applied by `wrangler d1 migrations apply timetable
 | `timetable_sheet_links` | Worker (admin) | job |
 | `student_notices`, `push_subscriptions`, `push_vapid` | Worker; job sets `pushed_at` and prunes dead subscriptions | both |
 | `faculty_directory`, `admin_password`, `admin_sessions`, `rate_limits` | Worker | Worker |
+| `mcp_oauth_clients`, `mcp_oauth_transactions`, `mcp_oauth_codes`, `mcp_oauth_refresh_tokens`, `mcp_oauth_revocations` (`migrations/0002_mcp_oauth.sql`) | Worker (`edge/oauthStore.ts`) | Worker |
 
-Timestamps are ISO strings (`toISOString()`), compared as text. `rate_limits.reset_at` is epoch ms.
+Timestamps are ISO strings (`toISOString()`), compared as text. `rate_limits.reset_at` is epoch ms. The `mcp_oauth_*` tables store only SHA-256 hashes of codes, refresh tokens, transaction ids, and client secrets; every row has `expires_at` and expired rows are deleted in the same batch as OAuth writes.
 
 ## Snapshots (the read model)
 
@@ -55,6 +56,17 @@ The job renders with `server/src/views.ts` (`buildBootstrap`, week and calendar 
 | `POST /api/admin/sheets` | Checks the public xlsx export starts with `PK`, stores the link, asks for a sync. Response has `syncing: true` |
 | `POST /api/admin/notices` | Stores the notice (`pushed_at` NULL), asks for a sync; the job sends the push. Response has `queued: true` |
 | `GET /api/push/public-key`, `POST /api/push/subscribe` | VAPID public key; upsert subscription |
+| `GET /.well-known/oauth-protected-resource` (also `/mcp`, `/api/mcp` suffixes) | RFC 9728 metadata. `resource` is `<origin>/mcp`; origin is `MCP_PUBLIC_URL` or the request's. CORS `*` |
+| `GET /.well-known/oauth-authorization-server`, `/openid-configuration` | RFC 8414 metadata: CIMD (`client_id_metadata_document_supported`), DCR, PKCE `S256` only, `none`/`client_secret_post`/`client_secret_basic`. Unknown `/.well-known/*` falls through to assets |
+| `POST /oauth/register` | Dynamic client registration (`mcp_<random>`, 30 days; HTTPS or loopback redirect URIs). 12 / 10 min / IP |
+| `GET /oauth/authorize` → `GET /oauth/callback` → `POST /oauth/consent` | Client by id or by `https://` client ID metadata document (fetched, cached 10 min; private/loopback hosts refused). PKCE S256 required, RFC 8707 `resource` must be this server's `/mcp` or `/api/mcp`. A valid `timetable_faculty_session` **cookie** skips Google and goes straight to consent; else, with `GOOGLE_CLIENT_SECRET`, Google code flow (PKCE + nonce, redirect `<origin>/oauth/callback`); else a "sign in on Aayam first" page. Consent is CSRF-protected, CSP `frame-ancestors 'none'`. Active `faculty_directory` row required |
+| `POST /oauth/token` | `authorization_code` (single-use, 90 s, `DELETE … RETURNING`) and rotating `refresh_token` (30 days; replay revokes the family). Access token: 1 h stateless HMAC (key derived from `AUTH_SECRET`, `typ: mcp_at`; a web session never verifies). 60 / 5 min / IP |
+| `POST /oauth/revoke` | Refresh token revokes its family; access token revoked by `jti` until expiry |
+| `POST /mcp`, `POST /api/mcp` | Stateless Streamable HTTP, JSON responses only (no SSE, no sessions). Bearer token → audience, revocation, and live `faculty_directory` row checked in one D1 read; scopes cut to what the account may have now. Origin allow-list (self, claude.ai, chatgpt.com, `CLIENT_ORIGIN`, localhost). `GET`/`DELETE` → 405 |
+
+### MCP tools (`server/src/edge/mcp.ts`)
+
+Scopes: `timetable:read`, `faculty:self` for everyone; `coordinator:read` for coordinators (`shared/coordinators.ts`) and all-access; `faculty:all`, `faculty:directory` for `can_see_all_faculty`. Tools: `get_my_profile`, `get_my_schedule`, `get_cohort_timetable`, `list_cohorts_and_weeks`, `get_timetable_changes`, `find_free_rooms_or_slots`, `get_faculty_schedule`, `list_faculty_directory`, `get_calendar_subscription_info`, `refresh_timetable_sync` (records a user sync request and dispatches the job, like `POST /api/sync`). Each tool reads one scoped `boot:<scope>` / `week:<monday>:<scope>` row (resolved with `scopeKey`), `changes`, or `index`. Nothing parses `boot:all`: the two tools that need every cohort ask D1 for just the fields with `json_extract` / `json_each`. `server/test/edgeBench.test.ts` holds the heaviest tool under 3 ms CPU. Tests: `mcpServer.test.ts`, `mcpOAuth.test.ts`.
 
 `scheduled` (cron `*/5`) only dispatches the job. Cron and stale reads never set `refreshing`; only `/api/sync` and admin actions do (`server/src/edge/sync.ts`).
 

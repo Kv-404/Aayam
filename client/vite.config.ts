@@ -28,6 +28,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": "http://localhost:8787",
+      "/mcp": "http://localhost:8787",
+      "/oauth": "http://localhost:8787",
+      "/.well-known": "http://localhost:8787",
     },
   },
 });

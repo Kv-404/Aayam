@@ -2,14 +2,17 @@ import { adminLogin, adminLogout, adminNotices, adminPassword, adminSession, adm
 import { authConfig, authGoogle, authLogout, authMe } from "./auth.ts";
 import { database, type Ctx, type Env, type ExecutionContextLike } from "./env.ts";
 import { allowedOrigins, errorJson, HttpError, preflight, withCors, withSecurityHeaders } from "./http.ts";
+import { mcpEndpoint } from "./mcp.ts";
+import { handleOAuth } from "./oauth.ts";
 import { bootstrap, calendar, changes, dbStatus, health, week } from "./read.ts";
 import { requestSync } from "./sync.ts";
 
 export type { Env } from "./env.ts";
 
 /**
- * Cloudflare Worker. Static files are served by Workers Assets before this runs; only `/api/*`
- * should reach it. Every timetable response is a prebuilt D1 snapshot written by the sync job.
+ * Cloudflare Worker. Static files are served by Workers Assets before this runs; only `/api/*` and the
+ * MCP paths (`/mcp`, `/oauth/*`, `/.well-known/*`) reach it. Every timetable response is a prebuilt D1
+ * snapshot written by the sync job.
  */
 
 type Handler = (ctx: Ctx) => Response | Promise<Response>;
@@ -39,10 +42,31 @@ const routes: Record<string, Handler> = {
   "POST /api/push/subscribe": pushSubscribe,
 };
 
+const cleanPath = (url: URL) => (url.pathname.length > 1 ? url.pathname.replace(/\/+$/, "") : url.pathname);
+
+/** `/mcp`, `/api/mcp`, `/oauth/*`, `/.well-known/*`: their own CORS (public, no credentials). */
+export function isMcpPath(path: string) {
+  return path === "/mcp" || path.startsWith("/mcp/") || path === "/api/mcp" || path.startsWith("/oauth/") || path.startsWith("/.well-known/");
+}
+
+async function handleMcp(request: Request, env: Env, exec: ExecutionContextLike, url: URL): Promise<Response | null> {
+  const path = cleanPath(url);
+  const ctx = { request, url, env, db: database(env), exec };
+  try {
+    if (path === "/mcp" || path === "/api/mcp") return await mcpEndpoint(ctx);
+    if (path.startsWith("/mcp/")) return errorJson(404, "Not found.");
+    return await handleOAuth(ctx, path);
+  } catch (error) {
+    if (error instanceof HttpError) return errorJson(error.status, error.message);
+    console.error("[mcp]", request.method, path, error instanceof Error ? error.message : error);
+    return errorJson(500, "Something went wrong.");
+  }
+}
+
 async function handle(request: Request, env: Env, exec: ExecutionContextLike, url: URL) {
   if (request.method === "OPTIONS") return preflight(request);
   const head = request.method === "HEAD";
-  const path = url.pathname.length > 1 ? url.pathname.replace(/\/+$/, "") : url.pathname;
+  const path = cleanPath(url);
   const handler = routes[`${head ? "GET" : request.method} ${path}`];
   if (!handler) return errorJson(404, "Not found.");
   try {
@@ -58,6 +82,12 @@ async function handle(request: Request, env: Env, exec: ExecutionContextLike, ur
 export default {
   async fetch(request: Request, env: Env, exec: ExecutionContextLike): Promise<Response> {
     const url = new URL(request.url);
+    if (isMcpPath(cleanPath(url))) {
+      const response = await handleMcp(request, env, exec, url);
+      // An unknown `/.well-known/` file is a static asset.
+      if (!response) return env.ASSETS.fetch(request);
+      return withSecurityHeaders(response, request, { crossOrigin: true });
+    }
     if (url.pathname !== "/api" && !url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
     const response = await handle(request, env, exec, url);
     return withCors(withSecurityHeaders(response, request), request, allowedOrigins(env.CLIENT_ORIGIN));

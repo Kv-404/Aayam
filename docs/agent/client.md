@@ -97,6 +97,7 @@ The theme step is roomy cards (swatch, name, blurb) in 2, 3, or 4 columns, and t
 | --- | --- |
 | Public gate | `client/src/components/HomePage.tsx` |
 | Product pitch at `/pitch` | `client/src/components/HomePitch.tsx`, `client/src/components/PitchPage.tsx` |
+| MCP install prompts modal (lazy-loaded from Dashboard, HomePage, PitchPage) | `client/src/components/McpConnectModal.tsx`, `client/src/lib/mcpInstall.ts` |
 | Admin sheet links and notices | `client/src/components/AdminPage.tsx` |
 | Setup steps | `client/src/components/Setup.tsx` |
 | Filtering, header, now line | `client/src/components/Dashboard.tsx` |
