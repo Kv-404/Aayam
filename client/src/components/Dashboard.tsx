@@ -1,4 +1,5 @@
 import type { BootstrapResponse, ChangeEvent, PublicLecture, SavedWeek, SheetLink } from "@shared/types";
+import { SiteFooter } from "@/components/SiteFooter";
 import { cohortChoices, cohortLabel, lectureInCohort, type CohortChoice } from "@shared/cohort";
 import { findCoordinator } from "@shared/coordinators";
 import { changeMatchesFaculty, listFacultyNames } from "@shared/faculty";
@@ -7,7 +8,6 @@ import { useQuery } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { FacultyScopeMenu } from "@/components/FacultyScopeMenu";
-import { DatabaseStatus } from "@/components/DatabaseStatus";
 import { fetchCurrentAuth, logoutFaculty } from "@/lib/auth";
 import { fetchSavedWeek } from "@/lib/api";
 import { LectureRoom, MeetChoice } from "@/components/MeetLink";
@@ -701,6 +701,7 @@ export function Dashboard({
     closeNotifyHint();
     setNotifyHintClosed(true);
   };
+  const showNotifyHint = !notifications.optedIn && !notifyHintClosed && !notice;
   const searchPlaceholder = role === "faculty" ? "Subject, cohort, or room" : "Subject, faculty, or room";
   const statusLine = (
     <HeaderStatus
@@ -766,12 +767,12 @@ export function Dashboard({
               )}
             </div>
 
-            <div className="hidden min-w-0 flex-1 items-center justify-center px-3 lg:flex">
+            <div className="hidden min-w-0 flex-1 items-center justify-center px-3 xl:flex">
               {desktopDays ?? statusLine}
             </div>
 
             <div className="relative z-30 ml-auto flex shrink-0 items-center gap-1">
-              <div className="hidden items-center sm:flex">
+              <div className="hidden items-center xl:flex">
                 {viewControl("shrink-0")}
               </div>
               <div className="flex shrink-0 items-center gap-0.5">
@@ -782,10 +783,10 @@ export function Dashboard({
                   data-testid="exam-schedule"
                   aria-label="University exams"
                   title="University exams"
-                  className="inline-flex h-8 items-center gap-1 rounded-md px-1.5 text-muted-foreground hover:bg-muted hover:text-foreground sm:h-9 sm:px-2"
+                  className="inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-md px-1.5 text-muted-foreground hover:bg-muted hover:text-foreground sm:h-9 sm:min-w-9 xl:px-2"
                 >
                   <GraduationCap className="size-4 shrink-0" aria-hidden="true" />
-                  <span className="hidden sm:inline text-xs font-medium">Exam</span>
+                  <span className="hidden xl:inline text-xs font-medium">Exam</span>
                 </a>
                 <a
                   href={sheetUrl}
@@ -797,9 +798,6 @@ export function Dashboard({
                 >
                   <FileSpreadsheet className="size-4" aria-hidden="true" />
                 </a>
-                <div className="hidden sm:block">
-                  <DatabaseStatus />
-                </div>
                 <button
                   type="button"
                   aria-label={pending ? "Refreshing" : "Refresh"}
@@ -846,16 +844,20 @@ export function Dashboard({
                   aria-label="Connect AI assistant (MCP)"
                   title="Connect AI assistant (MCP)"
                   onClick={() => setMcpModalOpen(true)}
-                  className="hidden h-9 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors sm:inline-flex"
+                  className="hidden h-9 min-w-9 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors sm:inline-flex"
                 >
-                  <Sparkles className="size-3.5 shrink-0" aria-hidden="true" />
-                  <span className="hidden md:inline">Connect AI</span>
+                  <Sparkles className="size-4 shrink-0" aria-hidden="true" />
+                  <span className="hidden 2xl:inline">Connect AI</span>
                 </button>
                 <AppearanceMenu theme={theme} colors={colors} bold={bold} meet={meet} subjects={subjects} notifications={notifications.optedIn} onTheme={onTheme} onColors={onColors} onBold={onBold} onMeet={onMeet} onEnable={() => void notifications.enable()} onDisable={notifications.disable} role={role} sheetUrl={sheetUrl} pending={pending} onRefresh={onRefresh} onOpenMcp={() => setMcpModalOpen(true)} onStudentLogout={handleStudentLogout} onFacultyLogout={handleFacultyLogout} savedWeeks={savedWeeks} weekId={selectedWeek ? selectedWeek.id : "live"} onWeek={chooseWeek} />
               </div>
             </div>
           </div>
-          <div className="w-full lg:hidden">{phoneDays ?? statusLine}</div>
+          <div className="w-full sm:hidden">{phoneDays ?? statusLine}</div>
+          <div className="hidden w-full min-w-0 items-center gap-3 sm:flex xl:hidden">
+            {viewControl("shrink-0")}
+            <div className="flex min-w-0 flex-1 items-center justify-end">{desktopDays ?? statusLine}</div>
+          </div>
         </div>
       </header>
       {role === "student" ? <StudentNoticeBar notices={data.notices ?? []} optedIn={notifications.optedIn} /> : null}
@@ -891,7 +893,7 @@ export function Dashboard({
         </div>
       )}
 
-      <main id="timetable" className="flex flex-1 flex-col px-4 py-4 pb-[calc(4.5rem+env(safe-area-inset-bottom))] sm:px-6 sm:py-5 sm:pb-5">
+      <main id="timetable" className={`flex flex-1 flex-col px-4 py-4 ${showNotifyHint ? "pb-[calc(8rem+env(safe-area-inset-bottom))]" : "pb-[calc(4.5rem+env(safe-area-inset-bottom))]"} sm:px-6 sm:py-5 sm:pb-5`}>
         <h1 className="sr-only">{role === "faculty" ? board.label : cohortLabel(selected)} timetable</h1>
         <p data-testid="sync-status" role={failing ? "alert" : "status"} className={`text-sm ${failing ? "mb-3 text-warning" : "sr-only"}`}>
           {failing ? data.sync.lastError || "Could not refresh. The last timetable is still shown." : syncedLabel(data.sync.lastSuccessAt, now)}
@@ -980,49 +982,7 @@ export function Dashboard({
             />
           </TabsContent>
         </div>
-        <footer className="mt-auto pt-10 pb-6 border-t border-border/40 text-center text-xs text-muted-foreground flex flex-col items-center justify-center gap-2">
-          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
-            <span>ITM / ISU Timetable</span>
-            <span>•</span>
-            <a
-              href="/privacy"
-              onClick={(e) => {
-                e.preventDefault();
-                window.history.pushState(null, "", "/privacy");
-                window.dispatchEvent(new PopStateEvent("popstate"));
-              }}
-              className="hover:text-foreground underline underline-offset-4"
-            >
-              Privacy Policy
-            </a>
-            <span>•</span>
-            <a
-              href="/terms"
-              onClick={(e) => {
-                e.preventDefault();
-                window.history.pushState(null, "", "/terms");
-                window.dispatchEvent(new PopStateEvent("popstate"));
-              }}
-              className="hover:text-foreground underline underline-offset-4"
-            >
-              Terms of Service
-            </a>
-          </div>
-          <p className="text-muted-foreground">
-            Made by{" "}
-            <a
-              href="https://kv404.dev"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-medium text-foreground underline-offset-4 hover:underline"
-            >
-              Kv
-            </a>
-          </p>
-          <p className="text-[11px] text-muted-foreground/75">
-            Special thanks to Neel and Somyajeet
-          </p>
-        </footer>
+        <SiteFooter className="-mx-4 mt-10 px-4 sm:-mx-6 sm:mt-12 sm:px-6" />
       </main>
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background/95 backdrop-blur-md sm:hidden pb-[env(safe-area-inset-bottom)]">
         <div className="px-3 py-2">
@@ -1041,7 +1001,7 @@ export function Dashboard({
           </button>
         </div>
       )}
-      {!notifications.optedIn && !notifyHintClosed && !notice && (
+      {showNotifyHint && (
         <div
           role="status"
           data-testid="notify-hint"

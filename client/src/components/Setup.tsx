@@ -1,4 +1,5 @@
 import { cohortLabel, cohortsInYear, type CohortChoice } from "@shared/cohort";
+import { SiteFooter } from "@/components/SiteFooter";
 import { coordinatorPreviews } from "@shared/coordinators";
 import { AlertCircle, ArrowRight, Check } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -518,31 +519,7 @@ export function Setup({
           </button>
         )}
       </div>
-      <footer className="mt-8 pt-4 border-t border-border/40 text-center text-xs text-muted-foreground flex items-center justify-center gap-3">
-        <a
-          href="/privacy"
-          onClick={(e) => {
-            e.preventDefault();
-            window.history.pushState(null, "", "/privacy");
-            window.dispatchEvent(new PopStateEvent("popstate"));
-          }}
-          className="hover:text-foreground underline underline-offset-4"
-        >
-          Privacy Policy
-        </a>
-        <span>•</span>
-        <a
-          href="/terms"
-          onClick={(e) => {
-            e.preventDefault();
-            window.history.pushState(null, "", "/terms");
-            window.dispatchEvent(new PopStateEvent("popstate"));
-          }}
-          className="hover:text-foreground underline underline-offset-4"
-        >
-          Terms of Service
-        </a>
-      </footer>
+      <SiteFooter className="mt-8" status={false} credits={false} />
     </main>
   );
 }

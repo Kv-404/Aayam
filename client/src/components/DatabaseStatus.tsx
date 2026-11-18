@@ -4,10 +4,13 @@ import { fetchDatabaseStatus } from "@/lib/api";
 
 export interface DatabaseStatusProps {
   showLabel?: boolean;
+  /** Dot and label as plain text, no pill. */
+  plain?: boolean;
   className?: string;
 }
 
-export function DatabaseStatus({ showLabel = false, className = "" }: DatabaseStatusProps) {
+export function DatabaseStatus({ showLabel: labelProp = false, plain = false, className = "" }: DatabaseStatusProps) {
+  const showLabel = labelProp || plain;
   const [forceCount, setForceCount] = useState(0);
 
   const { data, isLoading, isFetching, isError } = useQuery({
@@ -54,7 +57,9 @@ export function DatabaseStatus({ showLabel = false, className = "" }: DatabaseSt
       title={data?.latencyMs ? `${label} (${data.latencyMs}ms)` : label}
       aria-label={label}
       className={
-        showLabel
+        plain
+          ? `inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded ${className}`
+          : showLabel
           ? `inline-flex items-center gap-2 rounded-full border border-border/40 bg-muted/30 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${className}`
           : `inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:size-9 ${className}`
       }

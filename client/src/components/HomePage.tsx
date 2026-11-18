@@ -1,9 +1,9 @@
 import { lazy, Suspense, useEffect, useMemo, useState, type MouseEvent } from "react";
+import { SiteFooter } from "@/components/SiteFooter";
 import { cohortLabel, cohortPrograms, cohortYears, cohortsInYear, type CohortChoice, DEFAULT_COHORT_CHOICES } from "@shared/cohort";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import { AayamIcon } from "@/components/AayamLogo";
-import { DatabaseStatus } from "@/components/DatabaseStatus";
 import { ColorSwitch } from "@/components/ColorSwitch";
 import { MeetChoice } from "@/components/MeetLink";
 import { readStoredCohort, saveRole, saveSetup, saveStudentBatch, themes, type MeetAction, type ThemeId } from "@/lib/prefs";
@@ -141,11 +141,11 @@ export function HomePage({
           : "";
 
   return (
-    <main className={`relative mx-auto flex min-h-dvh w-full flex-col px-6 pt-24 pb-8 ${step === "theme" ? "max-w-4xl" : "max-w-md"}`}>
+    <div className="flex min-h-dvh flex-col">
+    <main className={`relative mx-auto flex w-full flex-1 flex-col px-6 pt-24 pb-8 ${step === "theme" ? "max-w-4xl" : "max-w-md"}`}>
       <div className="fixed inset-x-0 top-0 z-10 flex items-center justify-between px-5 pt-[max(0.85rem,env(safe-area-inset-top))]">
         <AayamIcon size={26} />
         <div className="flex items-center gap-2">
-          <DatabaseStatus />
           <a
             href="/admin"
             onClick={openAdmin}
@@ -181,22 +181,19 @@ export function HomePage({
                     Continue to {cohortLabel(savedCohort)}
                   </button>
                 ) : null}
-                <a
-                  href="https://exam.somyacodes.in/"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-6 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                >
-                  University exam schedule
-                </a>
-                <button
-                  type="button"
-                  data-testid="home-mcp-connect"
-                  onClick={() => setMcpOpen(true)}
-                  className="text-left text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                >
-                  Connect AI assistant (MCP)
-                </button>
+                <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                  <a href="https://exam.somyacodes.in/" target="_blank" rel="noreferrer" className="underline-offset-4 hover:text-foreground hover:underline">
+                    Exam schedule
+                  </a>
+                  <button
+                    type="button"
+                    data-testid="home-mcp-connect"
+                    onClick={() => setMcpOpen(true)}
+                    className="underline-offset-4 hover:text-foreground hover:underline"
+                  >
+                    Connect AI
+                  </button>
+                </div>
               </div>
             )}
 
@@ -288,51 +285,14 @@ export function HomePage({
         </div>
       )}
 
-      <footer className="mt-12 flex flex-col items-center justify-center gap-2.5 border-t border-border/40 pt-6 pb-2 text-center text-xs text-muted-foreground">
-        <div className="flex items-center justify-center">
-          <DatabaseStatus showLabel />
-        </div>
-
-        <div className="flex items-center justify-center gap-3">
-          <a
-            href="/terms"
-            onClick={(event) => openPage(event, "/terms")}
-            className="hover:text-foreground underline-offset-4 hover:underline"
-          >
-            Terms of Service
-          </a>
-          <span className="text-muted-foreground/40">·</span>
-          <a
-            href="/privacy"
-            onClick={(event) => openPage(event, "/privacy")}
-            className="hover:text-foreground underline-offset-4 hover:underline"
-          >
-            Privacy Policy
-          </a>
-        </div>
-
-        <p className="text-muted-foreground">
-          Made by{" "}
-          <a
-            href="https://kv404.dev"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-medium text-foreground underline-offset-4 hover:underline"
-          >
-            Kv
-          </a>
-        </p>
-
-        <p className="text-[11px] text-muted-foreground/75">
-          Special thanks to Neel and Somyajeet
-        </p>
-      </footer>
       {mcpOpen ? (
         <Suspense fallback={null}>
           <McpConnectModal open onClose={() => setMcpOpen(false)} cohortLabel={savedCohort ? cohortLabel(savedCohort) : undefined} />
         </Suspense>
       ) : null}
     </main>
+    <SiteFooter className="px-5 pb-[max(1rem,env(safe-area-inset-bottom))]" />
+    </div>
   );
 }
 
