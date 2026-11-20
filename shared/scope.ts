@@ -2,7 +2,7 @@ import type { CohortChoice } from "./cohort.ts";
 import { facultyParts, personMatch } from "./faculty.ts";
 
 /**
- * A read scope, as the client sends it on `/api/bootstrap`, `/api/week`, and `/api/calendar.ics`.
+ * A read scope, as the client sends it on `/api/bootstrap` and `/api/calendar.ics`.
  * Priority is faculty, then division, then course/batch, then everything. Same order as `buildBootstrap`.
  */
 export interface ReadScope {
@@ -81,6 +81,5 @@ export const snapshotKeys = {
   sync: "sync",
   changes: "changes",
   bootstrap: (scope: string) => `boot:${scope}`,
-  week: (monday: string, scope: string) => `week:${monday}:${scope}`,
   calendar: (scope: string) => `ics:${scope}`,
 };

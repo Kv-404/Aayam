@@ -282,25 +282,12 @@ describe("edge sync requests", () => {
   });
 });
 
-describe("edge week, calendar, changes", () => {
+describe("edge calendar, changes", () => {
   let t: TestEnv;
   beforeEach(() => {
     clearIndexCache();
     t = makeEnv();
     seed(t);
-  });
-
-  it("serves a saved week body as stored, and an empty week otherwise", async () => {
-    const stored = JSON.stringify({ lectures: [{ id: "x" }], changes: [], spreadsheetUrl: "https://docs.google.com/spreadsheets/d/abc/edit" });
-    t.put("week:2026-11-09:d:sam altman 2025", stored);
-    const hit = await t.call("/api/week?monday=2026-11-09&division=Sam%20Altman%202025");
-    assert.equal(hit.status, 200);
-    assert.equal(await hit.text(), stored);
-    const miss = await t.call("/api/week?monday=2026-11-02&division=Sam%20Altman%202025");
-    assert.deepEqual(await miss.json(), { lectures: [], changes: [], spreadsheetUrl: null });
-    const bad = await t.call("/api/week?monday=nope");
-    assert.equal(bad.status, 400);
-    assert.deepEqual(await bad.json(), { error: "Missing week." });
   });
 
   it("serves a calendar file with the old headers and 404 text", async () => {

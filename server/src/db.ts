@@ -147,49 +147,6 @@ export interface WeekBackupRecord {
   changes: StoredChange[];
 }
 
-export interface WeekBackupSummary {
-  id: string;
-  course: string;
-  batch: string;
-  start: string;
-  end: string;
-}
-
-/** Dates only. The lecture JSON stays in the row until someone opens that week. */
-export function readWeekSummaries(db: AppDatabase): WeekBackupSummary[] {
-  const rows = db.prepare(`
-    SELECT id, course, batch, start_date, end_date
-    FROM week_backups
-    ORDER BY end_date DESC, start_date DESC
-  `).all() as Array<{ id: string; course: string; batch: string; start_date: string; end_date: string }>;
-  return rows.map((row) => ({
-    id: row.id,
-    course: row.course,
-    batch: row.batch,
-    start: row.start_date,
-    end: row.end_date,
-  }));
-}
-
-export function readWeekBackupsByIds(db: AppDatabase, ids: string[]): WeekBackupRecord[] {
-  if (ids.length === 0) return [];
-  const marks = ids.map(() => "?").join(", ");
-  const rows = db.prepare(`
-    SELECT id, course, batch, start_date, end_date, lectures_json, changes_json
-    FROM week_backups
-    WHERE id IN (${marks})
-  `).all(...ids) as Array<{ id: string; course: string; batch: string; start_date: string; end_date: string; lectures_json: string; changes_json: string | null }>;
-  return rows.map((row) => ({
-    id: row.id,
-    course: row.course,
-    batch: row.batch,
-    start: row.start_date,
-    end: row.end_date,
-    lectures: JSON.parse(row.lectures_json) as StoredLecture[],
-    changes: row.changes_json ? (JSON.parse(row.changes_json) as StoredChange[]) : [],
-  }));
-}
-
 export function readWeekBackups(db: AppDatabase): WeekBackupRecord[] {
   const rows = db.prepare(`
     SELECT id, course, batch, start_date, end_date, lectures_json, changes_json

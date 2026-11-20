@@ -3,7 +3,7 @@ import { spreadsheetExportUrl, type AppConfig, type SheetSource } from "../confi
 
 export async function fetchSpreadsheet(config: Pick<AppConfig, "spreadsheetId">) {
   if (!config.spreadsheetId) {
-    throw new Error("SPREADSHEET_ID is not configured.");
+    throw new Error("No spreadsheet id to download.");
   }
   const response = await fetch(spreadsheetExportUrl(config.spreadsheetId), {
     redirect: "follow",

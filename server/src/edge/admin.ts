@@ -1,4 +1,4 @@
-import { COHORT_TEMPLATES, cleanSpreadsheetId, spreadsheetExportUrl, spreadsheetUrl } from "../config.ts";
+import { acceptSpreadsheetId, COHORT_TEMPLATES, cohortTemplate, spreadsheetExportUrl, spreadsheetUrl, type SheetLinkRow } from "../config.ts";
 import type { SqlDb } from "../d1/sql.ts";
 import { base64UrlToBytes, bytesToBase64Url, hmacSha256, randomBytes, sha256Hex, timingSafeEqual, utf8 } from "./crypto.ts";
 import { authSecret, type Ctx, type Env } from "./env.ts";
@@ -12,7 +12,6 @@ const ADMIN_COOKIE = "aayam_admin";
 const SESSION_SECONDS = 12 * 60 * 60;
 const LOGIN_LIMIT = { max: 5, windowMs: 15 * 60 * 1000 };
 const HASH_PREFIX = "hmac-sha256";
-const SHEET_ID = /^[a-zA-Z0-9-_]{20,80}$/;
 
 // ---------------------------------------------------------------------------
 // Password. scrypt does not fit in 10 ms of CPU, so the hash is an HMAC keyed by AUTH_SECRET:
@@ -133,30 +132,17 @@ async function requireAdmin(ctx: Ctx): Promise<Response | null> {
 // Sheet links and notices.
 // ---------------------------------------------------------------------------
 
-/** A Google Sheet link or a bare id. Anything else is refused. */
-export function acceptSpreadsheetId(input: string): string | null {
-  const id = cleanSpreadsheetId(input);
-  return SHEET_ID.test(id) ? id : null;
-}
+export { acceptSpreadsheetId };
 
-function templateFor(course: string, batch: string) {
-  return COHORT_TEMPLATES.find(
-    (item) => item.course.toLowerCase() === course.toLowerCase() && item.batch.toLowerCase() === batch.toLowerCase(),
-  );
-}
-
+/** One row per batch with the link stored in D1 `timetable_sheet_links` (empty when none is stored). */
 async function sheetRows(db: SqlDb) {
-  const overrides = await db.all<{ course: string; batch: string; spreadsheet_id: string }>(
-    "SELECT course, batch, spreadsheet_id FROM timetable_sheet_links",
-  );
+  const stored = await db.all<SheetLinkRow>("SELECT course, batch, spreadsheet_id FROM timetable_sheet_links");
   return COHORT_TEMPLATES.map((template) => {
-    const hit = overrides.find(
-      (row) =>
-        row.course.toLowerCase() === template.course.toLowerCase() &&
-        row.batch.toLowerCase() === template.batch.toLowerCase() &&
-        acceptSpreadsheetId(row.spreadsheet_id),
-    );
-    return { course: template.course, batch: template.batch, spreadsheetUrl: spreadsheetUrl(hit?.spreadsheet_id || template.fallbackId) };
+    const id = stored
+      .filter((row) => cohortTemplate(row.course ?? "", row.batch ?? "") === template)
+      .map((row) => acceptSpreadsheetId(row.spreadsheet_id))
+      .find(Boolean);
+    return { course: template.course, batch: template.batch, spreadsheetUrl: id ? spreadsheetUrl(id) : "" };
   });
 }
 
@@ -188,7 +174,7 @@ function audienceFrom(body: Record<string, unknown>) {
     if (course && !batch && courseOnly) return { course, batch: null };
     return null;
   }
-  if (!templateFor(course, batch)) return null;
+  if (!cohortTemplate(course, batch)) return null;
   return { course, batch };
 }
 
@@ -298,7 +284,7 @@ export async function adminSheets(ctx: Ctx) {
   const denied = await requireAdmin(ctx);
   if (denied) return denied;
   const body = await readJson(ctx.request);
-  const template = templateFor(field(body.course, 40), field(body.batch, 40));
+  const template = cohortTemplate(field(body.course, 40), field(body.batch, 40));
   const spreadsheetId = acceptSpreadsheetId(field(body.url, 300));
   if (!template || !spreadsheetId) return errorJson(400, "Paste a Google Sheet link for one of the batches.");
   const problem = await checkSheetReadable(spreadsheetId);

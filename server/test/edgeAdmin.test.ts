@@ -138,7 +138,11 @@ describe("edge admin session", () => {
     };
     assert.equal(body.signedIn, true);
     assert.equal(body.sheets.length, COHORT_TEMPLATES.length);
-    assert.equal(body.sheets[0]!.spreadsheetUrl, `https://docs.google.com/spreadsheets/d/${COHORT_TEMPLATES[0]!.fallbackId}/edit`);
+    // The seed migration stores every batch's workbook in D1.
+    assert.equal(body.sheets[0]!.spreadsheetUrl, "https://docs.google.com/spreadsheets/d/1o_sNayHt8v4WlyZUVcmPWhyjNQ6i8ONuX2zMo5czg0w/edit");
+    t.raw.prepare("DELETE FROM timetable_sheet_links WHERE batch = ?").run(COHORT_TEMPLATES[0]!.batch);
+    const after = (await (await t.call("/api/admin/session", { headers: { Cookie: cookie } })).json()) as typeof body;
+    assert.equal(after.sheets[0]!.spreadsheetUrl, "");
     assert.deepEqual(body.notices, []);
   });
 
@@ -222,7 +226,7 @@ describe("edge admin sheets", () => {
     assert.equal(body.syncing, true);
     assert.equal(body.sheets.find((sheet) => sheet.batch === "2025-29")?.spreadsheetUrl, `https://docs.google.com/spreadsheets/d/${SHEET}/edit`);
     assert.equal(stub.calls[0]!.url, `https://docs.google.com/spreadsheets/d/${SHEET}/export?format=xlsx`);
-    const row = t.raw.prepare("SELECT course, batch, spreadsheet_id FROM timetable_sheet_links").get() as Record<string, string>;
+    const row = t.raw.prepare("SELECT course, batch, spreadsheet_id FROM timetable_sheet_links WHERE batch = '2025-29'").get() as Record<string, string>;
     assert.deepEqual({ ...row }, { course: "BTech", batch: "2025-29", spreadsheet_id: SHEET });
     const state = t.raw.prepare("SELECT requested_at, request_reason, dispatched_at FROM job_state").get() as Record<string, string | null>;
     assert.equal(state.request_reason, "sheet");
@@ -246,7 +250,7 @@ describe("edge admin sheets", () => {
     const missing = await save(t, cookie, SHEET);
     assert.equal(missing.status, 400);
     assert.match(((await missing.json()) as { error: string }).error, /^Google Sheets export failed \(404\)/);
-    assert.equal((t.raw.prepare("SELECT count(*) AS n FROM timetable_sheet_links").get() as { n: number }).n, 0);
+    assert.equal((t.raw.prepare("SELECT count(*) AS n FROM timetable_sheet_links WHERE spreadsheet_id = ?").get(SHEET) as { n: number }).n, 0);
     assert.equal((t.raw.prepare("SELECT requested_at FROM job_state").get() as { requested_at: string | null }).requested_at, null);
   });
 

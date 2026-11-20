@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { describe, it } from "node:test";
-import { getConfig } from "../src/config.ts";
+import { getConfig, primarySheetId } from "../src/config.ts";
+import { sqliteDb } from "../src/d1/sqlite.ts";
+import { resolveSheetSources } from "../src/services/sheetOverrides.ts";
 import { openDatabase } from "../src/db.ts";
 import { runSync } from "../src/services/syncScheduler.ts";
 import { buildBootstrap } from "../src/views.ts";
@@ -17,7 +19,9 @@ describe("views", () => {
       cases: Array<{ scope: Record<string, string>; body: unknown }>;
     };
     const db = openDatabase(":memory:");
-    const config = { ...getConfig(), spreadsheetTitle: "Fixture" };
+    // The links seeded by migrations/0003 are the workbooks the old app linked to.
+    const { sources } = await resolveSheetSources(sqliteDb());
+    const config = { ...getConfig(), spreadsheetTitle: "Fixture", spreadsheets: sources, spreadsheetId: primarySheetId(sources) };
     const original = fs.readFileSync(fixture("cohort-week.xlsx"));
     const edited = fs.readFileSync(fixture("edited-week.xlsx"));
     await runSync({ db, config, now: new Date(golden.first), load: async () => ({ buffer: original }) });

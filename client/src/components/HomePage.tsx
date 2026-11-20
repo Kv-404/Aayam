@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { SiteFooter } from "@/components/SiteFooter";
 import { cohortLabel, cohortPrograms, cohortYears, cohortsInYear, type CohortChoice, DEFAULT_COHORT_CHOICES } from "@shared/cohort";
 import { ArrowLeft, ArrowRight } from "lucide-react";
@@ -9,7 +9,6 @@ import { MeetChoice } from "@/components/MeetLink";
 import { readStoredCohort, saveRole, saveSetup, saveStudentBatch, themes, type MeetAction, type ThemeId } from "@/lib/prefs";
 import { cohortToSlug } from "@/lib/slug";
 
-const McpConnectModal = lazy(() => import("@/components/McpConnectModal").then((m) => ({ default: m.McpConnectModal })));
 
 type Step = "role" | "program" | "batch" | "cohort" | "theme";
 
@@ -55,7 +54,6 @@ export function HomePage({
 }: HomePageProps) {
   const calm = useReducedMotion();
   const savedCohort = readStoredCohort();
-  const [mcpOpen, setMcpOpen] = useState(false);
   const [enter] = useState(() => (typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("enter") ?? ""));
   const [step, setStep] = useState<Step>(enter === "student" ? "program" : "role");
   const [program, setProgram] = useState("");
@@ -185,14 +183,6 @@ export function HomePage({
                   <a href="https://exam.somyacodes.in/" target="_blank" rel="noreferrer" className="underline-offset-4 hover:text-foreground hover:underline">
                     Exam schedule
                   </a>
-                  <button
-                    type="button"
-                    data-testid="home-mcp-connect"
-                    onClick={() => setMcpOpen(true)}
-                    className="underline-offset-4 hover:text-foreground hover:underline"
-                  >
-                    Connect AI
-                  </button>
                 </div>
               </div>
             )}
@@ -285,11 +275,6 @@ export function HomePage({
         </div>
       )}
 
-      {mcpOpen ? (
-        <Suspense fallback={null}>
-          <McpConnectModal open onClose={() => setMcpOpen(false)} cohortLabel={savedCohort ? cohortLabel(savedCohort) : undefined} />
-        </Suspense>
-      ) : null}
     </main>
     <SiteFooter className="px-5 pb-[max(1rem,env(safe-area-inset-bottom))]" />
     </div>

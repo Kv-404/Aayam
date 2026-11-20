@@ -1,4 +1,4 @@
-import type { BootstrapResponse, ChangeEvent, DatabaseConnectionStatus, PublicLecture } from "@shared/types";
+import type { BootstrapResponse, DatabaseConnectionStatus } from "@shared/types";
 
 const base = import.meta.env.VITE_API_URL?.replace(/\/$/, "") ?? "";
 
@@ -37,20 +37,6 @@ export function fetchBootstrap(scope?: BootstrapScope) {
   const timer = setTimeout(() => controller.abort(), 12000);
   return fetch(url.toString(), { credentials: "include", signal: controller.signal })
     .then(read)
-    .finally(() => clearTimeout(timer));
-}
-
-export function fetchSavedWeek(monday: string, scope?: BootstrapScope) {
-  const url = new URL(`${base}/api/week`, window.location.origin);
-  url.searchParams.set("monday", monday);
-  applyScope(url, scope);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
-  return fetch(url.toString(), { credentials: "include", signal: controller.signal })
-    .then(async (response) => {
-      if (!response.ok) throw new Error("That week could not be loaded.");
-      return response.json() as Promise<{ lectures: PublicLecture[]; changes: ChangeEvent[]; spreadsheetUrl?: string | null }>;
-    })
     .finally(() => clearTimeout(timer));
 }
 

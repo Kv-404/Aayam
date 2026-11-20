@@ -17,7 +17,7 @@ Everything runs on Cloudflare's free plan plus free GitHub Actions minutes (the 
 | Limit | Free | This app |
 | --- | --- | --- |
 | Worker CPU per request / cron | 10 ms | bootstrap ≈ 0.3 ms; cron = 1 GitHub API call |
-| Worker requests | 100k/day | Only `/api/*` and the MCP paths (`/mcp`, `/oauth/*`, `/.well-known/*`) count; static assets are free and unmetered. A visible tab makes ~12 API calls/hour, a hidden tab 0 |
+| Worker requests | 100k/day | Only `/api/*` counts; static assets are free and unmetered. A visible tab makes ~12 API calls/hour, a hidden tab 0 |
 | Subrequests per request | 50 | ≤ 2 |
 | D1 rows read / written | 5M / 100k per day | ~3 rows written per unchanged job run (~900/day); a sheet edit rewrites only changed snapshots |
 | D1 storage | 5 GB | ~30 MB |
@@ -27,7 +27,7 @@ Do not move sheet parsing, JSON parsing of timetables, scrypt, or push fan-out i
 
 ## Secrets and vars
 
-Worker (`npx wrangler secret put <NAME>`): `AUTH_SECRET` (≥ 32 chars; signs faculty sessions and keys the admin hash), `GOOGLE_CLIENT_ID`, `ALLOWED_EMAIL_DOMAINS` (comma separated; `itm.edu` and `isu.ac.in` are always allowed), `ADMIN_PASSWORD` (≥ 12 chars; seeds the admin password), `GITHUB_TOKEN` (fine-grained PAT, this repo only, **Actions: read and write**; lets the Worker dispatch the sync job), optional `GOOGLE_CLIENT_SECRET` (the OAuth web client's secret; lets MCP sign-in run the Google code flow. Without it, a faculty member signs in on the site first and MCP reuses that session). Plain vars live in `wrangler.jsonc`: `COLLEGE_NAME`, `TIMEZONE`, `GITHUB_REPO`, `GITHUB_WORKFLOW`, optional `CLIENT_ORIGIN`, optional `MCP_PUBLIC_URL` (pins the OAuth issuer and MCP resource origin; default is the request origin).
+Worker (`npx wrangler secret put <NAME>`): `AUTH_SECRET` (≥ 32 chars; signs faculty sessions and keys the admin hash), `GOOGLE_CLIENT_ID`, `ALLOWED_EMAIL_DOMAINS` (comma separated; `itm.edu` and `isu.ac.in` are always allowed), `ADMIN_PASSWORD` (≥ 12 chars; seeds the admin password), `GITHUB_TOKEN` (fine-grained PAT, this repo only, **Actions: read and write**; lets the Worker dispatch the sync job). Plain vars live in `wrangler.jsonc`: `COLLEGE_NAME`, `TIMEZONE`, `GITHUB_REPO`, `GITHUB_WORKFLOW`, optional `CLIENT_ORIGIN`.
 
 GitHub repo secrets (Settings → Secrets and variables → Actions): `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `D1_DATABASE_ID`.
 
@@ -49,7 +49,7 @@ Vite proxies `/api` to `:8787`. The job writes `wrangler dev`'s local D1 file (`
 1. **Cloudflare API token for CI**: dash.cloudflare.com → My Profile → API Tokens → Create Token → template **Edit Cloudflare Workers** → add permission **Account · D1 · Edit** → Zone Resources: `kv404.dev` → create. Put it in the GitHub secret `CLOUDFLARE_API_TOKEN`. Account id `8a94f3cbdca559e207f44875697856c2` → `CLOUDFLARE_ACCOUNT_ID`. D1 id above → `D1_DATABASE_ID`.
 2. **GitHub token for the Worker**: github.com → Settings → Developer settings → Fine-grained tokens → repository access *Only Kv-404/Aayam* → permission **Actions: Read and write** → expiry 1 year (calendar a renewal). Then `npx wrangler secret put GITHUB_TOKEN`.
 3. **Admin password**: `npx wrangler secret put ADMIN_PASSWORD`. The old Supabase hash was scrypt and cannot be checked within 10 ms, so the first login replaces it from this secret. After logging in once you may change it at `/admin`.
-4. **Google sign-in**: Google Cloud Console → APIs & Services → Credentials → the OAuth web client → Authorized JavaScript origins must include `https://aayam.kv404.dev` (and `https://timetable.kv404.workers.dev` for testing). For MCP sign-in through Google (only with `GOOGLE_CLIENT_SECRET`), Authorized redirect URIs must include `https://aayam.kv404.dev/oauth/callback` (and `https://timetable.kv404.workers.dev/oauth/callback`).
+4. **Google sign-in**: Google Cloud Console → APIs & Services → Credentials → the OAuth web client → Authorized JavaScript origins must include `https://aayam.kv404.dev` (and `https://timetable.kv404.workers.dev` for testing).
 5. Push `main`. The deploy workflow ships and runs one sync.
 
 ## Connecting kv404.dev (registered at Spaceship) without transferring it
@@ -83,13 +83,15 @@ Only once `aayam.kv404.dev` serves from Cloudflare and a sync has run:
 - **Vercel**: done, the timetable project is deleted. The portfolio project for `kv404.dev`/`www` stays until the portfolio itself moves.
 - **Supabase**: everything was copied to D1 (archive merged from the rows and the legacy JSON document, faculty directory, push subscriptions, VAPID keys, notices). Take a final backup (Database → Backups, or `pg_dump`) and then pause or delete the project.
 - **Upstash Redis**: delete the database if one exists; nothing reads it.
-- Google OAuth client secret: only MCP sign-in uses it (`GOOGLE_CLIENT_SECRET`); otherwise it can be rotated or deleted.
+- Google OAuth client secret: nothing uses it any more (the MCP server is gone). Delete the `GOOGLE_CLIENT_SECRET` Worker secret and rotate or delete the secret in Google Cloud.
 
 ## Changing the sheet
 
-Preferred: an admin pastes the new link at `/admin`. The Worker checks the export is a public xlsx, stores it in D1 `timetable_sheet_links`, and dispatches the job; the new sheet appears in about a minute. Admin links win over everything else.
+D1 `timetable_sheet_links` is the only source of sheet links (one row per course and batch; `migrations/0003_seed_sheet_links.sql` seeded the original workbooks). There are no `SPREADSHEET_*` env variables and no ids in code.
 
-Otherwise change the fallback id in `server/src/config.ts` and push `main`; the job uses it on its next run. A new sheet whose dates do not overlap the saved week is a fresh baseline (no events), and the outgoing week is kept under "past weeks".
+An admin pastes the new link at `/admin`. The Worker checks the export is a public xlsx, upserts the row, and dispatches the job; the new sheet and the header's "Open sheet" link appear in about a minute.
+
+Without the admin page: `npx wrangler d1 execute timetable --remote --command "UPDATE timetable_sheet_links SET spreadsheet_id = '<id>', updated_at = '<iso>' WHERE course = 'BTech' AND batch = '2025-29'"`, then run the Sync timetable workflow. A batch with no row is skipped by the job. A new cohort also needs an entry in `COHORT_TEMPLATES` (`server/src/config.ts`) before the admin page lists it. A new sheet whose dates do not overlap the saved week is a fresh baseline (no events), and the outgoing week is kept in the D1 archive (not shown in the app).
 
 ## Operating
 

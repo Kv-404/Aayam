@@ -2,6 +2,7 @@ import type { PublicLecture } from "@shared/types";
 import { cohortLabel } from "@shared/cohort";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ClassMeta } from "@/components/ClassMeta";
+import { NowMark, TimeGrid } from "@/components/TimeGrid";
 import { StatusBadge, badgeText } from "@/components/StatusBadge";
 import { ClockLabel } from "@/components/ClockLabel";
 import type { MeetAction } from "@/lib/prefs";
@@ -75,7 +76,20 @@ export function TodayView({
         )}
       </div>
       {note && <p className="mt-1 text-sm text-muted-foreground">{note}</p>}
-      <ol className="mt-2 flex flex-col gap-1.5 sm:mt-4 sm:grid sm:grid-cols-[max-content_minmax(0,1fr)] sm:gap-x-4 sm:gap-y-0 sm:border-t sm:border-border">
+      <div className="mt-4 hidden sm:block">
+        <TimeGrid
+          columns={[{ date, lectures: visible }]}
+          today={today}
+          minutes={minutes}
+          showDivision={showDivision}
+          showFaculty={showFaculty}
+          showLive={showLive}
+          meet={meet}
+          header={false}
+          detail
+        />
+      </div>
+      <ol className="mt-2 flex flex-col gap-1.5 sm:hidden">
         {timeline(visible).map((item, index) => {
           if (item.kind === "break") {
             return (
@@ -152,13 +166,7 @@ export function TodayView({
   );
 }
 
-export function NowMark() {
-  return (
-    <span className="now-mark" data-testid="now-mark">
-      Now
-    </span>
-  );
-}
+export { NowMark };
 
 function isLive(lecture: PublicLecture, today: string, minutes: number) {
   return lecture.kind === "lecture" && lecture.displayStatus !== "cancelled" && slotPhase(lecture, today, minutes) === "now";

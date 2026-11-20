@@ -1,4 +1,4 @@
-import type { ChangeEvent, PublicLecture, SavedWeek } from "@shared/types";
+import type { PublicLecture } from "@shared/types";
 
 export interface Filters {
   course: string;
@@ -124,31 +124,15 @@ export function collapseFullOffDays(lectures: PublicLecture[]) {
   return collapsed;
 }
 
-/** One calendar week in the picker. Batches publish separate sheets, so a week can combine several of them. */
-export interface WeekGroup {
-  id: string;
-  start: string;
-  end: string;
-  lectures: PublicLecture[];
-  changes: ChangeEvent[];
-}
-
 export function mondayOf(iso: string) {
   const date = new Date(`${iso}T12:00:00Z`);
   date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
   return date.toISOString().slice(0, 10);
 }
 
-function daySpan(start: string, end: string) {
-  const startMs = Date.parse(`${start}T12:00:00Z`);
-  const endMs = Date.parse(`${end}T12:00:00Z`);
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return 0;
-  return Math.round((endMs - startMs) / 86_400_000);
-}
-
 /**
  * When lectures span multiple disparate week ranges, isolate the latest week.
- * Lectures belonging to earlier weeks are separated so they can be archived or accessed via past weeks.
+ * Lectures belonging to earlier weeks are separated and kept off the grid.
  * Undated / recurring lectures are retained in the latest week pool.
  */
 export function splitByLatestWeek<T extends { date: string | null }>(
@@ -166,34 +150,6 @@ export function splitByLatestWeek<T extends { date: string | null }>(
   const latest = lectures.filter((l) => !l.date || mondayOf(l.date) === latestMonday);
   const earlier = lectures.filter((l) => l.date && mondayOf(l.date) !== latestMonday);
   return { latest, earlier, latestMonday };
-}
-
-export function filterToLatestWeek<T extends { date: string | null }>(lectures: T[]): T[] {
-  return splitByLatestWeek(lectures).latest;
-}
-
-export function groupSavedWeeks(weeks: SavedWeek[]): WeekGroup[] {
-  // A row that covers two weeks is an old overlap. Keep the real one-week copy beside it.
-  const usable = weeks.filter((week) => {
-    if (daySpan(week.start, week.end) <= 6) return true;
-    const monday = mondayOf(week.start);
-    return !weeks.some((other) => other.id !== week.id && mondayOf(other.start) === monday && daySpan(other.start, other.end) <= 6);
-  });
-  const groups = new Map<string, WeekGroup>();
-  for (const week of usable) {
-    const id = mondayOf(week.start);
-    const group = groups.get(id);
-    if (!group) {
-      groups.set(id, { id, start: week.start, end: week.end, lectures: [...week.lectures], changes: [...(week.changes ?? [])] });
-      continue;
-    }
-    if (week.start < group.start) group.start = week.start;
-    if (week.end > group.end) group.end = week.end;
-    group.lectures.push(...week.lectures);
-    const known = new Set(group.changes.map((change) => change.id));
-    group.changes.push(...(week.changes ?? []).filter((change) => !known.has(change.id)));
-  }
-  return [...groups.values()].sort((a, b) => b.start.localeCompare(a.start));
 }
 
 export type SlotPhase = "past" | "now" | "upcoming" | "later" | "earlier";

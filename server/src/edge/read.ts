@@ -21,7 +21,6 @@ interface Row {
 }
 
 const NOTICE_DAYS = 14;
-const EMPTY_WEEK = '{"lectures":[],"changes":[],"spreadsheetUrl":null}';
 
 let indexCache: { hash: string; value: SnapshotIndex } | null = null;
 
@@ -251,17 +250,6 @@ export async function bootstrap(ctx: Ctx, options: { forceRefreshing?: boolean }
     bootBody: boot.c,
   });
   return jsonText(body, 200, options.forceRefreshing ? { "Cache-Control": "no-store" } : { ETag: etag });
-}
-
-/** `GET /api/week?monday=` */
-export async function week(ctx: Ctx) {
-  const monday = ctx.url.searchParams.get("monday")?.trim() ?? "";
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(monday)) return json({ error: "Missing week." }, 400);
-  const scope = readScope(ctx.url);
-  const weekKey = (index: SnapshotIndex) => snapshotKeys.week(monday, scopeKey(scope, index));
-  const { index, rows } = await readWithIndex(ctx.db, { keys: [], parts: [] }, (current) => ({ keys: [weekKey(current)], parts: [] }));
-  const row = index ? snapshot(rows, weekKey(index)) : undefined;
-  return jsonText(row?.c ?? EMPTY_WEEK);
 }
 
 /** `GET /api/calendar.ics?division=` or `?faculty=` */

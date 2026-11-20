@@ -98,14 +98,14 @@ export function clearedCookie(name: string, sameSite: "Lax" | "Strict", request:
   return `${name}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=${sameSite}${secureSuffix(request)}`;
 }
 
-/** Security headers for every API response. MCP and OAuth responses are read cross-origin by AI clients. */
-export function withSecurityHeaders(response: Response, request: Request, options: { crossOrigin?: boolean } = {}) {
+/** Security headers for every API response. */
+export function withSecurityHeaders(response: Response, request: Request) {
   const headers = response.headers;
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("X-Frame-Options", "DENY");
   headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  if (!options.crossOrigin) headers.set("Cross-Origin-Resource-Policy", "same-origin");
+  headers.set("Cross-Origin-Resource-Policy", "same-origin");
   if (new URL(request.url).protocol === "https:") {
     headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains");
   }

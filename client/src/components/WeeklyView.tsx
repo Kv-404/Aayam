@@ -1,16 +1,12 @@
 import type { PublicLecture } from "@shared/types";
 import { cohortLabel } from "@shared/cohort";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { StatusBadge, badgeText } from "@/components/StatusBadge";
-import { NowMark } from "@/components/TodayView";
+import { memo, useEffect, useMemo, useRef } from "react";
+import { NowMark, TimeGrid } from "@/components/TimeGrid";
 import { useColors } from "@/lib/colorState";
-import { ClockLabel } from "@/components/ClockLabel";
 import { LectureRoom } from "@/components/MeetLink";
 import type { MeetAction } from "@/lib/prefs";
 import { formatCalendarDate, formatCompactRange } from "@/lib/time";
-import { isFoldedOff, isFoldedOffDay, slotPhase } from "@/lib/view";
-
-const dayOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+import { isFoldedOffDay, slotPhase } from "@/lib/view";
 
 export function WeeklyView({
   lectures,
@@ -43,13 +39,14 @@ export function WeeklyView({
     }
     return groups;
   }, [lectures]);
+  const columns = useMemo(() => days.map((date) => ({ date, lectures: byDate.get(date) ?? [] })), [dayKey, byDate]);
   useEffect(() => {
     const root = scroller.current;
     if (!root) return;
     function revealToday() {
-      const column = root?.querySelector("th.cal-today");
+      const column = root?.querySelector(".wk-head.wk-today");
       if (!(column instanceof HTMLElement) || !root) return;
-      const time = root.querySelector("thead th");
+      const time = root.querySelector(".wk-corner");
       const gutter = time instanceof HTMLElement ? time.getBoundingClientRect().width : 0;
       const rootBox = root.getBoundingClientRect();
       const columnBox = column.getBoundingClientRect();
@@ -75,12 +72,6 @@ export function WeeklyView({
   }
   const forDay = (date: string) => byDate.get(date) ?? [];
   const offDay = (date: string) => isFoldedOffDay(forDay(date));
-  // Full-day OFF cards span the first slot through the last. Their start must not label a normal class row.
-  // Rows are keyed on start and end, so a class that ends at another time gets its own correct label.
-  const inRow = (lecture: PublicLecture) => !isFoldedOff(lecture) && lecture.startMinutes >= 0;
-  const rowKey = (lecture: PublicLecture) => `${lecture.startMinutes}-${lecture.endMinutes}`;
-  const rows = [...new Map(lectures.filter(inRow).map((lecture) => [rowKey(lecture), lecture])).values()]
-    .sort((a, b) => a.startMinutes - b.startMinutes || a.endMinutes - b.endMinutes);
   return (
     <>
     <div className="sm:hidden">
@@ -108,168 +99,16 @@ export function WeeklyView({
         );
       })}
     </div>
-    <div ref={scroller} className="rise hidden overflow-x-auto border-y border-border sm:block">
-      <table className="w-full min-w-[760px] border-collapse text-left text-sm">
-        <thead>
-          <tr className="border-b border-border">
-            <th className="sticky left-0 z-10 bg-background border-r border-border/60 px-3 py-3 align-bottom font-mono text-[11px] font-medium tracking-[0.22em] whitespace-nowrap text-muted-foreground uppercase">Time</th>
-            {days.map((date) => {
-              const dayLectures = forDay(date);
-              const weekday = dayLectures[0]?.weekday ?? "";
-              const off = offDay(date);
-              return (
-                <th key={date} className={`min-w-40 px-3 py-3 align-bottom ${date === today ? "font-bold cal-today" : "font-medium"} ${off ? "text-danger" : ""}`}>
-                  <div className="flex items-center gap-1.5">
-                    <span className="block">{weekday || dayOrder.find((day) => dayLectures.some((lecture) => lecture.weekday === day))}</span>
-                    {date === today && (
-                      <span className="inline-flex items-center rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
-                        Today
-                      </span>
-                    )}
-                  </div>
-                  <span className={`block text-xs ${date === today ? "font-semibold" : "font-normal"} ${off ? "text-danger" : "text-muted-foreground"}`}>{formatCalendarDate(date)}</span>
-                </th>
-              );
-            })}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 ? (
-            <tr className="align-top">
-              <th className="sticky left-0 bg-background px-3 py-3 font-mono text-xs font-medium whitespace-nowrap text-muted-foreground">All day</th>
-              {days.map((date) => (
-                <td key={date} className={`px-3 py-3 ${offDay(date) ? "text-sm font-medium text-danger" : ""}`}>
-                  {offDay(date) ? "Off" : null}
-                </td>
-              ))}
-            </tr>
-          ) : (
-            rows.map((sample) => {
-              const key = rowKey(sample);
-
-              type DayCell =
-                | { kind: "off"; date: string }
-                | { kind: "classes"; date: string; classes: PublicLecture[] }
-                | { kind: "break"; date: string; breakLecture: PublicLecture }
-                | { kind: "empty"; date: string };
-
-              const dayCells: DayCell[] = days.map((date) => {
-                if (offDay(date)) {
-                  return { kind: "off", date };
-                }
-                const daySlots = forDay(date).filter((lecture) => inRow(lecture) && rowKey(lecture) === key);
-                const dayBreaks = daySlots.filter((lecture) => lecture.kind === "break");
-                const dayClasses = daySlots.filter((lecture) => lecture.kind !== "break");
-
-                if (dayClasses.length > 0) {
-                  return { kind: "classes", date, classes: dayClasses };
-                }
-                if (dayBreaks.length > 0) {
-                  return { kind: "break", date, breakLecture: dayBreaks[0]! };
-                }
-                return { kind: "empty", date };
-              });
-
-              interface RenderGroup {
-                kind: "off" | "classes" | "break" | "empty";
-                dates: string[];
-                classes?: PublicLecture[];
-                breakLecture?: PublicLecture;
-              }
-
-              const groups: RenderGroup[] = [];
-              for (const cell of dayCells) {
-                const prev = groups[groups.length - 1];
-                const canMergeBreak =
-                  prev &&
-                  prev.kind === "break" &&
-                  cell.kind === "break" &&
-                  prev.breakLecture?.subject === cell.breakLecture.subject &&
-                  prev.breakLecture?.startMinutes === cell.breakLecture.startMinutes &&
-                  prev.breakLecture?.endMinutes === cell.breakLecture.endMinutes;
-
-                if (canMergeBreak) {
-                  prev.dates.push(cell.date);
-                } else {
-                  groups.push({
-                    kind: cell.kind,
-                    dates: [cell.date],
-                    classes: cell.kind === "classes" ? cell.classes : undefined,
-                    breakLecture: cell.kind === "break" ? cell.breakLecture : undefined,
-                  });
-                }
-              }
-
-              return (
-                <tr key={key} className="border-b border-border align-top">
-                  <th className="sticky left-0 z-10 bg-background border-r border-border/60 px-3 py-3 font-mono text-xs font-medium whitespace-nowrap text-muted-foreground">
-                    <ClockLabel label={sample.startLabel} />
-                    <span className="mt-1 block font-normal">
-                      <ClockLabel label={sample.endLabel} />
-                    </span>
-                  </th>
-                  {groups.map((group) => {
-                    if (group.kind === "off") {
-                      return group.dates.map((date) => (
-                        <td key={date} className={`px-3 py-3 text-sm font-medium text-danger ${date === today ? "cal-today" : ""}`}>
-                          Off
-                        </td>
-                      ));
-                    }
-                    if (group.kind === "empty") {
-                      return group.dates.map((date) => (
-                        <td key={date} className={`px-2 py-2 ${date === today ? "cal-today" : ""}`} />
-                      ));
-                    }
-                    if (group.kind === "classes") {
-                      return (
-                        <td key={group.dates[0]} className={`px-2 py-2 ${group.dates[0] === today ? "cal-today" : ""}`}>
-                          <ClassCellGroup
-                            classes={group.classes!}
-                            showDivision={showDivision}
-                            showFaculty={showFaculty}
-                            today={today}
-                            minutes={minutes}
-                            showLive={showLive}
-                            meet={meet}
-                          />
-                        </td>
-                      );
-                    }
-                    // group.kind === "break"
-                    const isMulti = group.dates.length > 1;
-                    const b = group.breakLecture!;
-                    return (
-                      <td
-                        key={group.dates.join("-")}
-                        colSpan={group.dates.length}
-                        className={`px-2 py-2 ${!isMulti && group.dates[0] === today ? "cal-today" : ""}`}
-                      >
-                        {isMulti ? (
-                          <div className="flex items-center justify-center gap-2 rounded-lg border border-border/60 bg-muted/60 px-3 py-2.5 text-center text-xs font-semibold tracking-wider text-muted-foreground uppercase shadow-xs transition-colors hover:bg-muted/80">
-                            <span>{b.subject}</span>
-                            <span className="text-muted-foreground/40">·</span>
-                            <span className="font-mono text-[11px] font-normal tracking-normal text-muted-foreground/80">
-                              {formatCompactRange(b.startLabel, b.endLabel)}
-                            </span>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col items-center justify-center rounded-lg border border-border/60 bg-muted/60 px-2 py-2 text-center text-[11px] font-semibold tracking-wider text-muted-foreground uppercase shadow-xs transition-colors hover:bg-muted/80">
-                            <span>{b.subject}</span>
-                            <span className="mt-0.5 font-mono text-[10px] font-normal tracking-normal text-muted-foreground/75">
-                              {formatCompactRange(b.startLabel, b.endLabel)}
-                            </span>
-                          </div>
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              );
-            })
-          )}
-        </tbody>
-      </table>
+    <div ref={scroller} className="rise hidden overflow-x-auto sm:block">
+      <TimeGrid
+        columns={columns}
+        today={today}
+        minutes={minutes}
+        showDivision={showDivision}
+        showFaculty={showFaculty}
+        showLive={showLive}
+        meet={meet}
+      />
     </div>
     </>
   );
@@ -312,149 +151,6 @@ const PhoneRow = memo(function PhoneRow({ lecture, showDivision, showFaculty, no
         <ClassFoot faculty={showDivision && !showFaculty ? "" : lecture.faculty} room={lecture.room} cohort={showDivision ? lecture.division : ""} meet={meet} oneLine batch={showDivision && !showFaculty ? lecture.batch : ""} />
       </div>
     </li>
-  );
-});
-
-function ClassCellGroup({
-  classes,
-  showDivision,
-  showFaculty,
-  today,
-  minutes,
-  showLive,
-  meet,
-}: {
-  classes: PublicLecture[];
-  showDivision: boolean;
-  showFaculty: boolean;
-  today: string;
-  minutes: number;
-  showLive: boolean;
-  meet: MeetAction;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const isCrowded = classes.length > 2;
-
-  if (!isCrowded) {
-    return (
-      <div className="space-y-2">
-        {classes.map((lecture) => (
-          <Cell
-            key={lecture.id}
-            lecture={lecture}
-            showDivision={showDivision}
-            showFaculty={showFaculty}
-            now={showLive && isLive(lecture, today, minutes)}
-            meet={meet}
-          />
-        ))}
-      </div>
-    );
-  }
-
-  const displayed = expanded ? classes : classes.slice(0, 2);
-  const hiddenCount = classes.length - 2;
-
-  return (
-    <div className="space-y-1.5">
-      {displayed.map((lecture) => (
-        <CompactCell
-          key={lecture.id}
-          lecture={lecture}
-          showDivision={showDivision}
-          showFaculty={showFaculty}
-          now={showLive && isLive(lecture, today, minutes)}
-          meet={meet}
-        />
-      ))}
-      {!expanded && hiddenCount > 0 && (
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className="w-full text-center text-[10px] font-medium py-1 px-1.5 rounded border border-border/70 bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-        >
-          +{hiddenCount} more {hiddenCount === 1 ? "cohort" : "cohorts"}
-        </button>
-      )}
-      {expanded && (
-        <button
-          type="button"
-          onClick={() => setExpanded(false)}
-          className="w-full text-center text-[10px] font-medium py-0.5 text-muted-foreground hover:text-foreground transition-colors"
-        >
-          Show less
-        </button>
-      )}
-    </div>
-  );
-}
-
-const CompactCell = memo(function CompactCell({
-  lecture,
-  showDivision,
-  showFaculty,
-  now,
-  meet,
-}: {
-  lecture: PublicLecture;
-  showDivision: boolean;
-  showFaculty: boolean;
-  now: boolean;
-  meet: MeetAction;
-}) {
-  const { classNameFor } = useColors();
-  const cancelled = lecture.displayStatus === "cancelled" && lecture.subject !== "OFF";
-  const label = [showDivision ? cohortLabel(lecture.division) : "", showFaculty ? lecture.faculty : lecture.batch || lecture.faculty]
-    .filter(Boolean)
-    .join(" · ");
-
-  return (
-    <div
-      className={`rounded-lg p-2 text-xs border border-border/60 transition-colors shadow-xs ${classNameFor(lecture.subject, lecture.displayStatus)} ${now ? "is-now ring-1 ring-emerald-500" : ""}`}
-      data-testid="lecture-card"
-      data-live={now ? "true" : undefined}
-    >
-      <div className="flex items-start justify-between gap-1.5">
-        <p className={`min-w-0 font-medium truncate leading-tight ${now ? "font-semibold" : ""} ${cancelled ? "line-through decoration-danger decoration-2" : ""}`}>
-          {lecture.subject}
-        </p>
-        {now && <NowMark />}
-        {cancelled && <span className="shrink-0 text-[10px] font-semibold text-danger uppercase">Cancelled</span>}
-      </div>
-      <div className="mt-1 flex items-center justify-between gap-1 text-[11px] text-muted-foreground">
-        <span className="truncate max-w-[130px] font-medium text-foreground/90" title={label}>
-          {label}
-        </span>
-        {lecture.room && <LectureRoom room={lecture.room} action={meet} variant="inline" />}
-      </div>
-    </div>
-  );
-});
-
-const Cell = memo(function Cell({ lecture, showDivision, showFaculty, now, meet }: { lecture: PublicLecture; showDivision: boolean; showFaculty: boolean; now: boolean; meet: MeetAction }) {
-  const { classNameFor } = useColors();
-  const cancelled = lecture.displayStatus === "cancelled" && lecture.subject !== "OFF";
-  const rescheduled = lecture.displayStatus === "rescheduled";
-  const previousTime = lecture.previous?.startLabel && lecture.previous.startLabel !== lecture.startLabel;
-  return (
-    <div className={`${classNameFor(lecture.subject, lecture.displayStatus)} ${now ? "is-now" : ""}`} data-testid="lecture-card" data-live={now ? "true" : undefined}>
-      <div className="flex items-start justify-between gap-2">
-        <p className={`min-w-0 leading-snug ${now ? "font-semibold" : "font-medium"} ${cancelled ? "line-through decoration-danger decoration-2" : ""}`}>{lecture.subject}</p>
-        {now && <NowMark />}
-        {cancelled && <span className="shrink-0 text-[10px] font-semibold tracking-wide text-danger uppercase">Cancelled</span>}
-      </div>
-      {previousTime && (
-        <p className="mt-0.5 text-xs">
-          <span className="line-through">{lecture.previous?.startLabel}</span> {lecture.startLabel}
-        </p>
-      )}
-      <ClassFoot faculty={showDivision && !showFaculty ? "" : lecture.faculty} room={lecture.room} cohort={showDivision ? lecture.division : ""} meet={meet} batch={showDivision && !showFaculty ? lecture.batch : ""} />
-      {rescheduled && (
-        <div className="mt-1">
-          <StatusBadge status={lecture.displayStatus} label={badgeText(lecture.displayStatus, lecture.subject)} />
-        </div>
-      )}
-    </div>
   );
 });
 

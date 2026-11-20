@@ -156,3 +156,14 @@ export function formatSynced(iso: string | null, now: Date) {
   const hours = Math.round(minutes / 60);
   return `Synced ${hours}h ago`;
 }
+
+/** 530 becomes "08:50". Used by the time grid's hour gutter and block times. */
+// 12h clock, like the rest of the app. `period` adds AM/PM (hour gutter); `hourOnly` drops ":00".
+export function clockFromMinutes(total: number, options: { period?: boolean; hourOnly?: boolean } = {}) {
+  const value = Math.max(0, Math.round(total));
+  const hours24 = Math.floor(value / 60) % 24;
+  const minutes = value % 60;
+  const hours = hours24 % 12 || 12;
+  const base = options.hourOnly && minutes === 0 ? String(hours) : `${hours}:${String(minutes).padStart(2, "0")}`;
+  return options.period ? `${base} ${hours24 < 12 ? "AM" : "PM"}` : base;
+}

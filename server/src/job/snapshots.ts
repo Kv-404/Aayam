@@ -5,7 +5,7 @@ import type { BootstrapResponse } from "../../../shared/types.ts";
 import type { AppDatabase } from "../db.ts";
 import type { SqlDb, SqlStatement } from "../d1/sql.ts";
 import { listChanges } from "../services/changeHistoryService.ts";
-import { bootstrapFor, calendarLectures, openMonday, prepareBootstrap, prepareWeeks, savedMondays, weekFor, type ViewConfig } from "../views.ts";
+import { bootstrapFor, calendarLectures, prepareBootstrap, type ViewConfig } from "../views.ts";
 
 /** A faculty filter that matches nobody, for the `none` snapshot. */
 const NOBODY = "\u0000nobody";
@@ -60,17 +60,6 @@ export function renderSnapshots(db: AppDatabase, config: ViewConfig, now = new D
   const { refreshing: _refreshing, ...sync } = everything.sync;
   out.set(snapshotKeys.sync, JSON.stringify(sync));
   out.set(snapshotKeys.changes, JSON.stringify({ changes: listChanges(db, 200) }));
-
-  const weeks = prepareWeeks(db, config, now);
-  for (const monday of savedMondays(weeks)) {
-    const opened = openMonday(db, weeks, monday);
-    for (const scope of scopes) {
-      if (scope.key === "none") continue;
-      const week = weekFor(opened, scope.filter ?? {});
-      if (week.lectures.length === 0) continue;
-      out.set(snapshotKeys.week(monday, scope.key), JSON.stringify(week));
-    }
-  }
 
   for (const scope of scopes) {
     if (!scope.key.startsWith("d:") && !scope.key.startsWith("f:")) continue;

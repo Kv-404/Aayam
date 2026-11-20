@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { AppConfig, SheetSource } from "../config.ts";
+import { primarySheetId, type AppConfig, type SheetSource } from "../config.ts";
 import { openDatabase, readSyncState, type AppDatabase } from "../db.ts";
 import type { SqlDb } from "../d1/sql.ts";
 import { programKey } from "../program.ts";
@@ -133,11 +133,13 @@ export async function runJob(options: JobOptions): Promise<JobResult> {
     lap("hydrate");
 
     // 2. Sync every sheet. A download failure keeps the last good copy and records lastError.
-    const sources = await resolveSheetSources(options.config.spreadsheets, sql);
+    //    Sheets come only from D1 `timetable_sheet_links`. A batch with no row is skipped and keeps its last copy.
+    const { sources, missing } = await resolveSheetSources(sql);
+    for (const template of missing) log(`[job] no sheet link in D1 for ${template.course} ${template.batch}; skipping it`);
     const config: AppConfig = {
       ...options.config,
       spreadsheets: sources,
-      spreadsheetId: sources.find((sheet) => sheet.batch === "2025-29")?.id ?? sources[0]?.id ?? options.config.spreadsheetId,
+      spreadsheetId: primarySheetId(sources),
     };
     const download = options.download ?? (async (source: SheetSource) => (await fetchSpreadsheet({ spreadsheetId: source.id })).buffer);
     const files = new Map<string, Promise<Buffer>>();
@@ -172,15 +174,19 @@ export async function runJob(options: JobOptions): Promise<JobResult> {
         replaceProgram: { course: source.course, batch: source.batch! },
       });
     }
-    result.sync = await runSync({
-      db,
-      now: syncNow,
-      config,
-      load: async () => ({ buffer: await fetchOnce(sources[0]!) }),
-      loadAll: async () =>
-        Promise.all(sources.map(async (source): Promise<WorkbookFile> => ({ buffer: await fetchOnce(source), course: source.course, spreadsheetId: source.id }))),
-    });
-    if (!result.sync.ok) log(`[job] sync failed, keeping the last copy: ${result.sync.error}`);
+    if (sources.length > 0) {
+      result.sync = await runSync({
+        db,
+        now: syncNow,
+        config,
+        load: async () => ({ buffer: await fetchOnce(sources[0]!) }),
+        loadAll: async () =>
+          Promise.all(sources.map(async (source): Promise<WorkbookFile> => ({ buffer: await fetchOnce(source), course: source.course, spreadsheetId: source.id }))),
+      });
+      if (!result.sync.ok) log(`[job] sync failed, keeping the last copy: ${result.sync.error}`);
+    } else {
+      log("[job] no sheet links in D1; nothing to sync");
+    }
     persistCancelledRemovals(db);
     lap("sync");
 

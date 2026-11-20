@@ -23,9 +23,9 @@ Schema is `migrations/*.sql`, applied by `wrangler d1 migrations apply timetable
 | `timetable_sheet_links` | Worker (admin) | job |
 | `student_notices`, `push_subscriptions`, `push_vapid` | Worker; job sets `pushed_at` and prunes dead subscriptions | both |
 | `faculty_directory`, `admin_password`, `admin_sessions`, `rate_limits` | Worker | Worker |
-| `mcp_oauth_clients`, `mcp_oauth_transactions`, `mcp_oauth_codes`, `mcp_oauth_refresh_tokens`, `mcp_oauth_revocations` (`migrations/0002_mcp_oauth.sql`) | Worker (`edge/oauthStore.ts`) | Worker |
+| `mcp_oauth_*` (`migrations/0002_mcp_oauth.sql`) | nothing: the MCP server was removed; the empty tables stay because migrations are additive | — |
 
-Timestamps are ISO strings (`toISOString()`), compared as text. `rate_limits.reset_at` is epoch ms. The `mcp_oauth_*` tables store only SHA-256 hashes of codes, refresh tokens, transaction ids, and client secrets; every row has `expires_at` and expired rows are deleted in the same batch as OAuth writes.
+Timestamps are ISO strings (`toISOString()`), compared as text. `rate_limits.reset_at` is epoch ms.
 
 ## Snapshots (the read model)
 
@@ -37,10 +37,9 @@ Keys come only from `shared/scope.ts`: `scopeKey(scope, index)` turns a request 
 | `sync` | `SyncInfo` without `refreshing` |
 | `changes` | `{"changes":[...]}`, newest 200 |
 | `boot:<scope>` | `BootstrapResponse` without `now`, `today`, `sync`, `notices` |
-| `week:<monday>:<scope>` | `/api/week` body. Omitted when empty |
 | `ics:<scope>` | ICS text, `d:` and `f:` only |
 
-The job renders with `server/src/views.ts` (`buildBootstrap`, week and calendar views; golden output in `server/test/views.test.ts`) and writes only rows whose hash changed (`server/src/job/snapshots.ts`). An unchanged run writes about 3 rows.
+The job renders with `server/src/views.ts` (`buildBootstrap` and calendar views; golden output in `server/test/views.test.ts`) and writes only rows whose hash changed (`server/src/job/snapshots.ts`). An unchanged run writes about 3 rows. Keys it no longer produces are deleted, so old `week:` rows go on the first run. Past weeks are archived in D1 but never published as snapshots.
 
 ## Worker routes (`server/src/edge/`)
 
@@ -48,7 +47,6 @@ The job renders with `server/src/views.ts` (`buildBootstrap`, week and calendar 
 | --- | --- |
 | `GET /api/bootstrap` | `?division=` (alias `cohort`), `?faculty=`, `?course=`, `?batch=`, `?all=1`. One D1 round trip. Adds `now`, `today` (in `index.timezone`), `sync.refreshing`, and `notices` (student scopes: course/batch match, 14 days, newest 5). ETag + 304, `Cache-Control: no-cache`. 503 + `Retry-After` before the first job run. A read older than 12 min asks for a sync in the background |
 | `POST /api/sync` | Records a user request, dispatches the job (at most once a minute), returns the current bootstrap with `refreshing: true` |
-| `GET /api/week?monday=` | Stored body, scoped like bootstrap. Missing → empty lists |
 | `GET /api/calendar.ics` | `?division=` or `?faculty=`, `download=1` sets Content-Disposition |
 | `GET /api/changes`, `/api/health`, `/api/db-status` | From snapshots; D1 ping |
 | `/api/auth/config`, `/me`, `/google`, `/logout` | Google ID token via tokeninfo, allowed domains, `faculty_directory` (case-insensitive, active). HMAC session with `AUTH_SECRET`, cookie `timetable_faculty_session`, or `Authorization: Bearer`. 8 tries / 10 min / IP |
@@ -56,24 +54,13 @@ The job renders with `server/src/views.ts` (`buildBootstrap`, week and calendar 
 | `POST /api/admin/sheets` | Checks the public xlsx export starts with `PK`, stores the link, asks for a sync. Response has `syncing: true` |
 | `POST /api/admin/notices` | Stores the notice (`pushed_at` NULL), asks for a sync; the job sends the push. Response has `queued: true` |
 | `GET /api/push/public-key`, `POST /api/push/subscribe` | VAPID public key; upsert subscription |
-| `GET /.well-known/oauth-protected-resource` (also `/mcp`, `/api/mcp` suffixes) | RFC 9728 metadata. `resource` is `<origin>/mcp`; origin is `MCP_PUBLIC_URL` or the request's. CORS `*` |
-| `GET /.well-known/oauth-authorization-server`, `/openid-configuration` | RFC 8414 metadata: CIMD (`client_id_metadata_document_supported`), DCR, PKCE `S256` only, `none`/`client_secret_post`/`client_secret_basic`. Unknown `/.well-known/*` falls through to assets |
-| `POST /oauth/register` | Dynamic client registration (`mcp_<random>`, 30 days; HTTPS or loopback redirect URIs). 12 / 10 min / IP |
-| `GET /oauth/authorize` → `GET /oauth/callback` → `POST /oauth/consent` | Client by id or by `https://` client ID metadata document (fetched, cached 10 min; private/loopback hosts refused). PKCE S256 required, RFC 8707 `resource` must be this server's `/mcp` or `/api/mcp`. A valid `timetable_faculty_session` **cookie** skips Google and goes straight to consent; else, with `GOOGLE_CLIENT_SECRET`, Google code flow (PKCE + nonce, redirect `<origin>/oauth/callback`); else a "sign in on Aayam first" page. Consent is CSRF-protected, CSP `frame-ancestors 'none'`. Active `faculty_directory` row required |
-| `POST /oauth/token` | `authorization_code` (single-use, 90 s, `DELETE … RETURNING`) and rotating `refresh_token` (30 days; replay revokes the family). Access token: 1 h stateless HMAC (key derived from `AUTH_SECRET`, `typ: mcp_at`; a web session never verifies). 60 / 5 min / IP |
-| `POST /oauth/revoke` | Refresh token revokes its family; access token revoked by `jti` until expiry |
-| `POST /mcp`, `POST /api/mcp` | Stateless Streamable HTTP, JSON responses only (no SSE, no sessions). Bearer token → audience, revocation, and live `faculty_directory` row checked in one D1 read; scopes cut to what the account may have now. Origin allow-list (self, claude.ai, chatgpt.com, `CLIENT_ORIGIN`, localhost). `GET`/`DELETE` → 405 |
-
-### MCP tools (`server/src/edge/mcp.ts`)
-
-Scopes: `timetable:read`, `faculty:self` for everyone; `coordinator:read` for coordinators (`shared/coordinators.ts`) and all-access; `faculty:all`, `faculty:directory` for `can_see_all_faculty`. Tools: `get_my_profile`, `get_my_schedule`, `get_cohort_timetable`, `list_cohorts_and_weeks`, `get_timetable_changes`, `find_free_rooms_or_slots`, `get_faculty_schedule`, `list_faculty_directory`, `get_calendar_subscription_info`, `refresh_timetable_sync` (records a user sync request and dispatches the job, like `POST /api/sync`). Each tool reads one scoped `boot:<scope>` / `week:<monday>:<scope>` row (resolved with `scopeKey`), `changes`, or `index`. Nothing parses `boot:all`: the two tools that need every cohort ask D1 for just the fields with `json_extract` / `json_each`. `server/test/edgeBench.test.ts` holds the heaviest tool under 3 ms CPU. Tests: `mcpServer.test.ts`, `mcpOAuth.test.ts`.
 
 `scheduled` (cron `*/5`) only dispatches the job. Cron and stale reads never set `refreshing`; only `/api/sync` and admin actions do (`server/src/edge/sync.ts`).
 
 ## Sync job (`server/src/job/pipeline.ts`)
 
 1. Read `timetable_sync.revision` from D1. The working DB is `server/data/job.sqlite` (cached between Actions runs); hydrate it from the D1 archive only when the cached revision or database id differs.
-2. Resolve sheet sources: D1 `timetable_sheet_links` first, then env, then the fallbacks in `server/src/config.ts`. A program whose stored lectures came from another workbook was repointed by an admin: sync it with `replaceProgram`.
+2. Resolve sheet sources from D1 `timetable_sheet_links` only (`resolveSheetSources` → `sheetSources` maps rows onto `COHORT_TEMPLATES`). There is no env or code fallback: a batch with no valid row is logged and skipped (it keeps its last synced lectures); no rows at all skips the sync. A program whose stored lectures came from another workbook was repointed by an admin: sync it with `replaceProgram`. The bootstrap's `sheets` links take the D1 id over the lectures' `spreadsheetId`, and the top-level `spreadsheetUrl` is the D1 link for 2025-29 (else the first), so the header link moves as soon as the job runs after an admin save.
 3. `runSync` (`server/src/services/syncScheduler.ts`, the only place that turns a download into a snapshot):
    1. Download the public xlsx (`googleSheetsService.ts`), `parseTimetableSource`, `normalizeWorkbook`.
    2. `persistCancelledRemovals` so a removal already recorded stays cancelled.
@@ -131,4 +118,4 @@ Tests: `server/test/faculty.test.ts`.
 
 ## Archive and weeks
 
-`archiveRows.ts` maps the working DB to rows and back; `timetableArchive.ts` merges two archives. A non-overlapping saved week is a fresh baseline: its change rows leave the live log and stay on that week. The outgoing week is kept, up to 8 past weeks per course and batch, and the published week is stored too. `views.ts` collapses overlapping copies of one week (`preferOneWeekCopies`). The client hides the published week from `savedWeeks`. Same-week removals stay cancelled across job runs and cache loss because the archive is in D1. `server/test/archive.test.ts`, `sync.test.ts`, `weeks.test.ts`, `job.test.ts` cover this.
+`archiveRows.ts` maps the working DB to rows and back; `timetableArchive.ts` merges two archives. A non-overlapping saved week is a fresh baseline: its change rows leave the live log and stay on that week. The outgoing week is kept, up to 8 past weeks per course and batch, and the published week is stored too. The archive is internal: no route or snapshot exposes past weeks, and `BootstrapResponse` has no `savedWeeks`. Same-week removals stay cancelled across job runs and cache loss because the archive is in D1. `server/test/archive.test.ts`, `sync.test.ts`, `weeks.test.ts`, `job.test.ts` cover this.

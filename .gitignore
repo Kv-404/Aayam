@@ -16,3 +16,4 @@ server/data
 .wrangler/
 .dev.vars*
 .vercel/
+.mcp.json

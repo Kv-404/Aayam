@@ -32,8 +32,7 @@ export function PitchClose({
   onOpenFaculty,
   onOpenPage,
   sourceUrl,
-  onOpenMcp,
-}: Pick<PitchActions, "onOpenStudent" | "onOpenFaculty" | "onOpenPage" | "sourceUrl"> & { onOpenMcp?: () => void }) {
+}: Pick<PitchActions, "onOpenStudent" | "onOpenFaculty" | "onOpenPage" | "sourceUrl">) {
   return (
     <>
       <Section id="pricing" tone="raise">
@@ -102,11 +101,6 @@ export function PitchClose({
             <button type="button" onClick={onOpenFaculty} className={`rounded-lg border border-white/15 px-4 py-2.5 text-sm hover:bg-white/5 ${focusRing}`}>
               Faculty sign in
             </button>
-            {onOpenMcp && (
-              <button type="button" onClick={onOpenMcp} data-testid="pitch-mcp-connect" className={`rounded-lg border border-white/15 px-4 py-2.5 text-sm text-white/85 hover:bg-white/5 hover:text-white ${focusRing}`}>
-                Connect AI (MCP)
-              </button>
-            )}
           </div>
         </div>
       </section>

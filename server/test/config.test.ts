@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   cleanSpreadsheetId,
-  parseSheetEntry,
+  COHORT_TEMPLATES,
+  primarySheetId,
   sheetForScope,
   sheetSources,
   spreadsheetExportUrl,
@@ -35,40 +36,31 @@ describe("cohort sheet config", () => {
     assert.equal(spreadsheetExportUrl(raw), "https://docs.google.com/spreadsheets/d/my-sheet-id/export?format=xlsx");
   });
 
-  it("parses SPREADSHEET_IDS entries with URLs and course/batch metadata", () => {
-    const parsed1 = parseSheetEntry("https://docs.google.com/spreadsheets/d/abc-123/edit:BTech:2026-30");
-    assert.equal(parsed1.id, "abc-123");
-    assert.equal(parsed1.course, "BTech");
-    assert.equal(parsed1.batch, "2026-30");
-
-    const parsed2 = parseSheetEntry("custom-id:2024-28");
-    assert.equal(parsed2.id, "custom-id");
-    assert.equal(parsed2.batch, "2024-28");
-
-    const parsed3 = parseSheetEntry("https://docs.google.com/spreadsheets/d/mca-sheet-id/edit");
-    assert.equal(parsed3.id, "mca-sheet-id");
+  it("builds sources only from D1 sheet link rows, keeping cohort divisions", () => {
+    const y1 = "1o_sNayHt8v4WlyZUVcmPWhyjNQ6i8ONuX2zMo5czg0w";
+    const mcaId = "custom-mca-sheet-id-000000000";
+    const { sources, missing } = sheetSources([
+      { course: "btech", batch: "2026-30", spreadsheet_id: `https://docs.google.com/spreadsheets/d/${y1}/edit` },
+      { course: "MCA", batch: "2026-28", spreadsheet_id: mcaId },
+      { course: "BTech", batch: "2024-28", spreadsheet_id: "javascript:alert(1)" },
+      { course: "BTech", batch: "1999-03", spreadsheet_id: "unknown-batch-sheet-id-0000000" },
+    ]);
+    assert.deepEqual(sources.map((s) => `${s.course} ${s.batch} ${s.id}`), [`BTech 2026-30 ${y1}`, `MCA 2026-28 ${mcaId}`]);
+    assert.ok(sources[0]!.divisions?.includes("Andrew NG"));
+    assert.ok(sources[1]!.divisions?.includes("Geoffrey Hinton"));
+    assert.deepEqual(missing.map((t) => t.batch), ["2025-29", "2024-28", "2023-27"]);
+    assert.equal(missing.length + sources.length, COHORT_TEMPLATES.length);
+    assert.equal(sheetForScope({ division: "Andrew NG" }, sources)?.id, y1);
+    assert.equal(primarySheetId(sources), y1);
+    assert.equal(primarySheetId([]), "");
   });
 
-  it("allows setting cohort links via environment variables without losing cohort divisions", () => {
+  it("ignores sheet env variables", () => {
     const origEnv = { ...process.env };
     try {
-      process.env.SPREADSHEET_BTECH_2026_30 = "https://docs.google.com/spreadsheets/d/custom-y1-id/edit";
-      process.env.SPREADSHEET_MCA_2026_28 = "custom-mca-id";
-
-      const sources = sheetSources();
-      const y1 = sources.find((s) => s.batch === "2026-30");
-      assert.ok(y1);
-      assert.equal(y1.id, "custom-y1-id");
-      assert.ok(y1.divisions?.includes("Andrew NG"));
-
-      const mca = sources.find((s) => s.course === "MCA");
-      assert.ok(mca);
-      assert.equal(mca.id, "custom-mca-id");
-      assert.ok(mca.divisions?.includes("Geoffrey Hinton"));
-
-      // Matching cohort returns the custom configured sheet
-      const matched = sheetForScope({ division: "Andrew NG" }, sources);
-      assert.equal(matched?.id, "custom-y1-id");
+      process.env.SPREADSHEET_BTECH_2026_30 = "custom-y1-id-from-env-0000000";
+      process.env.SPREADSHEET_IDS = "custom-id-from-env-000000000:2024-28";
+      assert.deepEqual(sheetSources([]).sources, []);
     } finally {
       process.env = origEnv;
     }

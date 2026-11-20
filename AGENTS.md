@@ -19,7 +19,7 @@ This file is the rulebook, injected every turn. Open **one** context file for th
 | Task | Read |
 | --- | --- |
 | UI, setup flow, cohort/faculty mode, week/day view, colours, notifications, filters, polling | `docs/agent/client.md` |
-| Worker routes, sync job, snapshots, D1 schema, parser, cancellations, change log, saved weeks, auth, admin, push | `docs/agent/server.md` |
+| Worker routes, sync job, snapshots, D1 schema, parser, cancellations, change log, week archive, auth, admin, push | `docs/agent/server.md` |
 | Sheet layout, what counts as OFF, week rollover | `docs/agent/sheet.md` |
 | Secrets, deploy, free-plan budget, the domain, changing the production sheet, operating | `docs/agent/deploy.md` |
 
@@ -27,12 +27,13 @@ Shared types and faculty matching are in `docs/agent/server.md`. Read a second f
 
 ## Platform rules (free plan)
 
-- **The Worker (`server/src/edge/`) never parses a sheet, builds a timetable, or `JSON.parse`s a timetable body.** It reads a prebuilt `snapshots` row and concatenates strings. Workers Free is 10 ms CPU per request; one sheet costs 150–400 ms. New read features are rendered by the job (`server/src/views.ts`, `server/src/job/snapshots.ts`) and stored as snapshots. Only exception: MCP tools (`edge/mcp.ts`) may parse one scoped `boot:`/`week:` row and `changes`, never `boot:all` (ask D1 with `json_extract`/`json_each` instead).
+- **The Worker (`server/src/edge/`) never parses a sheet, builds a timetable, or `JSON.parse`s a timetable body.** It reads a prebuilt `snapshots` row and concatenates strings. Workers Free is 10 ms CPU per request; one sheet costs 150–400 ms. New read features are rendered by the job (`server/src/views.ts`, `server/src/job/snapshots.ts`) and stored as snapshots.
 - The Worker has no `node:` imports, no `process`, no npm packages. It may import `shared/*.ts`, `server/src/config.ts` (keep that file free of Node built-ins), and `server/src/d1/sql.ts`. `npm run check:worker` must pass.
 - Snapshot keys come only from `shared/scope.ts` (`scopeKey`, `snapshotKeys`). Job and Worker both call it; never build a key by hand.
+- Sheet links live only in D1 `timetable_sheet_links` (admin repoints them at `/admin`). No `SPREADSHEET_*` env vars, no sheet ids in code.
 - D1 is the only database. Do not add another one, a KV/Redis cache, or any write path to Google Sheets. Schema changes are a new `migrations/000N_*.sql`, additive; never edit an applied migration.
 - All SQL goes through `SqlDb` (`server/src/d1/sql.ts`). Timestamps are ISO strings.
-- Only `/api/*` and the MCP paths (`/mcp`, `/mcp/*`, `/oauth/*`, `/.well-known/*`) run the Worker (`run_worker_first`). Static assets stay free; do not route pages through the Worker.
+- Only `/api/*` runs the Worker (`run_worker_first`). Static assets stay free; do not route pages through the Worker.
 - Expensive crypto (scrypt, push encryption fan-out) does not go in the Worker. Pushes are sent by the job.
 - The browser never gets a Google key. Sheets stay "anyone with the link can view".
 
@@ -41,7 +42,7 @@ Shared types and faculty matching are in `docs/agent/server.md`. Read a second f
 - A lecture removed from a day that is still published stays on the grid as cancelled, with its subject colour, strikethrough, and a Cancelled label. It survives job restarts and cache loss through the D1 archive.
 - A whole day that disappeared is not cancelled classes: those lectures drop off the grid.
 - `compareSnapshots` keeps one cancelled event; do not re-emit a cancelled removal on later syncs.
-- A new sheet whose dates do not overlap the saved week is a fresh baseline: no added/removed/cancelled events, change rows from other weeks leave the live log, and the outgoing week is kept as a saved past week.
+- A new sheet whose dates do not overlap the saved week is a fresh baseline: no added/removed/cancelled events, change rows from other weeks leave the live log, and the outgoing week is kept in the D1 archive (internal; the app shows only the current week).
 - A slot is cancelled by the text `OFF`, `cancelled`, or `holiday`, or by a red fill on the subject cell. A red lecture keeps its subject. A full-day merged label such as Dussehra is that subject on every slot, including lunch, unless that cell is red.
 - Monday and Saturday off days are white cells. The word `OFF` cancels them. Orange, amber, gold, yellow, and white fills do not.
 - Faculty names can share a cell (`Dr. Aarti & Ms. Kashmira`). Match people only with `shared/faculty.ts`.
@@ -54,6 +55,9 @@ Shared types and faculty matching are in `docs/agent/server.md`. Read a second f
 - Students pick a batch, then a section. There is no batch PIN gate.
 - Student logout clears `timetable-student-batch`, `timetable-role`, `timetable-cohort`, `timetable-setup` and cleans the URL to `/`.
 - Adding a setup step must not reset a returning student's theme or cohort. Role is `timetable-role`; missing role shows "Who are you?" once.
+- The app shows only the current week. There is no past-week view or `/api/week`; past weeks stay in the D1 archive only.
+- There is no MCP server or OAuth endpoint. Do not add one back without asking.
+- Wide Week and Day views are an hour grid (`TimeGrid.tsx`) with the old card style (`classNameFor`). Back-to-back periods of one class stay separate cards, joined by a strip that shows the short break. A break at the same time on neighbouring days is one band.
 - Polling stays cheap: about every 5 min while visible, none while hidden, and no cache-busting (the Worker answers 304s). The free plan allows 100k API requests a day.
 
 ## Commands

@@ -1,15 +1,13 @@
-import type { BootstrapResponse, ChangeEvent, PublicLecture, SavedWeek, SheetLink } from "@shared/types";
+import type { BootstrapResponse, ChangeEvent, PublicLecture, SheetLink } from "@shared/types";
 import { SiteFooter } from "@/components/SiteFooter";
 import { cohortChoices, cohortLabel, lectureInCohort, type CohortChoice } from "@shared/cohort";
 import { findCoordinator } from "@shared/coordinators";
 import { changeMatchesFaculty, listFacultyNames } from "@shared/faculty";
-import { Bell, CalendarPlus, Check, ChevronDown, Download, FileSpreadsheet, GraduationCap, LogOut, RefreshCw, Settings, Sparkles, X } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { Bell, CalendarPlus, Check, ChevronDown, Download, FileSpreadsheet, GraduationCap, LogOut, RefreshCw, Settings, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { FacultyScopeMenu } from "@/components/FacultyScopeMenu";
 import { fetchCurrentAuth, logoutFaculty } from "@/lib/auth";
-import { fetchSavedWeek } from "@/lib/api";
 import { LectureRoom, MeetChoice } from "@/components/MeetLink";
 import RubberSegment from "@/components/RubberSegment";
 import { RecentChanges } from "@/components/RecentChanges";
@@ -28,11 +26,10 @@ import { clearFacultyBrowse, clearStudentAuth, closeExamNotice, closeNotifyHint,
 import { ColorEditor } from "@/components/ColorEditor";
 import { ColorSwitch } from "@/components/ColorSwitch";
 import { formatClockTime, formatCompactRange, zonedNow } from "@/lib/time";
-import { applyFilters, collapseFullOffDays, defaultFilters, groupSavedWeeks, mondayOf, slotPhase, splitByLatestWeek, unique, type Filters, type WeekGroup } from "@/lib/view";
+import { applyFilters, collapseFullOffDays, defaultFilters, slotPhase, splitByLatestWeek, unique, type Filters } from "@/lib/view";
 import { AayamLogo } from "@/components/AayamLogo";
 
 const FacultyLoginModal = lazy(() => import("@/components/FacultyLoginModal").then((m) => ({ default: m.FacultyLoginModal })));
-const McpConnectModal = lazy(() => import("@/components/McpConnectModal").then((m) => ({ default: m.McpConnectModal })));
 
 const dayOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
@@ -92,7 +89,6 @@ export function Dashboard({
   const [authEmail, setAuthEmail] = useState<string | undefined>(() => readFacultyEmail() || undefined);
   const [lens, setLens] = useState<FacultyLens | null>(() => readFacultyLens());
   const [loginModalOpen, setLoginModalOpen] = useState(false);
-  const [mcpModalOpen, setMcpModalOpen] = useState(false);
   const [setupSeed, setSetupSeed] = useState(0);
   const [seedRole, setSeedRole] = useState<ViewerRole | "">("");
   const [filters, setFilters] = useState<Filters>(() => {
@@ -114,7 +110,6 @@ export function Dashboard({
     if (typeof window !== "undefined" && window.matchMedia("(min-width: 640px)").matches) return "week";
     return "today";
   });
-  const [weekId, setWeekId] = useState("live");
   const [notifyHintClosed, setNotifyHintClosed] = useState(readNotifyHintClosed);
   const [examNoticeClosed, setExamNoticeClosed] = useState(readExamNoticeClosed);
   const [fadeIn, setFadeIn] = useState(false);
@@ -130,54 +125,8 @@ export function Dashboard({
   );
   const selected = choice ? choice.division : cohort;
 
-  const { liveLectures, derivedSavedWeeks } = useMemo(() => {
-    const { latest, earlier } = splitByLatestWeek(data.lectures);
-    if (earlier.length === 0) {
-      return { liveLectures: data.lectures, derivedSavedWeeks: [] };
-    }
-    const earlierWeekMap = new Map<string, SavedWeek>();
-    for (const lecture of earlier) {
-      const monday = lecture.date ? mondayOf(lecture.date) : "unknown";
-      const key = `${lecture.course}|${lecture.batch}|${monday}`;
-      if (!earlierWeekMap.has(key)) {
-        earlierWeekMap.set(key, {
-          id: key,
-          course: lecture.course,
-          batch: lecture.batch,
-          start: monday,
-          end: lecture.date ?? monday,
-          lectures: [],
-          changes: [],
-        });
-      }
-      earlierWeekMap.get(key)!.lectures.push(lecture);
-    }
-    return { liveLectures: latest, derivedSavedWeeks: [...earlierWeekMap.values()] };
-  }, [data.lectures]);
-
-  const weekRows = useMemo(() => {
-    const rows = [...(data.savedWeeks ?? []), ...derivedSavedWeeks];
-    if (role === "student" && choice) return rows.filter((week) => week.course === choice.course && week.batch === choice.batch);
-    return rows;
-  }, [data.savedWeeks, derivedSavedWeeks, role, choice]);
-  const allWeeks = useMemo(() => groupSavedWeeks(weekRows), [weekRows]);
-  const savedWeeks = allWeeks.filter((week) => !data.weekStart || !data.weekEnd || week.end < data.weekStart || week.start > data.weekEnd);
-  const selectedWeek = savedWeeks.find((week) => week.id === weekId);
-  useEffect(() => {
-    if (weekId !== "live" && !selectedWeek) setWeekId("live");
-  }, [selectedWeek, weekId]);
-  const pastWeek = useQuery({
-    queryKey: ["saved-week", weekId, scopeAll ? "all" : role === "faculty" ? faculty : cohort],
-    queryFn: () => {
-      const derived = derivedSavedWeeks.find((w) => w.id === weekId);
-      if (derived) return Promise.resolve(derived);
-      return fetchSavedWeek(weekId, scopeAll ? { all: true } : role === "faculty" ? { faculty } : { division: cohort });
-    },
-    enabled: weekId !== "live",
-    // A saved week does not change after it is archived.
-    staleTime: Infinity,
-  });
-  const lectureFeed = !selectedWeek ? liveLectures : pastWeek.data?.lectures ?? [];
+  // Bootstrap carries the published week. Older dated rows, if any, never reach the grid.
+  const lectureFeed = useMemo(() => splitByLatestWeek(data.lectures).latest, [data.lectures]);
   const board = resolveFacultyView({
     lectures: lectureFeed,
     choices,
@@ -188,11 +137,6 @@ export function Dashboard({
     lens,
   });
   const selectedFaculty = board.signedInName;
-  // Now/Next, reminders, and alerts follow today's timetable while an old week is on screen.
-  const liveBoard = selectedWeek
-    ? resolveFacultyView({ lectures: data.lectures, choices, facultyNames, signedInName: faculty, email: authEmail, canSeeAll, lens })
-    : board;
-
   useEffect(() => {
     if (import.meta.env.DEV && readFacultyPreview()) {
       setAuthEmail(readFacultyEmail() || undefined);
@@ -292,8 +236,7 @@ export function Dashboard({
           ? list.filter((change) => !change.division || facultyDivisions.has(change.division))
           : list
       : list.filter((change) => watchedDivisions.size === 0 || !change.division || watchedDivisions.has(change.division));
-  const liveChanges = visibleChanges(data.changes, lectureIds(liveBoard.lectures));
-  const shownChanges = selectedWeek ? visibleChanges(pastWeek.data?.changes ?? [], lectureIds(facultyPool)) : liveChanges;
+  const liveChanges = visibleChanges(data.changes, lectureIds(board.lectures));
   const notifications = useChangeNotifications(liveChanges);
   useEffect(() => {
     if (role !== "student" || !notifications.optedIn) return;
@@ -314,7 +257,7 @@ export function Dashboard({
   const foldedPool = collapseFullOffDays(pool);
   const dayLectures = applyFilters(foldedPool, effective);
   const weekLectures = applyFilters(foldedPool, effective, { ignoreDay: true });
-  const pinnedDay = filters.day || (selectedWeek ? days[0] ?? "" : "");
+  const pinnedDay = filters.day;
   const todayPack = useMemo(
     () => resolveToday(dayLectures, zone.iso, pinnedDay, data.weekStart, data.weekEnd),
     [dayLectures, zone.iso, pinnedDay, data.weekStart, data.weekEnd],
@@ -330,24 +273,15 @@ export function Dashboard({
   }, [role, board.facultyFilter, filters.division, facultyVisible]);
   const requestedDay = filters.day || todayPack.lectures[0]?.weekday || zone.weekday;
   const activeDay = days.includes(requestedDay) ? requestedDay : days[0] ?? "";
-  const liveScope = !selectedWeek
-    ? scope
-    : role === "faculty"
-      ? inPickedCohort(liveBoard.lectures)
-      : choice
-        ? data.lectures.filter((lecture) => lectureInCohort(lecture, choice) && lecture.kind !== "break")
-        : [];
+  const liveScope = scope;
   // All classes has many lectures at once, so "the current class" means nothing there until one cohort is filtered.
   const liveMarks = role !== "faculty" || board.showLive || Boolean(filters.division);
   const upcoming = liveMarks ? nextClass(liveScope, zone.iso, zone.minutes) : undefined;
   const filtersOn = Boolean(filters.subject || filters.faculty || filters.room || filters.status !== "all" || (role === "faculty" && filters.division));
-  const changes = shownChanges;
-  function chooseWeek(id: string) {
-    setWeekId(id);
-  }
+  const changes = liveChanges;
   const failing = Boolean(data.sync.lastError);
   const activeSheet = role === "student" ? choice : facultyChoice;
-  const sheetUrl = (selectedWeek && pastWeek.data?.spreadsheetUrl) || sheetUrlFor(data.sheets, activeSheet, data.spreadsheetUrl);
+  const sheetUrl = sheetUrlFor(data.sheets, activeSheet, data.spreadsheetUrl);
 
   function navigateDay(direction: -1 | 1) {
     if (days.length <= 1) return;
@@ -396,7 +330,7 @@ export function Dashboard({
   useLayoutEffect(() => {
     if (shownOnce.current) window.scrollTo({ top: 0, behavior: "instant" });
     shownOnce.current = true;
-  }, [view, filters.day, weekId]);
+  }, [view, filters.day]);
 
   const drag = useRef<{ x: number; y: number; id: number } | null>(null);
   const wheelLock = useRef(0);
@@ -661,7 +595,7 @@ export function Dashboard({
   const dayControl = (className: string) => days.length > 0 && activeDay ? (
     <RubberSegment
       items={days.map((day) => {
-        const isToday = !selectedWeek && day === zone.weekday;
+        const isToday = day === zone.weekday;
         return {
           value: day,
           label: (
@@ -792,8 +726,8 @@ export function Dashboard({
                   href={sheetUrl}
                   target="_blank"
                   rel="noreferrer"
-                  aria-label={selectedWeek ? "Open that week's sheet" : "Open the sheet"}
-                  title={selectedWeek ? "Open that week's sheet" : "Open the sheet"}
+                  aria-label="Open the sheet"
+                  title="Open the sheet"
                   className="hidden sm:inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground sm:size-9"
                 >
                   <FileSpreadsheet className="size-4" aria-hidden="true" />
@@ -838,18 +772,7 @@ export function Dashboard({
                   }}
                   onClear={() => patch({ division: "", day: "", subject: "", faculty: "", room: "", status: "all", query: "" })}
                 />
-                <button
-                  type="button"
-                  data-testid="mcp-connect-button"
-                  aria-label="Connect AI assistant (MCP)"
-                  title="Connect AI assistant (MCP)"
-                  onClick={() => setMcpModalOpen(true)}
-                  className="hidden h-9 min-w-9 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors sm:inline-flex"
-                >
-                  <Sparkles className="size-4 shrink-0" aria-hidden="true" />
-                  <span className="hidden 2xl:inline">Connect AI</span>
-                </button>
-                <AppearanceMenu theme={theme} colors={colors} bold={bold} meet={meet} subjects={subjects} notifications={notifications.optedIn} onTheme={onTheme} onColors={onColors} onBold={onBold} onMeet={onMeet} onEnable={() => void notifications.enable()} onDisable={notifications.disable} role={role} sheetUrl={sheetUrl} pending={pending} onRefresh={onRefresh} onOpenMcp={() => setMcpModalOpen(true)} onStudentLogout={handleStudentLogout} onFacultyLogout={handleFacultyLogout} savedWeeks={savedWeeks} weekId={selectedWeek ? selectedWeek.id : "live"} onWeek={chooseWeek} />
+                <AppearanceMenu theme={theme} colors={colors} bold={bold} meet={meet} subjects={subjects} notifications={notifications.optedIn} onTheme={onTheme} onColors={onColors} onBold={onBold} onMeet={onMeet} onEnable={() => void notifications.enable()} onDisable={notifications.disable} role={role} sheetUrl={sheetUrl} pending={pending} onRefresh={onRefresh} onStudentLogout={handleStudentLogout} onFacultyLogout={handleFacultyLogout} />
               </div>
             </div>
           </div>
@@ -899,23 +822,9 @@ export function Dashboard({
           {failing ? data.sync.lastError || "Could not refresh. The last timetable is still shown." : syncedLabel(data.sync.lastSuccessAt, now)}
         </p>
 
-        {selectedWeek && (
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm">
-            <p>
-              {pastWeek.isFetching && !pastWeek.data
-                ? `Loading ${formatShort(selectedWeek.start)} – ${formatShort(selectedWeek.end)}.`
-                : pastWeek.isError
-                  ? "That week could not be loaded."
-                  : `Viewing ${formatShort(selectedWeek.start)} – ${formatShort(selectedWeek.end)}.`}
-            </p>
-            <button type="button" className="text-xs font-medium text-foreground underline-offset-4 hover:underline" onClick={() => chooseWeek("live")}>
-              Back to this week
-            </button>
-          </div>
-        )}
         {view !== "updates" && batchCounts.length > 0 && (
           <div data-testid="batch-summary" className="mb-3 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-            <span>{selectedWeek ? "That week:" : "This week:"}</span>
+            <span>This week:</span>
             {batchCounts.map(([batch, count]) => (
               <span key={batch} className="rounded-full bg-muted px-2 py-0.5 font-medium text-foreground">
                 {batch} · {count} {count === 1 ? "class" : "classes"}
@@ -975,11 +884,7 @@ export function Dashboard({
             <WeeklyView lectures={weekLectures} showDivision={role === "faculty" && board.showDivision} showFaculty={role === "faculty" && board.showFaculty} showLive={liveMarks} today={zone.iso} minutes={zone.minutes} meet={meet} />
           </TabsContent>
           <TabsContent value="updates" className="rise mt-0">
-            <RecentChanges
-              changes={changes}
-              timeZone={data.timezone}
-              empty={selectedWeek ? "No updates were recorded for this week." : undefined}
-            />
+            <RecentChanges changes={changes} timeZone={data.timezone} />
           </TabsContent>
         </div>
         <SiteFooter className="-mx-4 mt-10 px-4 sm:-mx-6 sm:mt-12 sm:px-6" />
@@ -1030,18 +935,6 @@ export function Dashboard({
             open={loginModalOpen}
             onClose={() => setLoginModalOpen(false)}
             onSuccess={handleFacultyLoginSuccess}
-          />
-        </Suspense>
-      ) : null}
-      {mcpModalOpen ? (
-        <Suspense fallback={null}>
-          <McpConnectModal
-            open
-            onClose={() => setMcpModalOpen(false)}
-            faculty={role === "faculty" ? selectedFaculty || faculty : undefined}
-            email={role === "faculty" ? authEmail : undefined}
-            canSeeAllFaculty={role === "faculty" ? canSeeAll : false}
-            cohortLabel={role !== "faculty" && selected ? cohortLabel(selected) : undefined}
           />
         </Suspense>
       ) : null}
@@ -1197,7 +1090,6 @@ function AppearanceMenu({
   sheetUrl,
   pending,
   onRefresh,
-  onOpenMcp,
   onTheme,
   onColors,
   onBold,
@@ -1206,9 +1098,6 @@ function AppearanceMenu({
   onDisable,
   onStudentLogout,
   onFacultyLogout,
-  savedWeeks,
-  weekId,
-  onWeek,
 }: {
   theme: ThemeId;
   colors: boolean;
@@ -1220,7 +1109,6 @@ function AppearanceMenu({
   sheetUrl: string;
   pending: boolean;
   onRefresh: () => void;
-  onOpenMcp?: () => void;
   onTheme: (theme: ThemeId) => void;
   onColors: (on: boolean) => void;
   onBold: (on: boolean) => void;
@@ -1229,9 +1117,6 @@ function AppearanceMenu({
   onDisable: () => void;
   onStudentLogout?: () => void;
   onFacultyLogout?: () => void;
-  savedWeeks: WeekGroup[];
-  weekId: string;
-  onWeek: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -1249,7 +1134,6 @@ function AppearanceMenu({
       window.removeEventListener("keydown", onKey);
     };
   }, [open]);
-  const weeks = [{ id: "live", label: "This week" }, ...savedWeeks.map((week) => ({ id: week.id, label: `${formatShort(week.start)} – ${formatShort(week.end)}` }))];
   return (
     <div ref={menuRef} className="relative">
       <IconButton label="Settings" pressed={open} onClick={() => setOpen((current) => !current)} testId="appearance-button">
@@ -1315,28 +1199,6 @@ function AppearanceMenu({
               <ColorEditor theme={theme} subjects={subjects} />
             </div>
           )}
-          <div className="mt-6">
-            <p className="text-sm text-muted-foreground">Weeks</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {weeks.map((week) => {
-                const selected = weekId === week.id;
-                return (
-                  <button
-                    key={week.id}
-                    type="button"
-                    aria-pressed={selected}
-                    onClick={() => {
-                      onWeek(week.id);
-                      setOpen(false);
-                    }}
-                    className={`rounded-full px-3 py-1.5 text-sm ${selected ? "bg-foreground text-background" : "bg-background/50 text-foreground hover:bg-background/80"}`}
-                  >
-                    {week.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
           <div className="mt-5 border-t border-border pt-3">
             <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Actions</p>
             <div className="mt-2 flex flex-col gap-2">
@@ -1366,23 +1228,6 @@ function AppearanceMenu({
                     <span>Open spreadsheet</span>
                   </span>
                 </a>
-              )}
-              {onOpenMcp && (
-                <button
-                  type="button"
-                  data-testid="mcp-connect-menu"
-                  onClick={() => {
-                    setOpen(false);
-                    onOpenMcp();
-                  }}
-                  className="flex w-full items-center justify-between rounded-xl border border-border bg-background/50 px-3.5 py-2.5 text-xs font-medium hover:bg-muted transition-colors"
-                >
-                  <span className="flex items-center gap-2">
-                    <Sparkles className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                    <span>Connect AI assistant (MCP)</span>
-                  </span>
-                  <span className="font-mono text-[10px] text-muted-foreground">OAuth 2.1</span>
-                </button>
               )}
             </div>
           </div>
@@ -1640,12 +1485,6 @@ function resolveToday(lectures: PublicLecture[], today: string, day: string, wee
     lectures: lectures.filter((lecture) => lecture.date === nearest),
     note: "Today is outside the dates in the sheet. Showing the nearest day.",
   };
-}
-
-const shortDateFormatter = new Intl.DateTimeFormat("en-IN", { timeZone: "UTC", day: "numeric", month: "short" });
-
-function formatShort(iso: string) {
-  return shortDateFormatter.format(new Date(`${iso}T12:00:00Z`));
 }
 
 function syncedLabel(iso: string | null, now: Date) {

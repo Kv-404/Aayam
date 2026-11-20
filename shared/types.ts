@@ -90,18 +90,6 @@ export interface SyncInfo {
   refreshing?: boolean;
 }
 
-/** A previous published week kept after the live sheet moved on. `lectures` is already scoped the same way as `BootstrapResponse.lectures`. */
-export interface SavedWeek {
-  id: string;
-  course: string;
-  batch: string;
-  start: string;
-  end: string;
-  lectures: PublicLecture[];
-  /** Updates recorded while this week was the live sheet. */
-  changes: ChangeEvent[];
-}
-
 /** A message an admin sent to students. */
 export interface StudentNotice {
   id: string;
@@ -123,8 +111,6 @@ export interface BootstrapResponse {
   now: string;
   weekStart: string | null;
   weekEnd: string | null;
-  /** Past weeks for the current scope. Empty when nothing has been replaced yet. The live week stays in `lectures`. */
-  savedWeeks?: SavedWeek[];
   sync: SyncInfo;
   parseIssues: ParseIssue[];
   choices?: CohortChoice[];

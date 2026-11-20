@@ -12,7 +12,6 @@ export interface HomePitchProps {
   onOpenFaculty: () => void;
   onOpenPage: (event: MouseEvent, url: string) => void;
   sourceUrl: string;
-  onOpenMcp?: () => void;
 }
 
 export function HomePitch(props: HomePitchProps) {
@@ -26,7 +25,6 @@ export function HomePitch(props: HomePitchProps) {
         onOpenFaculty={props.onOpenFaculty}
         onOpenPage={props.onOpenPage}
         sourceUrl={props.sourceUrl}
-        onOpenMcp={props.onOpenMcp}
       />
     </div>
   );
