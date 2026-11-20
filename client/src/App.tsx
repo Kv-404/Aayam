@@ -48,6 +48,7 @@ import { cohortToSlug, slugToCohort } from "@/lib/slug";
 const loadDashboard = () => import("@/components/Dashboard");
 const Dashboard = lazy(() => loadDashboard().then((m) => ({ default: m.Dashboard })));
 const AdminPage = lazy(() => import("@/components/AdminPage").then((m) => ({ default: m.AdminPage })));
+const AppAuthPage = lazy(() => import("@/components/AppAuthPage").then((m) => ({ default: m.AppAuthPage })));
 const PitchPage = lazy(() => import("@/components/PitchPage").then((m) => ({ default: m.PitchPage })));
 const PrivacyPolicy = lazy(() => import("@/components/PrivacyPolicy").then((m) => ({ default: m.PrivacyPolicy })));
 const TermsOfService = lazy(() => import("@/components/TermsOfService").then((m) => ({ default: m.TermsOfService })));
@@ -76,7 +77,8 @@ function readScopeFromUrl(choices: CohortChoice[]): {
     p === "/privacy" ||
     p === "/privacy-policy" ||
     p === "/pitch" ||
-    p === "/admin"
+    p === "/admin" ||
+    p === "/app-auth"
   ) {
     return null;
   }
@@ -128,6 +130,7 @@ function pathRoute(pathname: string) {
   if (p === "/terms" || p === "/terms-of-service") return "/terms";
   if (p === "/pitch") return "/pitch";
   if (p === "/admin") return "/admin";
+  if (p === "/app-auth") return "/app-auth";
   return "/";
 }
 
@@ -172,7 +175,8 @@ function syncUrl(scope: BootstrapScope) {
   const url = new URL(window.location.href);
   const p = url.pathname.toLowerCase();
   if (pathRoute(p) !== "/") {
-    if (url.search) window.history.replaceState(null, "", url.pathname);
+    // /app-auth needs its ?state= from the phone app.
+    if (url.search && pathRoute(p) !== "/app-auth") window.history.replaceState(null, "", url.pathname);
     return;
   }
 
@@ -586,6 +590,10 @@ export function App() {
         }}
       />
     )];
+  }
+
+  if (route === "/app-auth") {
+    return ["app-auth", <AppAuthPage />];
   }
 
   if (route === "/admin") {

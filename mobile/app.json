@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "Aayam",
+    "slug": "aayam",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "dev.kv404.aayam"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0a0a0a",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "dev.kv404.aayam"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-font",
+      "expo-web-browser",
+      "expo-secure-store"
+    ],
+    "backgroundColor": "#0a0a0a",
+    "scheme": "aayam",
+    "extra": {
+      "eas": {
+        "projectId": "d97a0b21-4449-48cb-8957-ec8e28865f58"
+      }
+    }
+  }
+}
