@@ -45,7 +45,7 @@ The header cohort menu for students lists cohorts restricted to their authentica
 | `timetable-meet` | `copy` or anything else, including absent, which means open. Do not clear it when saving setup |
 | `timetable-notify` | `"1"` after opt-in. Removed when the settings switch turns alerts off |
 | `timetable-notify-hint` | `"1"` after the phone hint is closed or used |
-| `timetable-exam-notice` | `"1"` after the AT/KT exam banner is closed. The Exams button stays |
+| `timetable-exam-notice` | `"1"` after the AT/KT exam banner is closed. Reset to `"0"` once `examMode` is off, so the banner returns next exam time. The banner shows only while `examMode` is on; the Exam button is red then and plain otherwise |
 | `timetable-notified-ids` | JSON array of change ids already alerted |
 | `timetable-search-history` | JSON array, newest first, at most 8 searches |
 
@@ -85,7 +85,7 @@ At `xl` and wider, the top bar is a single straight line: logo and cohort or fac
 
 Add week uses `client/src/lib/calendar.ts`. Student feed is `/api/calendar.ics?division=`. Faculty feed is `?faculty=`. Outlook, Google, Apple, Proton, and a downloaded `.ics`. Proton copies the feed URL and opens Proton Calendar.
 
-Notifications: `useChangeNotifications` + `notifyChanges.ts`, and `useLectureReminders` + `shared/reminders.ts`. On `sm` and wider, `NotifyControl` shows `BellToggle` only while opted out. The click writes `timetable-notify`, plays the on face, then the header button unmounts. `Notification.requestPermission` runs from that click. Do not ask on load. The Notifications switch in the appearance menu (`notify-toggle`) turns alerts on the same way, and turning it off removes the key. The browser permission stays as it is. The first opt-in baselines existing changes and alerts nothing. Later change alerts are the types listed in `notifyChanges.ts`. Unknown types are ignored.
+Notifications: `useChangeNotifications` + `notifyChanges.ts`, and `useLectureReminders` + `shared/reminders.ts`. Opt-in is the Notifications switch in the appearance menu (`notify-toggle`), plus a dismissible "Turn on" hint on phones (`notify-hint`, closed state in `timetable-notify-hint`) while opted out. Either click writes `timetable-notify` and runs `Notification.requestPermission` from that click. Do not ask on load. Turning the switch off removes the key. The browser permission stays as it is. The first opt-in baselines existing changes and alerts nothing. Later change alerts are the types listed in `notifyChanges.ts`. Unknown types are ignored.
 
 Lecture reminders run only while opted in, for today's lectures in the current scope (one cohort, or every lecture of that faculty). A lecture is told three times, once each: 10 minutes before, 5 minutes before, and when it has just started (the first two minutes). Opening the page inside a window sends only the tighter one. Sent keys live in `sessionStorage` (`timetable-reminded`) so a refresh does not repeat them. The in-app `notify-notice` prefers a reminder over a change notice. System alerts go through `/sw.js`, then a page `Notification`, then that notice. iPhone system alerts need the site on the Home Screen. Faculty alerts are changes whose lecture id is still theirs, or whose previous/next faculty matches (`changeMatchesFaculty`). A faculty reminder names the cohort. A student reminder does not name the faculty.
 
@@ -97,7 +97,7 @@ The theme step is roomy cards (swatch, name, blurb) in 2, 3, or 4 columns, and t
 | --- | --- |
 | Public gate | `client/src/components/HomePage.tsx` |
 | Product pitch at `/pitch` | `client/src/components/HomePitch.tsx`, `client/src/components/PitchPage.tsx` |
-| Admin sheet links and notices | `client/src/components/AdminPage.tsx` |
+| Admin sheet links, notices (edit, push again, delete, expiry), exam toggle | `client/src/components/AdminPage.tsx` |
 | Setup steps | `client/src/components/Setup.tsx` |
 | Filtering, header, now line | `client/src/components/Dashboard.tsx` |
 | Week grid and phone list | `client/src/components/WeeklyView.tsx` |
@@ -110,7 +110,7 @@ The theme step is roomy cards (swatch, name, blurb) in 2, 3, or 4 columns, and t
 | Subject colour | `client/src/lib/calendarTone.ts`, `client/src/lib/palettes.ts`, `client/src/lib/colorState.tsx` |
 | Clock and room text | `client/src/lib/time.ts` |
 | Day, Week, Updates | `client/src/components/RubberSegment.tsx` |
-| Notify bell | `client/src/components/BellToggle.tsx` |
+| Notification opt-in | `client/src/hooks/useNotifications.ts`, `client/src/components/Dashboard.tsx` (`notify-toggle`, `notify-hint`) |
 | Lecture start reminders | `client/src/hooks/useLectureReminders.ts`, `shared/reminders.ts` |
 
 Cohort display names drop a trailing year in `shared/cohort.ts` (`Sam Altman 2025` → `Sam Altman`). Stored division strings keep the year.

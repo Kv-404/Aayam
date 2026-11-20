@@ -12,6 +12,8 @@ interface PendingNotice {
   course: string | null;
   batch: string | null;
   created_at: string;
+  updated_at: string | null;
+  expires_at: string | null;
 }
 
 interface SubscriptionRow {
@@ -47,7 +49,7 @@ export async function vapidPair(sql: SqlDb) {
  */
 export async function sendPendingPushes(sql: SqlDb, now = new Date()): Promise<PushResult> {
   const pending = await sql.all<PendingNotice>(
-    "SELECT id, title, body, course, batch, created_at FROM student_notices WHERE pushed_at IS NULL ORDER BY created_at",
+    "SELECT id, title, body, course, batch, created_at, updated_at, expires_at FROM student_notices WHERE pushed_at IS NULL ORDER BY created_at",
   );
   if (pending.length === 0) return { notices: 0, delivered: 0, removed: 0 };
   await sql.run([
@@ -56,9 +58,12 @@ export async function sendPendingPushes(sql: SqlDb, now = new Date()): Promise<P
       params: [now.toISOString(), JSON.stringify(pending.map((notice) => notice.id))],
     },
   ]);
+  // Skip expired notices, and ones saved more than a day ago (an edit with "push again" counts as saved now).
   const fresh = pending.filter((notice) => {
-    const created = Date.parse(notice.created_at);
-    return !Number.isFinite(created) || now.getTime() - created <= PUSH_WINDOW_MS;
+    const expires = notice.expires_at ? Date.parse(notice.expires_at) : NaN;
+    if (Number.isFinite(expires) && expires <= now.getTime()) return false;
+    const saved = Date.parse(notice.updated_at ?? notice.created_at);
+    return !Number.isFinite(saved) || now.getTime() - saved <= PUSH_WINDOW_MS;
   });
   if (fresh.length === 0) return { notices: 0, delivered: 0, removed: 0 };
 

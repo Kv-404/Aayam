@@ -96,6 +96,10 @@ export interface StudentNotice {
   title: string;
   body: string;
   createdAt: string;
+  /** Changes when an admin edits the notice; the client shows an edited notice again. */
+  updatedAt?: string;
+  /** After this the notice is gone. */
+  expiresAt?: string | null;
 }
 
 export interface BootstrapResponse {
@@ -119,6 +123,8 @@ export interface BootstrapResponse {
   changes: ChangeEvent[];
   /** Messages an admin sent. Present for a student scope. */
   notices?: StudentNotice[];
+  /** Admin switch: exam season. The Exam button turns red and the exam banner shows. */
+  examMode?: boolean;
 }
 
 export interface DatabaseConnectionStatus {

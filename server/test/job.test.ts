@@ -155,11 +155,13 @@ describe("sync job", () => {
     const stamp = new Date("2026-10-14T05:00:00Z").toISOString();
     await env.d1.run([
       { sql: "INSERT INTO student_notices (id, title, body, course, batch, created_at) VALUES ('n1', 'Hi', 'Body', 'BTech', '2099-03', ?)", params: [stamp] },
+      // Expired before the job ran: never pushed.
+      { sql: "INSERT INTO student_notices (id, title, body, course, batch, created_at, expires_at) VALUES ('n0', 'Old', 'Body', NULL, NULL, ?, '2000-01-01T00:00:00.000Z')", params: [stamp] },
     ]);
     const first = await env.run();
     assert.equal(first.pushes?.notices, 1);
     assert.equal(first.pushes?.delivered, 0);
-    const rows = await env.d1.all<{ pushed_at: string | null }>("SELECT pushed_at FROM student_notices");
+    const rows = await env.d1.all<{ pushed_at: string | null }>("SELECT pushed_at FROM student_notices WHERE id = 'n1'");
     assert.ok(rows[0]?.pushed_at);
     const keys = await env.d1.all<{ public_key: string }>("SELECT public_key FROM push_vapid");
     assert.equal(keys.length, 1);

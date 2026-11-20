@@ -103,12 +103,6 @@ export interface ArchiveRowSet {
   weeks: WeekRow[];
 }
 
-export function chunks<T>(rows: T[], size: number) {
-  const groups: T[][] = [];
-  for (let index = 0; index < rows.length; index += size) groups.push(rows.slice(index, index + size));
-  return groups;
-}
-
 function lectureRow(lecture: StoredLecture, weekId: string): LectureRow {
   return {
     week_id: weekId,

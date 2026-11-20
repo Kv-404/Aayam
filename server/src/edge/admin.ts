@@ -152,8 +152,8 @@ function stamp(value: string) {
 }
 
 async function listRecentNotices(db: SqlDb) {
-  const rows = await db.all<{ id: string; title: string; body: string; course: string | null; batch: string | null; created_at: string }>(
-    "SELECT id, title, body, course, batch, created_at FROM student_notices ORDER BY created_at DESC LIMIT 8",
+  const rows = await db.all<{ id: string; title: string; body: string; course: string | null; batch: string | null; created_at: string; updated_at: string | null; expires_at: string | null; pushed_at: string | null }>(
+    "SELECT id, title, body, course, batch, created_at, updated_at, expires_at, pushed_at FROM student_notices ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 12",
   );
   return rows.map((row) => ({
     id: row.id,
@@ -162,7 +162,23 @@ async function listRecentNotices(db: SqlDb) {
     course: row.course,
     batch: row.batch,
     createdAt: stamp(row.created_at),
+    updatedAt: stamp(row.updated_at ?? row.created_at),
+    expiresAt: row.expires_at ? stamp(row.expires_at) : null,
+    pushedAt: row.pushed_at ? stamp(row.pushed_at) : null,
   }));
+}
+
+async function readExamMode(db: SqlDb) {
+  const [row] = await db.all<{ value: string }>("SELECT value FROM app_settings WHERE key = 'exam_mode'");
+  return row?.value === "1";
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Days a notice stays up: 1 to 30, 3 when not given. */
+function expiryDays(value: unknown) {
+  const days = Math.round(Number(value));
+  return Number.isFinite(days) && days >= 1 ? Math.min(days, 30) : 3;
 }
 
 function audienceFrom(body: Record<string, unknown>) {
@@ -212,8 +228,8 @@ export async function checkSheetReadable(id: string): Promise<string | null> {
 export async function adminSession(ctx: Ctx) {
   try {
     if (!(await adminSessionValid(ctx.db, adminToken(ctx.request)))) return json({ signedIn: false });
-    const [sheets, notices] = await Promise.all([sheetRows(ctx.db), listRecentNotices(ctx.db)]);
-    return json({ signedIn: true, sheets, notices });
+    const [sheets, notices, examMode] = await Promise.all([sheetRows(ctx.db), listRecentNotices(ctx.db), readExamMode(ctx.db)]);
+    return json({ signedIn: true, sheets, notices, examMode });
   } catch {
     return json({ signedIn: false });
   }
@@ -304,31 +320,66 @@ export async function adminSheets(ctx: Ctx) {
   }
 }
 
-/** Store a notice. The sync job sends its web push (`pushed_at` stays NULL until then). */
+/**
+ * Create, edit, or delete a notice. `id` edits one; `delete: true` removes it. A new notice, or an edit
+ * with `push: true`, gets `pushed_at = NULL` and the sync job sends the web push. Each notice expires
+ * after `expiresInDays` (1–30, default 3) and then leaves the timetable.
+ */
 export async function adminNotices(ctx: Ctx) {
   const denied = await requireAdmin(ctx);
   if (denied) return denied;
   const body = await readJson(ctx.request);
-  const title = field(body.title, 80);
-  const message = field(body.body, 280).replace(/\s+/g, " ");
-  const audience = audienceFrom(body);
-  if (!title || !message || !audience) return errorJson(400, "Write a title, a message, and who should see it.");
+  const id = field(body.id, 64);
+  const now = new Date();
   try {
-    const now = new Date();
+    if (id && body.delete === true) {
+      await ctx.db.run([{ sql: "DELETE FROM student_notices WHERE id = ?", params: [id] }]);
+      return json({ ok: true, queued: false, notices: await listRecentNotices(ctx.db) });
+    }
+    const title = field(body.title, 80);
+    const message = field(body.body, 280).replace(/\s+/g, " ");
+    const audience = audienceFrom(body);
+    if (!title || !message || !audience) return errorJson(400, "Write a title, a message, and who should see it.");
+    const expiresAt = new Date(now.getTime() + expiryDays(body.expiresInDays) * DAY_MS).toISOString();
+    const push = id ? body.push === true : true;
+    const write = id
+      ? {
+          sql: `UPDATE student_notices SET title = ?, body = ?, course = ?, batch = ?, expires_at = ?, updated_at = ?${push ? ", pushed_at = NULL" : ""} WHERE id = ?`,
+          params: [title, message, audience.course, audience.batch, expiresAt, now.toISOString(), id],
+        }
+      : {
+          sql: "INSERT INTO student_notices (id, title, body, course, batch, created_at, updated_at, expires_at, pushed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+          params: [crypto.randomUUID(), title, message, audience.course, audience.batch, now.toISOString(), now.toISOString(), expiresAt],
+        };
+    await ctx.db.run([
+      write,
+      // Old rows: expired a month ago, or older than a month with no expiry.
+      { sql: "DELETE FROM student_notices WHERE COALESCE(expires_at, created_at) < ?", params: [new Date(now.getTime() - 30 * DAY_MS).toISOString()] },
+    ]);
+    // The job runs only when there is a push to send.
+    if (push) await requestSync(ctx.env, "push", { user: true, db: ctx.db });
+    return json({ ok: true, delivered: 0, queued: push, notices: await listRecentNotices(ctx.db) });
+  } catch {
+    return errorJson(503, "The message could not be saved.");
+  }
+}
+
+/** `POST /api/admin/settings` `{ examMode }`. Read live by the bootstrap query; no sync needed. */
+export async function adminSettings(ctx: Ctx) {
+  const denied = await requireAdmin(ctx);
+  if (denied) return denied;
+  const body = await readJson(ctx.request);
+  if (typeof body.examMode !== "boolean") return errorJson(400, "Nothing to change.");
+  try {
     await ctx.db.run([
       {
-        sql: "INSERT INTO student_notices (id, title, body, course, batch, created_at, pushed_at) VALUES (?, ?, ?, ?, ?, ?, NULL)",
-        params: [crypto.randomUUID(), title, message, audience.course, audience.batch, now.toISOString()],
-      },
-      {
-        sql: "DELETE FROM student_notices WHERE created_at < ?",
-        params: [new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString()],
+        sql: "INSERT INTO app_settings (key, value, updated_at) VALUES ('exam_mode', ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        params: [body.examMode ? "1" : "0", new Date().toISOString()],
       },
     ]);
-    await requestSync(ctx.env, "push", { user: true, db: ctx.db });
-    return json({ ok: true, delivered: 0, queued: true, notices: await listRecentNotices(ctx.db) });
+    return json({ ok: true, examMode: body.examMode });
   } catch {
-    return errorJson(503, "The message could not be sent.");
+    return errorJson(503, "The setting could not be saved.");
   }
 }
 

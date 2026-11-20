@@ -22,6 +22,7 @@ Schema is `migrations/*.sql`, applied by `wrangler d1 migrations apply timetable
 | `job_state` (requested/dispatched/finished) | both | both |
 | `timetable_sheet_links` | Worker (admin) | job |
 | `student_notices`, `push_subscriptions`, `push_vapid` | Worker; job sets `pushed_at` and prunes dead subscriptions | both |
+| `app_settings` (`exam_mode` = `"1"`/`"0"`) | Worker (admin toggle) | Worker, inside the bootstrap query |
 | `faculty_directory`, `admin_password`, `admin_sessions`, `rate_limits` | Worker | Worker |
 | `mcp_oauth_*` (`migrations/0002_mcp_oauth.sql`) | nothing: the MCP server was removed; the empty tables stay because migrations are additive | — |
 
@@ -45,14 +46,15 @@ The job renders with `server/src/views.ts` (`buildBootstrap` and calendar views;
 
 | Route | Behaviour |
 | --- | --- |
-| `GET /api/bootstrap` | `?division=` (alias `cohort`), `?faculty=`, `?course=`, `?batch=`, `?all=1`. One D1 round trip. Adds `now`, `today` (in `index.timezone`), `sync.refreshing`, and `notices` (student scopes: course/batch match, 14 days, newest 5). ETag + 304, `Cache-Control: no-cache`. 503 + `Retry-After` before the first job run. A read older than 12 min asks for a sync in the background |
+| `GET /api/bootstrap` | `?division=` (alias `cohort`), `?faculty=`, `?course=`, `?batch=`, `?all=1`. One D1 round trip. Adds `now`, `today` (in `index.timezone`), `sync.refreshing`, `notices` (student scopes: course/batch match, 14 days, not past `expires_at`, newest 5) and `examMode` (from `app_settings`, same query). ETag + 304, `Cache-Control: no-cache`; the ETag hashes notice ids, `updated_at` and `expires_at`, plus the exam flag. 503 + `Retry-After` before the first job run. A read older than 12 min asks for a sync in the background |
 | `POST /api/sync` | Records a user request, dispatches the job (at most once a minute), returns the current bootstrap with `refreshing: true` |
 | `GET /api/calendar.ics` | `?division=` or `?faculty=`, `download=1` sets Content-Disposition |
 | `GET /api/changes`, `/api/health`, `/api/db-status` | From snapshots; D1 ping |
 | `/api/auth/config`, `/me`, `/google`, `/logout` | Google ID token via tokeninfo, allowed domains, `faculty_directory` (case-insensitive, active). HMAC session with `AUTH_SECRET`, cookie `timetable_faculty_session`, or `Authorization: Bearer`. 8 tries / 10 min / IP |
 | `/api/admin/session`, `/login`, `/logout`, `/password` | Hash `hmac-sha256:<salt>:<digest>` keyed by `AUTH_SECRET` (scrypt does not fit 10 ms). Seeded from secret `ADMIN_PASSWORD` when empty or when an old scrypt hash is found. 5 failures / 15 min / IP. Cookie `aayam_admin`, 12 h. The only read of `password_hash` is in `edge/admin.ts` |
 | `POST /api/admin/sheets` | Checks the public xlsx export starts with `PK`, stores the link, asks for a sync. Response has `syncing: true` |
-| `POST /api/admin/notices` | Stores the notice (`pushed_at` NULL), asks for a sync; the job sends the push. Response has `queued: true` |
+| `POST /api/admin/notices` | New: stores the notice (`pushed_at` NULL, `expires_at` = now + `expiresInDays`, 1–30, default 3), asks for a sync; the job sends the push. `id` edits it (and resets `expires_at`); with `push: true` it clears `pushed_at` and asks for a sync, without it no sync runs. `id` + `delete: true` removes it. Rows past expiry by 30 days are pruned. Response has `queued` |
+| `POST /api/admin/settings` | `{ examMode }` upserts `app_settings.exam_mode`. No sync: the bootstrap reads it live |
 | `GET /api/push/public-key`, `POST /api/push/subscribe` | VAPID public key; upsert subscription |
 
 `scheduled` (cron `*/5`) only dispatches the job. Cron and stale reads never set `refreshing`; only `/api/sync` and admin actions do (`server/src/edge/sync.ts`).
@@ -70,7 +72,7 @@ The job renders with `server/src/views.ts` (`buildBootstrap` and calendar views;
    6. Otherwise `compareSnapshots`, save, `recordChanges`.
    7. Download or parse failure: keep the last snapshot, set `lastError`. The `sync` snapshot is still published, so the client shows the error and the old grid.
 4. `publishToD1` (`server/src/job/archive.ts`): only changed rows (tracked in `published_rows`), deletes then upserts then the sync row with `revision + 1`. Safe to repeat after a crash.
-5. Render and write snapshots, send queued pushes (`pushes.ts`: `pushed_at` set before sending, 404/410 subscriptions deleted, notices older than 24 h are marked without a push), set `job_state.finished_at` (always).
+5. Render and write snapshots, send queued pushes (`pushes.ts`: `pushed_at` set before sending, 404/410 subscriptions deleted, notices saved (`COALESCE(updated_at, created_at)`) over 24 h ago or past `expires_at` are marked without a push), set `job_state.finished_at` (always).
 
 Run it: `npm run sync` (needs `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `D1_DATABASE_ID`), or `npm run sync -- --local-auto` against `wrangler dev`'s local D1, `--local <file>`, `--watch <s>`, `--data-dir <dir>`. A run takes 3–6 s, mostly downloading and parsing.
 

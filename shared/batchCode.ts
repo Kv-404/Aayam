@@ -5,10 +5,6 @@ export function defaultBatchCode(_course: string, batch: string): string {
   return digits.padEnd(6, "0");
 }
 
-export function batchKey(course: string, batch: string): string {
-  return `${course.trim()}:${batch.trim()}`;
-}
-
 export function normalizeBatchCode(code: string): string {
   return code.trim().replace(/\D/g, "").slice(0, 6);
 }

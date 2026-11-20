@@ -34,14 +34,6 @@ export function LivePill() {
   );
 }
 
-export function ConceptPill() {
-  return (
-    <span className="rounded-full border border-dashed border-white/30 px-2 py-0.5 text-[10px] font-medium tracking-[0.16em] text-white/50 uppercase">
-      Concept
-    </span>
-  );
-}
-
 export function Reveal({
   children,
   className = "",

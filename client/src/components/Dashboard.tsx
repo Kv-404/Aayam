@@ -22,7 +22,7 @@ import { useLectureReminders } from "@/hooks/useLectureReminders";
 import { appleWeekCalendarUrl, calendarFeedUrl, googleWeekCalendarUrl, outlookWeekCalendarUrl } from "@/lib/calendar";
 import { lensFromScopeId, resolveFacultyView, signInFacultyLens } from "@/lib/facultyView";
 import { useAnyMenuOpen, useMenuBackdrop } from "@/lib/menuBackdrop";
-import { clearFacultyBrowse, clearStudentAuth, closeExamNotice, closeNotifyHint, hasChosenRole, readCanSeeAllFaculty, readDeviceFacultySession, readExamNoticeClosed, readFacultyEmail, readFacultySession, readFacultyLens, readFacultyPreview, readNotifyHintClosed, readRole, readSetup, readStoredCohort, readStoredFaculty, readStudentBatch, saveCanSeeAllFaculty, saveCohort, saveFaculty, saveFacultyEmail, saveFacultyLens, saveFacultyPreview, saveSetup, themes, type FacultyLens, type MeetAction, type ThemeId, type ViewerRole } from "@/lib/prefs";
+import { clearFacultyBrowse, clearStudentAuth, closeExamNotice, closeNotifyHint, reopenExamNotice, hasChosenRole, readCanSeeAllFaculty, readDeviceFacultySession, readExamNoticeClosed, readFacultyEmail, readFacultySession, readFacultyLens, readFacultyPreview, readNotifyHintClosed, readRole, readSetup, readStoredCohort, readStoredFaculty, readStudentBatch, saveCanSeeAllFaculty, saveCohort, saveFaculty, saveFacultyEmail, saveFacultyLens, saveFacultyPreview, saveSetup, themes, type FacultyLens, type MeetAction, type ThemeId, type ViewerRole } from "@/lib/prefs";
 import { ColorEditor } from "@/components/ColorEditor";
 import { ColorSwitch } from "@/components/ColorSwitch";
 import { formatClockTime, formatCompactRange, zonedNow } from "@/lib/time";
@@ -114,6 +114,13 @@ export function Dashboard({
   const [examNoticeClosed, setExamNoticeClosed] = useState(readExamNoticeClosed);
   const [fadeIn, setFadeIn] = useState(false);
   const menuOpen = useAnyMenuOpen();
+  // Admin toggle at /admin, read live with the bootstrap (no extra request).
+  const examMode = data.examMode === true;
+  useEffect(() => {
+    if (examMode || !examNoticeClosed) return;
+    reopenExamNotice();
+    setExamNoticeClosed(false);
+  }, [examMode, examNoticeClosed]);
   const zone = zonedNow(now, data.timezone);
   const choices = data.choices && data.choices.length > 0 ? data.choices : cohortChoices(data.lectures);
   const facultyNames = data.faculties && data.faculties.length > 0 ? data.faculties : listFacultyNames(data.lectures.filter((lecture) => lecture.kind !== "break").map((lecture) => lecture.faculty));
@@ -717,7 +724,10 @@ export function Dashboard({
                   data-testid="exam-schedule"
                   aria-label="University exams"
                   title="University exams"
-                  className="inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-md px-1.5 text-muted-foreground hover:bg-muted hover:text-foreground sm:h-9 sm:min-w-9 xl:px-2"
+                  data-exam-mode={examMode ? "on" : "off"}
+                  className={`inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-md px-1.5 sm:h-9 sm:min-w-9 xl:px-2 ${
+                    examMode ? "bg-danger-soft text-danger ring-1 ring-danger/40 hover:bg-danger/20" : "text-foreground hover:bg-muted"
+                  }`}
                 >
                   <GraduationCap className="size-4 shrink-0" aria-hidden="true" />
                   <span className="hidden xl:inline text-xs font-medium">Exam</span>
@@ -784,7 +794,7 @@ export function Dashboard({
         </div>
       </header>
       {role === "student" ? <StudentNoticeBar notices={data.notices ?? []} optedIn={notifications.optedIn} /> : null}
-      {!examNoticeClosed && (
+      {examMode && !examNoticeClosed && (
         <div
           role="status"
           data-testid="exam-notice"

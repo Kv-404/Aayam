@@ -1,12 +1,10 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { cohortLabel, DEFAULT_COHORT_CHOICES, type CohortChoice } from "@shared/cohort";
 import { coordinatorPreview, findCoordinator } from "@shared/coordinators";
-import { DEFAULT_FACULTY_NAMES } from "@shared/faculty";
 import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { HomePage } from "@/components/HomePage";
 import { LoadingScreen } from "@/components/LoadingScreen";
-import { Setup } from "@/components/Setup";
 import { fetchBootstrap, refreshBootstrap, type BootstrapScope } from "@/lib/api";
 import { fetchCurrentAuth } from "@/lib/auth";
 import { isHomeScreenApp, recoverFacultySession, storedFacultyScope } from "@/lib/facultyBoot";
@@ -604,7 +602,6 @@ export function App() {
   }
 
   const choices = query.data?.choices && query.data.choices.length > 0 ? query.data.choices : DEFAULT_COHORT_CHOICES;
-  const faculties = query.data?.faculties && query.data.faculties.length > 0 ? query.data.faculties : DEFAULT_FACULTY_NAMES;
 
   // Check for unknown slug
   if (typeof window !== "undefined") {

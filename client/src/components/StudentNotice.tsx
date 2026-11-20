@@ -22,15 +22,22 @@ function writeIds(key: string, ids: Set<string>) {
   }
 }
 
+function noticeKey(notice: Notice) {
+  return notice.updatedAt && notice.updatedAt !== notice.createdAt ? `${notice.id}:${notice.updatedAt}` : notice.id;
+}
+
 export function StudentNoticeBar({ notices, optedIn }: { notices: Notice[]; optedIn: boolean }) {
   const [dismissed, setDismissed] = useState(() => readIds(dismissedKey));
-  const newest = notices.find((notice) => !dismissed.has(notice.id)) ?? null;
+  // An edit gets a new key, so an edited notice shows (and alerts) again. Expired ones never show.
+  const now = Date.now();
+  const live = notices.filter((notice) => !notice.expiresAt || Date.parse(notice.expiresAt) > now);
+  const newest = live.find((notice) => !dismissed.has(noticeKey(notice))) ?? null;
 
   useEffect(() => {
     if (!newest || !optedIn) return;
     const alerted = readIds(alertedKey);
-    if (alerted.has(newest.id)) return;
-    alerted.add(newest.id);
+    if (alerted.has(noticeKey(newest))) return;
+    alerted.add(noticeKey(newest));
     writeIds(alertedKey, alerted);
     void showSystem(newest.title, newest.body, `aayam-notice-${newest.id}`);
   }, [newest, optedIn]);
@@ -48,7 +55,7 @@ export function StudentNoticeBar({ notices, optedIn }: { notices: Notice[]; opte
         className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
         onClick={() => {
           const next = new Set(dismissed);
-          next.add(newest.id);
+          next.add(noticeKey(newest));
           writeIds(dismissedKey, next);
           setDismissed(next);
         }}

@@ -71,15 +71,6 @@ export function applyFilters(lectures: PublicLecture[], filters: Filters, option
   });
 }
 
-export function countStatuses(lectures: PublicLecture[]) {
-  const classes = lectures.filter((lecture) => lecture.kind !== "break");
-  return {
-    scheduled: classes.filter((lecture) => lecture.displayStatus === "scheduled" && lecture.kind === "lecture").length,
-    cancelled: classes.filter((lecture) => lecture.displayStatus === "cancelled").length,
-    changed: classes.filter((lecture) => lecture.displayStatus === "changed" || lecture.displayStatus === "rescheduled").length,
-  };
-}
-
 export function isFullOff(lectures: PublicLecture[]) {
   const slots = lectures.filter((lecture) => lecture.kind !== "break");
   return slots.length > 0 && slots.every((lecture) => lecture.subject === "OFF" && lecture.displayStatus === "cancelled");

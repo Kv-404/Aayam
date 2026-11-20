@@ -31,24 +31,6 @@ function getZonedFormatter(timeZone: string) {
   return fmt;
 }
 
-const clockFormatters = new Map<string, Intl.DateTimeFormat>();
-function getClockFormatter(timeZone: string) {
-  let fmt = clockFormatters.get(timeZone);
-  if (!fmt) {
-    fmt = new Intl.DateTimeFormat("en-IN", {
-      timeZone,
-      weekday: "long",
-      day: "numeric",
-      month: "short",
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    });
-    clockFormatters.set(timeZone, fmt);
-  }
-  return fmt;
-}
-
 const clockTimeFormatters = new Map<string, Intl.DateTimeFormat>();
 function getClockTimeFormatter(timeZone: string) {
   let fmt = clockTimeFormatters.get(timeZone);
@@ -89,10 +71,6 @@ export function zonedNow(date: Date, timeZone: string) {
   };
 }
 
-export function formatClock(date: Date, timeZone: string) {
-  return getClockFormatter(timeZone).format(date);
-}
-
 export function formatClockTime(date: Date, timeZone: string) {
   return getClockTimeFormatter(timeZone).format(date);
 }
@@ -105,11 +83,6 @@ export function formatCompactRange(start: string, end: string) {
   if (!left) return right;
   if (!right || left === right) return left;
   return `${left}–${right}`;
-}
-
-export function shortRoom(room: string) {
-  const match = /^Classroom\s*-\s*(.+)$/i.exec(room.trim());
-  return match ? `Room ${match[1]}` : room;
 }
 
 /** Absolute Meet URL, or null when the room is a classroom. */
@@ -144,17 +117,6 @@ export function formatLongDate(iso: string) {
 
 export function formatDetected(iso: string, timeZone: string) {
   return getDetectedFormatter(timeZone).format(new Date(iso));
-}
-
-export function formatSynced(iso: string | null, now: Date) {
-  if (!iso) return "Not synced yet";
-  const seconds = Math.max(0, Math.round((now.getTime() - new Date(iso).getTime()) / 1000));
-  if (seconds < 15) return "Synced just now";
-  if (seconds < 60) return `Synced ${seconds}s ago`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `Synced ${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  return `Synced ${hours}h ago`;
 }
 
 /** 530 becomes "08:50". Used by the time grid's hour gutter and block times. */

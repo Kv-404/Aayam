@@ -1,4 +1,4 @@
-import { adminLogin, adminLogout, adminNotices, adminPassword, adminSession, adminSheets, pushPublicKey, pushSubscribe } from "./admin.ts";
+import { adminLogin, adminLogout, adminNotices, adminPassword, adminSession, adminSettings, adminSheets, pushPublicKey, pushSubscribe } from "./admin.ts";
 import { authConfig, authGoogle, authLogout, authMe } from "./auth.ts";
 import { database, type Ctx, type Env, type ExecutionContextLike } from "./env.ts";
 import { allowedOrigins, errorJson, HttpError, preflight, withCors, withSecurityHeaders } from "./http.ts";
@@ -34,6 +34,7 @@ const routes: Record<string, Handler> = {
   "POST /api/admin/password": adminPassword,
   "POST /api/admin/sheets": adminSheets,
   "POST /api/admin/notices": adminNotices,
+  "POST /api/admin/settings": adminSettings,
   "GET /api/push/public-key": pushPublicKey,
   "POST /api/push/subscribe": pushSubscribe,
 };

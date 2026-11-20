@@ -1,4 +1,3 @@
-import { calendarFile } from "@shared/calendar";
 import { cohortName } from "@shared/cohort";
 
 export { eventTitle, googleCalendarUrl, googleStamp } from "@shared/calendar";
@@ -29,17 +28,4 @@ export function appleWeekCalendarUrl(scope: { division?: string; faculty?: strin
 export function outlookWeekCalendarUrl(scope: { division?: string; faculty?: string }, label: string) {
   const feed = calendarFeedUrl(scope, false, true);
   return `https://outlook.office.com/calendar/0/addfromweb?url=${encodeURIComponent(feed)}&name=${encodeURIComponent(label)}`;
-}
-
-export function downloadCalendarFile(filename: string, lectures: Parameters<typeof calendarFile>[0], timeZone: string) {
-  const body = calendarFile(lectures, timeZone);
-  if (!body.includes("BEGIN:VEVENT")) return false;
-  const blob = new Blob([body], { type: "text/calendar;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
-  return true;
 }

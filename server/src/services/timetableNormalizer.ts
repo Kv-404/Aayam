@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { ExplicitMark, ParseIssue } from "../../../shared/types.ts";
 import type { NormalizedLecture, RawSlot } from "../model.ts";
 import type { ParsedWorkbook } from "./timetableParser.ts";
-import { canon, formatMinutes, sameText, weekdayFromName } from "../time.ts";
+import { canon, formatMinutes, weekdayFromName } from "../time.ts";
 
 export interface NormalizeOptions {
   courseFallback: string;
@@ -176,8 +176,4 @@ export function contentFingerprint(lectures: NormalizedLecture[], tabs: string[]
   return createHash("sha256")
     .update(JSON.stringify({ tabs: [...tabs].sort(), lines, issueLines }))
     .digest("hex");
-}
-
-export function sameLectureText(a: string, b: string) {
-  return sameText(a, b);
 }

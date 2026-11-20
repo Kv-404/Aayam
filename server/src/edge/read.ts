@@ -11,13 +11,15 @@ import { isRefreshing, isStale, recentlyDispatched, requestSync, type JobState }
  * (cached per isolate by hash), `sync`, `changes`, and the handful of notice rows.
  */
 
-/** One row of a combined read. `kind` is `s` snapshot, `j` job state, or `n` notice. */
+/** One row of a combined read. `kind` is `s` snapshot, `j` job state, `n` notice, or `x` exam switch. */
 interface Row {
   kind: string;
   a: string | null;
   b: string | null;
   c: string | null;
   d: string | null;
+  e: string | null;
+  f: string | null;
 }
 
 const NOTICE_DAYS = 14;
@@ -32,28 +34,35 @@ export function clearIndexCache() {
 /** Snapshot rows. The `index` body comes back NULL when its hash is the one this isolate already parsed. */
 function snapshotPart(keys: string[], knownIndexHash: string): SqlStatement {
   return {
-    sql: `SELECT 's' AS kind, key AS a, hash AS b, CASE WHEN key = 'index' AND hash = ? THEN NULL ELSE body END AS c, updated_at AS d FROM snapshots WHERE key IN (${keys.map(() => "?").join(", ")})`,
+    sql: `SELECT 's' AS kind, key AS a, hash AS b, CASE WHEN key = 'index' AND hash = ? THEN NULL ELSE body END AS c, updated_at AS d, NULL AS e, NULL AS f FROM snapshots WHERE key IN (${keys.map(() => "?").join(", ")})`,
     params: [knownIndexHash, ...keys],
   };
 }
 
 const jobPart: SqlStatement = {
-  sql: "SELECT 'j', requested_at, dispatched_at, finished_at, NULL FROM job_state WHERE id = 1",
+  sql: "SELECT 'j', requested_at, dispatched_at, finished_at, NULL, NULL, NULL FROM job_state WHERE id = 1",
   params: [],
 };
 
-/** Same rules as `listMatchingNotices`: last 14 days, newest 5, NULL course or batch means everyone. */
+/** The admin exam switch rides in the same query, so it costs no extra request. */
+const examPart: SqlStatement = {
+  sql: "SELECT 'x', value, updated_at, NULL, NULL, NULL, NULL FROM app_settings WHERE key = 'exam_mode'",
+  params: [],
+};
+
+/** Last 14 days and not expired, newest 5. NULL course or batch means everyone. */
 function noticePart(audience: { course: string; batch: string }, now: number): SqlStatement {
   return {
-    sql: `SELECT 'n', id, created_at, title, body FROM (
-      SELECT id, title, body, created_at FROM student_notices
+    sql: `SELECT 'n', id, created_at, title, body, COALESCE(updated_at, created_at), expires_at FROM (
+      SELECT id, title, body, created_at, updated_at, expires_at FROM student_notices
       WHERE created_at > ?
+        AND (expires_at IS NULL OR expires_at > ?)
         AND (course IS NULL OR lower(course) = lower(?))
         AND (batch IS NULL OR lower(batch) = lower(?))
       ORDER BY created_at DESC
       LIMIT 5
     )`,
-    params: [new Date(now - NOTICE_DAYS * 24 * 60 * 60 * 1000).toISOString(), audience.course, audience.batch],
+    params: [new Date(now - NOTICE_DAYS * 24 * 60 * 60 * 1000).toISOString(), new Date(now).toISOString(), audience.course, audience.batch],
   };
 }
 
@@ -96,7 +105,7 @@ async function readWithIndex(db: SqlDb, fixed: Plan, plan: (index: SnapshotIndex
   indexCache = { hash: indexRow.b ?? "", value: index };
 
   // Keep only what did not depend on the guessed index.
-  rows = rows.filter((row) => (row.kind === "s" ? row.a === "index" || fixed.keys.includes(row.a ?? "") : row.kind === "j"));
+  rows = rows.filter((row) => (row.kind === "s" ? row.a === "index" || fixed.keys.includes(row.a ?? "") : row.kind === "j" || row.kind === "x"));
   const next = plan(index);
   const parts = [...(next.keys.length > 0 ? [snapshotPart(next.keys, "")] : []), ...next.parts];
   if (parts.length > 0) rows = rows.concat(await select(db, parts));
@@ -104,17 +113,6 @@ async function readWithIndex(db: SqlDb, fixed: Plan, plan: (index: SnapshotIndex
 }
 
 const snapshot = (rows: Row[], key: string) => rows.find((row) => row.kind === "s" && row.a === key);
-
-/**
- * Snapshot bodies for keys that depend on the index (resolved with `scopeKey`), plus fixed keys, in one
- * round trip when this isolate already has the current index. `index` is null before the first job run.
- */
-export async function readSnapshots(db: SqlDb, keysFor: (index: SnapshotIndex) => string[], fixedKeys: string[] = []) {
-  const { index, rows } = await readWithIndex(db, { keys: fixedKeys, parts: [] }, (current) => ({ keys: keysFor(current), parts: [] }));
-  const bodies = new Map<string, string>();
-  for (const row of rows) if (row.kind === "s" && row.a && row.a !== "index" && row.c !== null) bodies.set(row.a, row.c);
-  return { index, bodies };
-}
 
 export function readScope(url: URL): ReadScope {
   const param = (name: string) => url.searchParams.get(name)?.trim() ?? "";
@@ -181,14 +179,25 @@ export function assembleBootstrap(input: {
   syncBody: string | null;
   refreshing: boolean;
   noticesJson: string;
+  examMode?: boolean;
   bootBody: string;
 }) {
   const sync =
     input.syncBody && input.syncBody.length > 2
       ? input.syncBody.slice(0, -1) + ',"refreshing":' + input.refreshing + "}"
       : '{"refreshing":' + input.refreshing + "}";
-  const head = '{"now":' + JSON.stringify(input.now) + ',"today":' + JSON.stringify(input.today) + ',"sync":' + sync + ',"notices":' + input.noticesJson;
+  const head = '{"now":' + JSON.stringify(input.now) + ',"today":' + JSON.stringify(input.today) + ',"sync":' + sync + ',"notices":' + input.noticesJson + ',"examMode":' + Boolean(input.examMode);
   return input.bootBody.length > 2 ? head + "," + input.bootBody.slice(1) : head + "}";
+}
+
+/** FNV-1a, enough to tell notice lists apart in an ETag. */
+function shortHash(value: string) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
 }
 
 export function bootstrapEtag(bootHash: string, syncHash: string, newestNoticeId: string, today: string) {
@@ -207,7 +216,7 @@ export async function bootstrap(ctx: Ctx, options: { forceRefreshing?: boolean }
   const scope = readScope(ctx.url);
   const nowMs = Date.now();
   const bootKey = (index: SnapshotIndex) => snapshotKeys.bootstrap(scopeKey(scope, index));
-  const { index, rows } = await readWithIndex(ctx.db, { keys: [snapshotKeys.sync], parts: [jobPart] }, (current) => {
+  const { index, rows } = await readWithIndex(ctx.db, { keys: [snapshotKeys.sync], parts: [jobPart, examPart] }, (current) => {
     const audience = noticeAudience(scope, current);
     return { keys: [bootKey(current)], parts: audience ? [noticePart(audience, nowMs)] : [] };
   });
@@ -234,9 +243,12 @@ export async function bootstrap(ctx: Ctx, options: { forceRefreshing?: boolean }
   const notices = rows
     .filter((row) => row.kind === "n")
     .sort((x, y) => (x.b ?? "") < (y.b ?? "") ? 1 : (x.b ?? "") > (y.b ?? "") ? -1 : 0)
-    .map((row) => ({ id: row.a ?? "", title: row.c ?? "", body: row.d ?? "", createdAt: stamp(row.b) }));
+    .map((row) => ({ id: row.a ?? "", title: row.c ?? "", body: row.d ?? "", createdAt: stamp(row.b), updatedAt: stamp(row.e), expiresAt: row.f ? stamp(row.f) : null }));
+  const examMode = rows.some((row) => row.kind === "x" && row.a === "1");
   const today = todayIn(index.timezone || ctx.env.TIMEZONE || "Asia/Kolkata", new Date(nowMs));
-  const etag = bootstrapEtag(boot.b ?? "", sync?.b ?? "", notices[0]?.id ?? "", today);
+  // Any edit, expiry or exam switch changes the tag, so a 304 never hides it.
+  const noticeTag = (notices.length ? shortHash(notices.map((notice) => `${notice.id}:${notice.updatedAt}:${notice.expiresAt ?? ""}`).join(",")) : "0") + (examMode ? "x" : "");
+  const etag = bootstrapEtag(boot.b ?? "", sync?.b ?? "", noticeTag, today);
 
   if (!options.forceRefreshing && etagMatches(ctx.request.headers.get("If-None-Match"), etag)) {
     return new Response(null, { status: 304, headers: { ETag: etag, "Cache-Control": "no-cache" } });
@@ -247,6 +259,7 @@ export async function bootstrap(ctx: Ctx, options: { forceRefreshing?: boolean }
     syncBody: sync?.c ?? null,
     refreshing,
     noticesJson: JSON.stringify(notices),
+    examMode,
     bootBody: boot.c,
   });
   return jsonText(body, 200, options.forceRefreshing ? { "Cache-Control": "no-store" } : { ETag: etag });

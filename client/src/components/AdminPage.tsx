@@ -6,13 +6,22 @@ import {
   loginAdmin,
   logoutAdmin,
   saveAdminSheet,
+  deleteAdminNotice,
   sendAdminNotice,
+  setAdminExamMode,
   type AdminNotice,
   type AdminSheet,
 } from "@/lib/admin";
 
 function programLabel(course: string) {
   return course.trim().toLowerCase() === "btech" ? "B.Tech" : course;
+}
+
+const EXPIRY_CHOICES = [1, 3, 7, 14, 30];
+
+function daysLeft(expiresAt: string | null | undefined) {
+  if (!expiresAt) return null;
+  return Math.ceil((Date.parse(expiresAt) - Date.now()) / 86_400_000);
 }
 
 function batchLabel(batch: string) {
@@ -29,6 +38,9 @@ export function AdminPage({ onHome }: { onHome: () => void }) {
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
   const [audience, setAudience] = useState("all");
+  const [expiresInDays, setExpiresInDays] = useState(3);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [examMode, setExamMode] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [nextPassword, setNextPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -41,6 +53,7 @@ export function AdminPage({ onHome }: { onHome: () => void }) {
     setSignedIn(session.signedIn);
     setSheets(session.sheets);
     setNotices(session.notices);
+    setExamMode(session.examMode);
     setReady(true);
   }
 
@@ -90,27 +103,82 @@ export function AdminPage({ onHome }: { onHome: () => void }) {
     }
   }
 
-  async function sendNotice() {
+  function clearDraft() {
+    setTitle("");
+    setMessage("");
+    setEditingId(null);
+  }
+
+  function editNotice(item: AdminNotice) {
+    setEditingId(item.id);
+    setTitle(item.title);
+    setMessage(item.body);
+    setAudience(item.course ? `${item.course}|${item.batch ?? ""}` : "all");
+    const left = daysLeft(item.expiresAt);
+    setExpiresInDays(left && left > 0 ? EXPIRY_CHOICES.find((days) => days >= left) ?? 30 : 3);
+    setNote("");
+    setError("");
+  }
+
+  async function sendNotice(push: boolean) {
     setError("");
     setNote("");
     setBusy("notice");
     const [course, batch] = audience === "all" ? ["", ""] : audience.split("|");
     try {
-      const result = await sendAdminNotice(title.trim(), message.trim(), course ?? "", batch ?? "");
+      const result = await sendAdminNotice({
+        id: editingId ?? undefined,
+        title: title.trim(),
+        body: message.trim(),
+        course: course ?? "",
+        batch: batch ?? "",
+        expiresInDays,
+        push,
+      });
       if (result.notices) setNotices(result.notices as AdminNotice[]);
-      setTitle("");
-      setMessage("");
-      const delivered = typeof result.delivered === "number" ? result.delivered : 0;
+      const edited = Boolean(editingId);
+      clearDraft();
       // Push is sent by a background job. The notice itself is already live on the timetable.
       setNote(
         result.queued
-          ? "Notice posted. Push notifications go out within a minute."
-          : delivered > 0
-            ? `Sent. ${delivered} phone${delivered === 1 ? "" : "s"} got it in the background.`
-            : "Sent. Students see it the next time the timetable is open.",
+          ? `${edited ? "Saved" : "Posted"}. Push notifications go out within a minute.`
+          : "Saved. Students see the change the next time the timetable is open.",
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "The message could not be sent.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function removeNotice(id: string) {
+    if (!window.confirm("Delete this notice for everyone?")) return;
+    setError("");
+    setNote("");
+    setBusy(`delete-${id}`);
+    try {
+      const result = await deleteAdminNotice(id);
+      if (result.notices) setNotices(result.notices as AdminNotice[]);
+      if (editingId === id) clearDraft();
+      setNote("Notice deleted.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "The notice could not be deleted.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function toggleExamMode() {
+    const next = !examMode;
+    setError("");
+    setNote("");
+    setBusy("exam");
+    try {
+      await setAdminExamMode(next);
+      setExamMode(next);
+      setNote(next ? "Exam mode on. The Exam button is red for everyone." : "Exam mode off.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "The setting could not be saved.");
     } finally {
       setBusy("");
     }
@@ -179,6 +247,25 @@ export function AdminPage({ onHome }: { onHome: () => void }) {
 
       {ready && signedIn ? (
         <div className="mt-8 grid gap-10">
+          <section className="flex items-center justify-between gap-4 rounded-2xl border border-border p-4">
+            <div>
+              <h2 className="text-lg font-medium tracking-tight">Exam time</h2>
+              <p className="text-sm text-muted-foreground">Turns the Exam button red and shows the exam banner.</p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={examMode}
+              aria-label="Exam time"
+              data-testid="exam-mode-toggle"
+              onClick={() => void toggleExamMode()}
+              disabled={busy === "exam"}
+              className={`relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:opacity-50 ${examMode ? "bg-danger" : "bg-muted"}`}
+            >
+              <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${examMode ? "left-6" : "left-1"}`} />
+            </button>
+          </section>
+
           <section className="grid gap-3">
             <h2 className="text-lg font-medium tracking-tight">Sheet links</h2>
             <p className="text-sm text-muted-foreground">Paste the Google Sheet for a year. The timetable reads that sheet from then on.</p>
@@ -215,7 +302,7 @@ export function AdminPage({ onHome }: { onHome: () => void }) {
           </section>
 
           <section className="grid gap-3">
-            <h2 className="text-lg font-medium tracking-tight">Notify students</h2>
+            <h2 className="text-lg font-medium tracking-tight">{editingId ? "Edit notice" : "Notify students"}</h2>
             <input
               value={title}
               onChange={(event) => setTitle(event.target.value)}
@@ -253,22 +340,86 @@ export function AdminPage({ onHome }: { onHome: () => void }) {
                 ))}
               </select>
             </label>
-            <button
-              type="button"
-              onClick={() => void sendNotice()}
-              disabled={!title.trim() || !message.trim() || busy === "notice"}
-              className="justify-self-start rounded-lg bg-foreground px-3 py-2 text-sm text-background disabled:opacity-40"
-            >
-              Send
-            </button>
+            <label className="grid gap-2 text-sm">
+              Hide after
+              <select
+                value={expiresInDays}
+                onChange={(event) => setExpiresInDays(Number(event.target.value))}
+                className="rounded-xl border border-border bg-transparent px-3 py-2.5 outline-none"
+              >
+                {EXPIRY_CHOICES.map((days) => (
+                  <option key={days} value={days}>
+                    {days === 1 ? "1 day" : `${days} days`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {editingId ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void sendNotice(true)}
+                    disabled={!title.trim() || !message.trim() || busy === "notice"}
+                    className="rounded-lg bg-foreground px-3 py-2 text-sm text-background disabled:opacity-40"
+                  >
+                    Save &amp; push again
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void sendNotice(false)}
+                    disabled={!title.trim() || !message.trim() || busy === "notice"}
+                    className="rounded-lg border border-border px-3 py-2 text-sm disabled:opacity-40"
+                  >
+                    Save only
+                  </button>
+                  <button type="button" onClick={clearDraft} className="rounded-lg px-3 py-2 text-sm text-muted-foreground">
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void sendNotice(true)}
+                  disabled={!title.trim() || !message.trim() || busy === "notice"}
+                  className="rounded-lg bg-foreground px-3 py-2 text-sm text-background disabled:opacity-40"
+                >
+                  Send
+                </button>
+              )}
+            </div>
             {notices.length > 0 ? (
               <ul className="mt-2 grid gap-2">
-                {notices.map((item) => (
-                  <li key={item.id} className="rounded-xl border border-border px-3 py-2 text-sm">
-                    <p className="font-medium">{item.title}</p>
-                    <p className="text-muted-foreground">{item.body}</p>
-                  </li>
-                ))}
+                {notices.map((item) => {
+                  const left = daysLeft(item.expiresAt);
+                  const expired = left !== null && left <= 0;
+                  return (
+                    <li
+                      key={item.id}
+                      className={`grid gap-1 rounded-xl border px-3 py-2 text-sm ${editingId === item.id ? "border-foreground" : "border-border"} ${expired ? "opacity-60" : ""}`}
+                    >
+                      <p className="font-medium">{item.title}</p>
+                      <p className="text-muted-foreground">{item.body}</p>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                        <span>{item.course ? `${programLabel(item.course)}${item.batch ? ` ${batchLabel(item.batch)}` : ""}` : "All students"}</span>
+                        <span>{left === null ? "No expiry" : expired ? "Expired" : `${left} day${left === 1 ? "" : "s"} left`}</span>
+                        <span className="ml-auto flex gap-3">
+                          <button type="button" onClick={() => editNotice(item)} className="hover:text-foreground">
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void removeNotice(item.id)}
+                            disabled={busy === `delete-${item.id}`}
+                            className="text-danger hover:underline disabled:opacity-40"
+                          >
+                            Delete
+                          </button>
+                        </span>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             ) : null}
           </section>

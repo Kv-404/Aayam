@@ -27,7 +27,7 @@ npm test
 npm run typecheck
 ```
 
-A server change that ships to Vercel needs `npm run build:api`. Commit `api/[[...path]].js`. Do not edit that file by hand. CI runs the tests and the typecheck on pull requests.
+A Worker change (`server/src/edge/`) must also pass `npm run check:worker`. CI runs the tests and the typecheck on pull requests. A push to `main` deploys to Cloudflare.
 
 ## Pull requests
 

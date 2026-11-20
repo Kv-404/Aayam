@@ -128,12 +128,25 @@ describe("edge bootstrap", () => {
     addNotice(t, "old", null, null, new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString());
     const division = await bootstrapJson(t, "?division=Sam%20Altman%202025");
     assert.deepEqual(division.body.notices.map((n: { id: string }) => n.id), ["everyone", "mine", "course"]);
-    assert.deepEqual(Object.keys(division.body.notices[0]).sort(), ["body", "createdAt", "id", "title"]);
-    assert.match(division.response.headers.get("ETag") ?? "", /\.everyone\./);
+    assert.deepEqual(Object.keys(division.body.notices[0]).sort(), ["body", "createdAt", "expiresAt", "id", "title", "updatedAt"]);
+    assert.doesNotMatch(division.response.headers.get("ETag") ?? "", /\.0\./);
     const batch = await bootstrapJson(t, "?course=MCA&batch=2026-28");
     assert.deepEqual(batch.body.notices.map((n: { id: string }) => n.id), ["other", "everyone"]);
     assert.deepEqual((await bootstrapJson(t, `?faculty=Ms.%20Kashmira`)).body.notices, []);
     assert.deepEqual((await bootstrapJson(t)).body.notices, []);
+  });
+
+  it("hides expired notices and carries the exam flag in the body and ETag", async () => {
+    addNotice(t, "live", null, null, minutesAgo(10));
+    addNotice(t, "gone", null, null, minutesAgo(5));
+    t.raw.prepare("UPDATE student_notices SET expires_at = ? WHERE id = 'gone'").run(minutesAgo(1));
+    const before = await bootstrapJson(t, "?division=Sam%20Altman%202025");
+    assert.deepEqual(before.body.notices.map((n: { id: string }) => n.id), ["live"]);
+    assert.equal(before.body.examMode, false);
+    t.raw.prepare("INSERT INTO app_settings (key, value, updated_at) VALUES ('exam_mode', '1', ?)").run(minutesAgo(0));
+    const after = await bootstrapJson(t, "?division=Sam%20Altman%202025");
+    assert.equal(after.body.examMode, true);
+    assert.notEqual(after.response.headers.get("ETag"), before.response.headers.get("ETag"));
   });
 
   it("answers 304 to a matching If-None-Match, and 200 once a notice arrives", async () => {

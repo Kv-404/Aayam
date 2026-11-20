@@ -12,16 +12,6 @@ export interface TimetableArchive {
   weeks?: WeekBackupRecord[];
 }
 
-export function archiveSignature(archive: TimetableArchive) {
-  const lectures = archive.lectures
-    .map((lecture) => `${lecture.id}\t${lecture.sourceStatus}\t${lecture.subject}\t${lecture.faculty}\t${lecture.room}\t${lecture.startMinutes}`)
-    .sort()
-    .join("\n");
-  const changes = archive.changes.map((change) => `${change.dedupeKey}\t${change.type}\t${change.summary}`).sort().join("\n");
-  const weeks = (archive.weeks ?? []).map((week) => week.id).sort().join("\n");
-  return `${archive.sync.contentHash ?? ""}\n${lectures}\n${changes}\n${weeks}`;
-}
-
 function mergeWeeks(newer: TimetableArchive, older: TimetableArchive): WeekBackupRecord[] {
   const byId = new Map<string, WeekBackupRecord>();
   for (const week of older.weeks ?? []) byId.set(week.id, week);

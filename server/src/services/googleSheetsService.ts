@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { spreadsheetExportUrl, type AppConfig, type SheetSource } from "../config.ts";
+import { spreadsheetExportUrl, type AppConfig } from "../config.ts";
 
 export async function fetchSpreadsheet(config: Pick<AppConfig, "spreadsheetId">) {
   if (!config.spreadsheetId) {
@@ -19,18 +19,4 @@ export async function fetchSpreadsheet(config: Pick<AppConfig, "spreadsheetId">)
   }
   const hash = createHash("sha256").update(buffer).digest("hex");
   return { buffer, hash };
-}
-
-export async function fetchSheetSources(sources: SheetSource[]) {
-  return Promise.all(
-    sources.map(async (source) => {
-      try {
-        const file = await fetchSpreadsheet({ spreadsheetId: source.id });
-        return { buffer: file.buffer, course: source.course, spreadsheetId: source.id };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "The spreadsheet could not be read.";
-        throw new Error(`${source.course}: ${message}`);
-      }
-    }),
-  );
 }

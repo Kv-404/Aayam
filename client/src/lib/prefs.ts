@@ -91,6 +91,11 @@ export function closeExamNotice() {
   storageSet(examNoticeKey, "1");
 }
 
+/** Exam time ended: the banner shows again next exam time. */
+export function reopenExamNotice() {
+  storageSet(examNoticeKey, "0");
+}
+
 export function readStoredCohort() {
   return storageGet(cohortKey) ?? "";
 }

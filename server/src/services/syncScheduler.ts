@@ -229,10 +229,6 @@ function successState(current: SyncState, attemptAt: string, contentHash: string
   };
 }
 
-export function syncInFlight(db: AppDatabase) {
-  return inflight.has(db);
-}
-
 export function runSync(ctx: SyncContext) {
   const existing = inflight.get(ctx.db);
   if (existing) return existing;
@@ -241,22 +237,4 @@ export function runSync(ctx: SyncContext) {
   });
   inflight.set(ctx.db, pending);
   return pending;
-}
-
-export function startScheduler(ctx: SyncContext) {
-  void runSync(ctx).then((result) => {
-    if (result.ok) {
-      console.log(`[sync] timetable updated (${result.unchanged ? "no changes" : `${result.changeCount} changes`})`);
-    } else {
-      console.error(`[sync] ${result.error}`);
-    }
-  });
-  const timer = setInterval(() => {
-    void runSync(ctx).then((result) => {
-      if (!result.ok) console.error(`[sync] ${result.error}`);
-      else if (!result.unchanged) console.log(`[sync] ${result.changeCount} timetable changes detected`);
-    });
-  }, ctx.config.syncIntervalSeconds * 1000);
-  timer.unref();
-  return () => clearInterval(timer);
 }

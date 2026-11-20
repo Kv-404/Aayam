@@ -67,17 +67,6 @@ export function cohortChoices(
   });
 }
 
-export function cohortGroups(choices: CohortChoice[]) {
-  const groups: Array<{ key: string; label: string; choices: CohortChoice[] }> = [];
-  for (const choice of choices) {
-    const key = `${choice.course}\0${choice.batch}`;
-    const last = groups[groups.length - 1];
-    if (last?.key === key) last.choices.push(choice);
-    else groups.push({ key, label: `${choice.course} · ${choice.batch}`, choices: [choice] });
-  }
-  return groups;
-}
-
 export function cohortPrograms(choices: CohortChoice[]) {
   const programs: string[] = [];
   for (const choice of choices) {

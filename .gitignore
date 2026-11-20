@@ -1,19 +1,34 @@
-node_modules
-dist
-client/dist
-server/data
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Sync job working copy and local databases
+server/data/
 *.sqlite
 *.sqlite-journal
 *.sqlite-shm
 *.sqlite-wal
-*.tsbuildinfo
-.env
-.env.*
-.DS_Store
+
+# Secrets (production secrets live in Cloudflare and GitHub, never here)
 .env*
 !.env.example
-.claude/
-.wrangler/
 .dev.vars*
-.vercel/
+
+# Tool state
+.wrangler/
+.claude/
 .mcp.json
+
+# Logs and test output
+*.log
+npm-debug.log*
+coverage/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

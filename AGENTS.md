@@ -1,16 +1,18 @@
 # Aayam timetable
 
-Live college timetable at https://aayam.kv404.dev. Public Google Sheets (one per program and batch) are the only source; the app downloads their xlsx export and never writes back. Students pick a batch, then a section. Faculty sign in with Google and see every lecture under their name. Admins repoint sheets and post notices at `/admin`.
+Live college timetable at https://aayam.kv404.dev. Public Google Sheets (one per program and batch) are the only source; the app downloads their xlsx export and never writes back. Sheet links live in D1 (`timetable_sheet_links`), set by admins at `/admin`. Students pick a batch, then a section. Faculty sign in with Google and see every lecture under their name. Admins also post notices there. The app shows only the current week.
 
 Everything runs on **Cloudflare Workers Free + D1**, with the heavy work in a **GitHub Actions job**:
 
 ```
-Google Sheets ──xlsx──▶ sync job (Node, GitHub Actions)  ──writes──▶  D1: archive + prebuilt responses
+Google Sheets ──xlsx──▶ sync job (Node, GitHub Actions)  ──writes──▶  D1: sheet links, archive, prebuilt responses
                           parse · diff · archive · render                     │
                           · send pushes                                       ▼
 browser ◀── static SPA (free) + /api/* ◀── Worker (≤10 ms CPU: D1 lookup + string concat)
                                              └─ cron */5 and admin actions dispatch the job
 ```
+
+Layout: `client/` (React app; week grid is `WeeklyView.tsx` + `TimeGrid.tsx`), `server/src/edge/` (Worker), `server/src/job/` (sync job), `server/src/services/` (download, parser, change detection), `shared/` (types, scope keys, faculty matching), `migrations/` (D1, add-only), `docs/agent/` (the only design docs). `README.md` is the public overview with screenshots in `docs/screenshots/`; keep both true when the UI or features change. Do not add planning or strategy docs to the repo.
 
 This file is the rulebook, injected every turn. Open **one** context file for the task, then only the source files it names. Do not list the repo, grep the whole tree, or open `node_modules/`, `.wrangler/`, `server/data/`, or `*.sqlite`.
 

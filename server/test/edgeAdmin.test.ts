@@ -270,7 +270,7 @@ describe("edge admin notices", () => {
   let stub: ReturnType<typeof stubFetch> | undefined;
   afterEach(() => stub?.restore());
 
-  const send = (t: TestEnv, cookie: string, body: Record<string, string>) => t.call("/api/admin/notices", json(body, { ...admin, Cookie: cookie }));
+  const send = (t: TestEnv, cookie: string, body: Record<string, unknown>) => t.call("/api/admin/notices", json(body, { ...admin, Cookie: cookie }));
 
   it("queues a notice for the job to push and asks for a sync", async () => {
     stub = stubFetch(() => new Response(null, { status: 204 }));
@@ -283,7 +283,7 @@ describe("edge admin notices", () => {
     assert.equal(body.delivered, 0);
     assert.equal(body.queued, true);
     assert.equal(body.notices.length, 1);
-    assert.deepEqual(Object.keys(body.notices[0]!).sort(), ["batch", "body", "course", "createdAt", "id", "title"]);
+    assert.deepEqual(Object.keys(body.notices[0]!).sort(), ["batch", "body", "course", "createdAt", "expiresAt", "id", "pushedAt", "title", "updatedAt"]);
     assert.equal(body.notices[0]!.body, "Lab moved to 204");
     const row = t.raw.prepare("SELECT course, batch, pushed_at FROM student_notices").get() as Record<string, string | null>;
     assert.deepEqual({ ...row }, { course: "BTech", batch: "2025-29", pushed_at: null });
@@ -314,6 +314,43 @@ describe("edge admin notices", () => {
       assert.equal(response.status, 400);
       assert.deepEqual(await response.json(), { ok: false, error: "Write a title, a message, and who should see it." });
     }
+  });
+
+  it("edits a notice, pushes it again only when asked, and deletes it", async () => {
+    const t = makeEnv({ ADMIN_PASSWORD: PASSWORD });
+    const cookie = await signedIn(t);
+    await send(t, cookie, { title: "Test", body: "One", expiresInDays: 7 });
+    const id = (t.raw.prepare("SELECT id FROM student_notices").get() as { id: string }).id;
+    const days = (t.raw.prepare("SELECT expires_at, created_at FROM student_notices").get() as { expires_at: string; created_at: string });
+    assert.equal(Math.round((Date.parse(days.expires_at) - Date.parse(days.created_at)) / 86_400_000), 7);
+    t.raw.prepare("UPDATE student_notices SET pushed_at = '2026-01-01T00:00:00.000Z'").run();
+
+    const quiet = (await (await send(t, cookie, { id, title: "Test", body: "Two" })).json()) as { queued: boolean };
+    assert.equal(quiet.queued, false);
+    let row = t.raw.prepare("SELECT body, pushed_at, updated_at FROM student_notices").get() as Record<string, string | null>;
+    assert.equal(row.body, "Two");
+    assert.notEqual(row.pushed_at, null);
+
+    const loud = (await (await send(t, cookie, { id, title: "Test", body: "Three", push: true })).json()) as { queued: boolean };
+    assert.equal(loud.queued, true);
+    row = t.raw.prepare("SELECT body, pushed_at FROM student_notices").get() as Record<string, string | null>;
+    assert.deepEqual({ ...row }, { body: "Three", pushed_at: null });
+
+    assert.equal((await send(t, cookie, { id, delete: true })).status, 200);
+    assert.equal((t.raw.prepare("SELECT COUNT(*) AS n FROM student_notices").get() as { n: number }).n, 0);
+  });
+
+  it("turns exam mode on and off for admins only", async () => {
+    const t = makeEnv({ ADMIN_PASSWORD: PASSWORD });
+    const cookie = await signedIn(t);
+    const toggle = (examMode: unknown, headers: Record<string, string> = { ...admin, Cookie: cookie }) =>
+      t.call("/api/admin/settings", json({ examMode }, headers));
+    assert.equal((await toggle(true, admin)).status, 401);
+    assert.equal((await toggle("yes")).status, 400);
+    assert.equal((await toggle(true)).status, 200);
+    assert.equal(((await (await t.call("/api/admin/session", { headers: { Cookie: cookie } })).json()) as { examMode: boolean }).examMode, true);
+    assert.equal((await toggle(false)).status, 200);
+    assert.equal((t.raw.prepare("SELECT value FROM app_settings WHERE key = 'exam_mode'").get() as { value: string }).value, "0");
   });
 });
 
