@@ -117,6 +117,7 @@ export type FacultyLens =
   | { kind: "all" }
   | { kind: "cohorts" }
   | { kind: "cohort"; division: string }
+  | { kind: "batch"; course: string; batch: string }
   | { kind: "faculty"; name: string };
 
 export function readFacultyEmail() {
@@ -151,6 +152,7 @@ export function readFacultyLens(): FacultyLens | null {
     if (parsed.kind === "self" || parsed.kind === "all" || parsed.kind === "cohorts") return { kind: parsed.kind };
     if (parsed.kind === "cohort" && typeof parsed.division === "string" && parsed.division) return parsed;
     if (parsed.kind === "faculty" && typeof parsed.name === "string" && parsed.name) return parsed;
+    if (parsed.kind === "batch" && typeof parsed.course === "string" && typeof parsed.batch === "string" && parsed.course && parsed.batch) return parsed;
   } catch {
     return null;
   }

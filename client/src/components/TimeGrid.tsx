@@ -17,7 +17,27 @@ const GAP = 8;
 /** Two periods of the same class this close together are drawn joined, with the short break between them. */
 const JOIN_MINUTES = 15;
 
-export type GridColumn = { date: string; lectures: PublicLecture[] };
+/** One grid column: a date (Week), or one cohort on one date (`title` set, All classes and batch boards). */
+export type GridColumn = { date: string; lectures: PublicLecture[]; key?: string; title?: string; sub?: string };
+
+/** One column per cohort for a day, grouped by course, then batch, then name. */
+export function cohortColumns(date: string, lectures: PublicLecture[]): GridColumn[] {
+  const groups = new Map<string, PublicLecture[]>();
+  for (const lecture of lectures) {
+    if (lecture.date !== date) continue;
+    const list = groups.get(lecture.division);
+    if (list) list.push(lecture);
+    else groups.set(lecture.division, [lecture]);
+  }
+  return [...groups]
+    .map(([division, list]) => {
+      const first = list[0]!;
+      const program = first.course.trim().toLowerCase() === "btech" ? "B.Tech" : first.course;
+      return { date, lectures: list, key: division, title: cohortLabel(division), sub: `${program} ${first.batch.replace("-", "–")}`, order: `${first.course}|${first.batch}` };
+    })
+    .sort((a, b) => a.order.localeCompare(b.order) || a.title.localeCompare(b.title))
+    .map(({ order: _order, ...column }) => column);
+}
 
 type Placed = { lecture: PublicLecture; lane: number; lanes: number; cluster: number };
 
@@ -43,6 +63,7 @@ export function TimeGrid({
   meet,
   header = true,
   detail = false,
+  columnMin = 8.5,
 }: {
   columns: GridColumn[];
   today: string;
@@ -53,6 +74,8 @@ export function TimeGrid({
   meet: MeetAction;
   header?: boolean;
   detail?: boolean;
+  /** Narrowest a column gets, in rem, before the grid scrolls sideways. */
+  columnMin?: number;
 }) {
   const { slotFor } = useColors();
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
@@ -60,7 +83,7 @@ export function TimeGrid({
 
   const prepared = useMemo(
     () =>
-      columns.map(({ date, lectures }) => {
+      columns.map(({ date, lectures, key, title, sub }) => {
         const off = isFoldedOffDay(lectures);
         const timed = lectures.filter((lecture) => lecture.startMinutes >= 0 && !isFoldedOff(lecture));
         const seen = new Set<string>();
@@ -74,7 +97,7 @@ export function TimeGrid({
         const placed = off ? [] : placeLanes(linkBackToBack(timed.filter((lecture) => lecture.kind !== "break")));
         const maxLanes = placed.reduce((most, item) => Math.max(most, item.lanes), 1);
         const weekday = lectures[0]?.weekday ?? "";
-        return { date, weekday, off, offLecture: lectures.find(isFoldedOff), breaks: off ? [] : breaks, placed, maxLanes };
+        return { date, key: key ?? date, title, sub, weekday, off, offLecture: lectures.find(isFoldedOff), breaks: off ? [] : breaks, placed, maxLanes };
       }),
     [columns],
   );
@@ -125,7 +148,7 @@ export function TimeGrid({
     "3.5rem",
     ...prepared.map((column) => {
       if (detail) return "minmax(0,1fr)";
-      const wide = expanded.has(column.date) ? Math.max(column.maxLanes, 1) * 7 : 8.5;
+      const wide = expanded.has(column.key) ? Math.max(column.maxLanes, 1) * 7 : columnMin;
       return `minmax(${wide}rem,1fr)`;
     }),
   ].join(" ");
@@ -139,11 +162,19 @@ export function TimeGrid({
     });
 
   return (
-    <div className="wk-grid" style={{ gridTemplateColumns: template }}>
+    <div className={`wk-grid ${prepared.some((column) => column.title) ? "wk-board" : ""}`} style={{ gridTemplateColumns: template }}>
       {header && (
         <>
           <div className="wk-corner" aria-hidden="true" />
           {prepared.map((column) => {
+            if (column.title) {
+              return (
+                <div key={column.key} className="wk-head is-cohort font-semibold" data-cohort={column.key}>
+                  <span className="block truncate" title={column.title}>{column.title}</span>
+                  <span className="block truncate text-[11px] font-normal text-muted-foreground">{column.off ? "Off" : column.sub}</span>
+                </div>
+              );
+            }
             const isToday = column.date === today;
             return (
               <div key={column.date} className={`wk-head ${isToday ? "wk-today font-bold" : "font-medium"} ${column.off ? "text-danger" : ""}`} data-date={column.date}>
@@ -175,7 +206,7 @@ export function TimeGrid({
       </div>
       {prepared.map((column, columnIndex) => {
         const isToday = column.date === today;
-        const open = expanded.has(column.date);
+        const open = expanded.has(column.key);
         const cap = open ? Infinity : laneCap;
         const hidden = new Map<number, { count: number; start: number; end: number }>();
         const blocks = column.placed.flatMap((item) => {
@@ -191,7 +222,7 @@ export function TimeGrid({
           return [{ ...item, shown }];
         });
         return (
-          <div key={column.date} className={`wk-col ${isToday ? "wk-today" : ""}`} style={{ height, gridRow: bodyRow, gridColumn: columnIndex + 2 }} data-date={column.date}>
+          <div key={column.key} className={`wk-col ${isToday && !column.title ? "wk-today" : ""}`} style={{ height, gridRow: bodyRow, gridColumn: columnIndex + 2 }} data-date={column.date}>
             {hours.map((at) => (
               <span key={at} className="wk-line" style={{ top: y(at) }} aria-hidden="true" />
             ))}
@@ -242,7 +273,7 @@ export function TimeGrid({
                       key={`more-${index}`}
                       type="button"
                       className="wk-more"
-                      onClick={() => toggle(column.date)}
+                      onClick={() => toggle(column.key)}
                       style={{
                         top: y(group.start),
                         height: Math.max((group.end - group.start) * PX - 2, 18),
@@ -256,7 +287,7 @@ export function TimeGrid({
                   );
                 })}
                 {open && (
-                  <button type="button" className="wk-less" onClick={() => toggle(column.date)}>
+                  <button type="button" className="wk-less" onClick={() => toggle(column.key)}>
                     Show less
                   </button>
                 )}
@@ -406,7 +437,6 @@ const Block = memo(function Block({
         className={`${classNameFor(lecture.subject, lecture.displayStatus)} ${now ? "is-now" : ""} h-full overflow-hidden`}
         data-testid="lecture-card"
         data-live={now ? "true" : undefined}
-        title={[lecture.subject, `${lecture.startLabel} – ${lecture.endLabel}`, label, room, cancelled ? "Cancelled" : ""].filter(Boolean).join("\n")}
       >
         <div className="flex items-start justify-between gap-2">
           <p className={`min-w-0 leading-snug ${now ? "font-semibold" : "font-medium"} ${off ? "text-danger" : ""} ${cancelled ? "line-through decoration-danger decoration-2" : ""}`}>{lecture.subject}</p>
@@ -419,6 +449,7 @@ const Block = memo(function Block({
             {room && <LectureRoom room={room} action={meet} variant="chip" />}
           </div>
         )}
+        <p className="wk-time font-mono text-[11px] text-muted-foreground">{formatCompactRange(lecture.startLabel, lecture.endLabel)}</p>
         {rescheduled && (
           <div className="mt-1">
             <StatusBadge status={lecture.displayStatus} label={badgeText(lecture.displayStatus, lecture.subject)} />

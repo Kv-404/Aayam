@@ -2,7 +2,7 @@ import type { PublicLecture } from "@shared/types";
 import { cohortLabel } from "@shared/cohort";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ClassMeta } from "@/components/ClassMeta";
-import { NowMark, TimeGrid } from "@/components/TimeGrid";
+import { NowMark, TimeGrid, cohortColumns } from "@/components/TimeGrid";
 import { StatusBadge, badgeText } from "@/components/StatusBadge";
 import { ClockLabel } from "@/components/ClockLabel";
 import type { MeetAction } from "@/lib/prefs";
@@ -21,6 +21,7 @@ export function TodayView({
   meet,
   onPrevDay,
   onNextDay,
+  byCohort = false,
 }: {
   lectures: PublicLecture[];
   today: string;
@@ -32,6 +33,8 @@ export function TodayView({
   meet: MeetAction;
   onPrevDay?: () => void;
   onNextDay?: () => void;
+  /** Many cohorts at once: the wide grid is one column per cohort. */
+  byCohort?: boolean;
 }) {
   const { classNameFor } = useColors();
   const visible = lectures;
@@ -76,17 +79,18 @@ export function TodayView({
         )}
       </div>
       {note && <p className="mt-1 text-sm text-muted-foreground">{note}</p>}
-      <div className="mt-4 hidden sm:block">
+      <div className="mt-4 hidden overflow-x-auto sm:block">
         <TimeGrid
-          columns={[{ date, lectures: visible }]}
+          columns={byCohort ? cohortColumns(date, visible) : [{ date, lectures: visible }]}
           today={today}
           minutes={minutes}
-          showDivision={showDivision}
+          showDivision={byCohort ? false : showDivision}
           showFaculty={showFaculty}
           showLive={showLive}
           meet={meet}
-          header={false}
-          detail
+          header={byCohort}
+          detail={!byCohort}
+          columnMin={7.5}
         />
       </div>
       <ol className="mt-2 flex flex-col gap-1.5 sm:hidden">

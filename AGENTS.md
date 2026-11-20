@@ -59,7 +59,7 @@ Shared types and faculty matching are in `docs/agent/server.md`. Read a second f
 - Adding a setup step must not reset a returning student's theme or cohort. Role is `timetable-role`; missing role shows "Who are you?" once.
 - The app shows only the current week. There is no past-week view or `/api/week`; past weeks stay in the D1 archive only.
 - There is no MCP server or OAuth endpoint. Do not add one back without asking.
-- Wide Week and Day views are an hour grid (`TimeGrid.tsx`) with the old card style (`classNameFor`). Back-to-back periods of one class stay separate cards, joined by a strip that shows the short break. A break at the same time on neighbouring days is one band.
+- Wide Week and Day views are an hour grid (`TimeGrid.tsx`) with the old card style (`classNameFor`). All classes, Whole batch and My cohorts are a cohort board: day tabs, one column per cohort. Back-to-back periods of one class stay separate cards, joined by a strip that shows the short break. A break at the same time on neighbouring days is one band.
 - Polling stays cheap: about every 5 min while visible, none while hidden, and no cache-busting (the Worker answers 304s). The free plan allows 100k API requests a day.
 
 ## Commands

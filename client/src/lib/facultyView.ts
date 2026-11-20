@@ -14,6 +14,8 @@ export interface FacultyBoard {
   showFaculty: boolean;
   /** Mark the class running now. Off for All classes, where many run at once. */
   showLive: boolean;
+  /** Several cohorts at once (All classes, one batch, My cohorts): the grid is one column per cohort, one day at a time. */
+  byCohort: boolean;
   lectures: PublicLecture[];
   calendar: { division?: string; faculty?: string } | null;
   sheet?: CohortChoice;
@@ -33,6 +35,7 @@ function notBreak(lecture: PublicLecture) {
 function lensId(lens: FacultyLens) {
   if (lens.kind === "cohort") return `cohort:${lens.division}`;
   if (lens.kind === "faculty") return `faculty:${lens.name}`;
+  if (lens.kind === "batch") return `batch:${lens.course}|${lens.batch}`;
   return lens.kind;
 }
 
@@ -52,8 +55,18 @@ function activeLens(
     return allowed.some((choice) => choice.division === stored.division) ? stored : fallback;
   }
   if (stored.kind === "faculty" && stored.name) return stored;
+  if (stored.kind === "batch") {
+    const allowed = canSeeAll ? choices : mine;
+    return allowed.some((choice) => choice.course === stored.course && choice.batch === stored.batch) ? stored : fallback;
+  }
   if (stored.kind === "self" && !canSeeAll && !hasCohorts) return stored;
   return fallback;
+}
+
+/** "BTech", "2025-29" becomes "B.Tech 2025–29". */
+export function batchName(course: string, batch: string) {
+  const program = course.trim().toLowerCase() === "btech" ? "B.Tech" : course;
+  return `${program} ${batch.replace("-", "–")}`;
 }
 
 function cohortItems(list: CohortChoice[]) {
@@ -98,6 +111,7 @@ export function resolveFacultyView({
       showDivision: true,
       showFaculty: false,
       showLive: true,
+      byCohort: false,
       lectures: ownLectures,
       calendar: signed ? { faculty: signed } : null,
       facultyFilter: signed,
@@ -122,7 +136,11 @@ export function resolveFacultyView({
       groups.set(key, [...(groups.get(key) ?? []), choice]);
     }
     for (const [title, group] of groups) {
-      sections.push({ title, items: cohortItems(group) });
+      const first = group[0]!;
+      sections.push({
+        title,
+        items: [{ id: `batch:${first.course}|${first.batch}`, label: "Whole batch" }, ...cohortItems(group)],
+      });
     }
   } else if (mine.length > 0) {
     sections.push({
@@ -164,6 +182,15 @@ export function resolveFacultyView({
     sheet = choice;
     facultyFilter = null;
     watchedDivisions = new Set(choice ? [choice.division, ...choice.also] : [active.division]);
+  } else if (active.kind === "batch") {
+    const group = choices.filter((choice) => choice.course === active.course && choice.batch === active.batch);
+    viewLectures = lectures.filter(
+      (lecture) => notBreak(lecture) && (group.some((choice) => lectureInCohort(lecture, choice)) || (lecture.course === active.course && lecture.batch === active.batch)),
+    );
+    label = batchName(active.course, active.batch);
+    calendar = null;
+    facultyFilter = null;
+    watchedDivisions = new Set(group.flatMap((choice) => [choice.division, ...choice.also]));
   } else if (active.kind === "faculty") {
     viewLectures = lectures.filter((lecture) => notBreak(lecture) && lectureMatchesFaculty(lecture.faculty, active.name));
     label = active.name;
@@ -176,8 +203,9 @@ export function resolveFacultyView({
     label,
     badge: canSeeAll ? "All access" : "Coordinator",
     showDivision,
-    showFaculty: active.kind === "all" || active.kind === "cohorts",
-    showLive: active.kind !== "all",
+    showFaculty: active.kind === "all" || active.kind === "cohorts" || active.kind === "batch",
+    showLive: active.kind !== "all" && active.kind !== "batch",
+    byCohort: active.kind === "all" || active.kind === "cohorts" || active.kind === "batch",
     lectures: viewLectures,
     calendar,
     sheet,
@@ -200,5 +228,9 @@ export function lensFromScopeId(id: string): FacultyLens {
   if (id === "cohorts") return { kind: "cohorts" };
   if (id.startsWith("cohort:")) return { kind: "cohort", division: id.slice("cohort:".length) };
   if (id.startsWith("faculty:")) return { kind: "faculty", name: id.slice("faculty:".length) };
+  if (id.startsWith("batch:")) {
+    const [course = "", batch = ""] = id.slice("batch:".length).split("|");
+    if (course && batch) return { kind: "batch", course, batch };
+  }
   return { kind: "self" };
 }

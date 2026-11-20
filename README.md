@@ -33,7 +33,7 @@ Everything runs on free plans: Cloudflare Workers and D1 serve the site, and Git
 
 **Faculty** (Google sign-in, college domains only)
 - Every lecture they teach, across all batches, on one grid.
-- Coordinators see their cohorts. Staff with full access see every class.
+- Coordinators see their cohorts. Staff with full access see every class, or one whole batch, as a board with one column per cohort and a tab for each day.
 
 **Admins** (`/admin`)
 - Paste next week's sheet link for a batch. It is stored in D1 and the new timetable is live in about a minute, together with the header's *Open sheet* link.

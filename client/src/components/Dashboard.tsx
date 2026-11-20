@@ -283,6 +283,8 @@ export function Dashboard({
   const liveScope = scope;
   // All classes has many lectures at once, so "the current class" means nothing there until one cohort is filtered.
   const liveMarks = role !== "faculty" || board.showLive || Boolean(filters.division);
+  // All classes, one batch, or My cohorts with no cohort picked: one column per cohort.
+  const byCohortBoard = role === "faculty" && board.byCohort && !filters.division;
   const upcoming = liveMarks ? nextClass(liveScope, zone.iso, zone.minutes) : undefined;
   const filtersOn = Boolean(filters.subject || filters.faculty || filters.room || filters.status !== "all" || (role === "faculty" && filters.division));
   const changes = liveChanges;
@@ -887,11 +889,12 @@ export function Dashboard({
                 meet={meet}
                 onPrevDay={() => navigateDay(-1)}
                 onNextDay={() => navigateDay(1)}
+                byCohort={byCohortBoard}
               />
             </div>
           </TabsContent>
           <TabsContent value="week" className="rise mt-0">
-            <WeeklyView lectures={weekLectures} showDivision={role === "faculty" && board.showDivision} showFaculty={role === "faculty" && board.showFaculty} showLive={liveMarks} today={zone.iso} minutes={zone.minutes} meet={meet} />
+            <WeeklyView lectures={weekLectures} showDivision={role === "faculty" && board.showDivision} showFaculty={role === "faculty" && board.showFaculty} showLive={liveMarks} today={zone.iso} minutes={zone.minutes} meet={meet} byCohort={byCohortBoard} />
           </TabsContent>
           <TabsContent value="updates" className="rise mt-0">
             <RecentChanges changes={changes} timeZone={data.timezone} />

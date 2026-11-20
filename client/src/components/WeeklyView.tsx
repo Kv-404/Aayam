@@ -1,7 +1,7 @@
 import type { PublicLecture } from "@shared/types";
 import { cohortLabel } from "@shared/cohort";
-import { memo, useEffect, useMemo, useRef } from "react";
-import { NowMark, TimeGrid } from "@/components/TimeGrid";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { NowMark, TimeGrid, cohortColumns } from "@/components/TimeGrid";
 import { useColors } from "@/lib/colorState";
 import { LectureRoom } from "@/components/MeetLink";
 import type { MeetAction } from "@/lib/prefs";
@@ -16,6 +16,7 @@ export function WeeklyView({
   today = "",
   minutes = -1,
   meet,
+  byCohort = false,
 }: {
   lectures: PublicLecture[];
   showDivision: boolean;
@@ -24,7 +25,10 @@ export function WeeklyView({
   today?: string;
   minutes?: number;
   meet: MeetAction;
+  /** Many cohorts at once: one day at a time, one column per cohort, picked with day tabs. */
+  byCohort?: boolean;
 }) {
+  const [pickedDay, setPickedDay] = useState("");
   const scroller = useRef<HTMLDivElement>(null);
   const todayBlock = useRef<HTMLDivElement>(null);
   const days = [...new Set(lectures.map((lecture) => lecture.date).filter((date): date is string => Boolean(date)))].sort((a, b) => a.localeCompare(b));
@@ -39,7 +43,11 @@ export function WeeklyView({
     }
     return groups;
   }, [lectures]);
-  const columns = useMemo(() => days.map((date) => ({ date, lectures: byDate.get(date) ?? [] })), [dayKey, byDate]);
+  const boardDay = byCohort ? (days.includes(pickedDay) ? pickedDay : days.includes(today) ? today : days[0] ?? "") : "";
+  const columns = useMemo(
+    () => (boardDay ? cohortColumns(boardDay, byDate.get(boardDay) ?? []) : days.map((date) => ({ date, lectures: byDate.get(date) ?? [] }))),
+    [dayKey, byDate, boardDay],
+  );
   useEffect(() => {
     const root = scroller.current;
     if (!root) return;
@@ -74,8 +82,36 @@ export function WeeklyView({
   const offDay = (date: string) => isFoldedOffDay(forDay(date));
   return (
     <>
+    {byCohort && (
+      <div role="tablist" aria-label="Day" data-testid="board-days" className="mb-3 flex gap-1 overflow-x-auto pb-1 no-scrollbar">
+        {days.map((date) => {
+          const active = date === boardDay;
+          const weekday = forDay(date)[0]?.weekday ?? formatCalendarDate(date);
+          return (
+            <button
+              key={date}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setPickedDay(date)}
+              className={`flex shrink-0 flex-col items-start rounded-lg border px-3 py-1.5 text-left transition-colors ${
+                active ? "border-foreground bg-foreground text-background" : "border-border text-foreground hover:bg-muted"
+              }`}
+            >
+              <span className="flex items-center gap-1.5 text-sm font-semibold">
+                {weekday.slice(0, 3)}
+                {date === today && <span className={`size-1.5 rounded-full ${active ? "bg-background" : "bg-primary"}`} aria-label="Today" />}
+              </span>
+              <span className={`text-[11px] ${active ? "text-background/70" : "text-muted-foreground"}`}>
+                {formatCalendarDate(date).replace(/^[A-Za-z]{3},?\s*/, "")}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    )}
     <div className="sm:hidden">
-      {days.map((date) => {
+      {(boardDay ? [boardDay] : days).map((date) => {
         const dayLectures = forDay(date);
         const weekday = dayLectures[0]?.weekday ?? "";
         const off = offDay(date);
@@ -104,10 +140,11 @@ export function WeeklyView({
         columns={columns}
         today={today}
         minutes={minutes}
-        showDivision={showDivision}
+        showDivision={boardDay ? false : showDivision}
         showFaculty={showFaculty}
         showLive={showLive}
         meet={meet}
+        columnMin={boardDay ? 7.5 : 8.5}
       />
     </div>
     </>
