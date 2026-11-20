@@ -114,3 +114,11 @@ The theme step is roomy cards (swatch, name, blurb) in 2, 3, or 4 columns, and t
 | Lecture start reminders | `client/src/hooks/useLectureReminders.ts`, `shared/reminders.ts` |
 
 Cohort display names drop a trailing year in `shared/cohort.ts` (`Sam Altman 2025` → `Sam Altman`). Stored division strings keep the year.
+
+## Phone app sign-in (`/app-auth`)
+
+`AppAuthPage.tsx` is faculty sign-in for the Expo app in `mobile/`. The app opens `/app-auth?state=<random>` in the system browser. After Google sign-in the page calls `/api/auth/google` with `credentials: "omit"` (the browser is not signed in), then goes to the fixed `aayam://auth#state=…&token=…`. The redirect is hard-coded so the page cannot send a token anywhere else; the app drops a reply whose `state` does not match. `syncUrl` in `App.tsx` keeps the query on this route.
+
+## Phone app (`mobile/`)
+
+Expo + React Native, its own `package.json` (not a workspace). It calls the same `/api/*` and imports `shared/*` and the pure helpers in `client/src/lib` (`calendarTone.ts`, `time.ts`) through `@shared` and `@web`. `mobile/src/themes.ts` is generated from this file's theme tokens; regenerate it when a theme changes. Storage keys match the table above. Faculty sign-in needs a development or store build: Expo Go cannot receive `aayam://`.

@@ -1,0 +1,92 @@
+import * as Crypto from "expo-crypto";
+import * as WebBrowser from "expo-web-browser";
+import type { BootstrapResponse } from "@shared/types.ts";
+import type { FacultyPick, Who } from "./prefs";
+
+// Same API as the website. Sheet links live in D1; the app never sees them.
+export const API_BASE = (process.env.EXPO_PUBLIC_API_BASE ?? "https://aayam.kv404.dev").replace(/\/$/, "");
+/** The site sends the faculty session here after Google sign-in (client/src/components/AppAuthPage.tsx). */
+export const AUTH_REDIRECT = "aayam://auth";
+
+let etag: string | null = null;
+let cached: { key: string; body: BootstrapResponse } | null = null;
+
+function scopeParams(who: Who | null) {
+  const params = new URLSearchParams();
+  if (who?.role === "student") {
+    params.set("division", who.student.division);
+    params.set("course", who.student.course);
+    params.set("batch", who.student.batch);
+  } else if (who?.role === "faculty") {
+    if (who.faculty.canSeeAll) params.set("all", "1");
+    else params.set("faculty", who.faculty.faculty);
+  }
+  return params.toString();
+}
+
+/** GET /api/bootstrap. Sends If-None-Match so an unchanged timetable costs a 304. */
+export async function fetchBootstrap(who: Who | null): Promise<BootstrapResponse> {
+  const key = scopeParams(who);
+  const headers: Record<string, string> = {};
+  if (etag && cached?.key === key) headers["If-None-Match"] = etag;
+  const res = await fetch(`${API_BASE}/api/bootstrap${key ? `?${key}` : ""}`, { headers });
+  if (res.status === 304 && cached) return cached.body;
+  if (!res.ok) throw new Error(`Timetable is not available (${res.status}).`);
+  const body = (await res.json()) as BootstrapResponse;
+  etag = res.headers.get("ETag");
+  cached = { key, body };
+  return body;
+}
+
+/** POST /api/sync: asks the job to re-read the sheet. Returns the current timetable with refreshing on. */
+export async function requestSync(who: Who | null) {
+  await fetch(`${API_BASE}/api/sync`, { method: "POST" }).catch(() => undefined);
+  return fetchBootstrap(who);
+}
+
+/** GET /api/auth/me with the saved session. */
+export async function facultyMe(token: string): Promise<FacultyPick | null> {
+  const res = await fetch(`${API_BASE}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error("Could not check your sign-in.");
+  const data = (await res.json()) as { authenticated: boolean; email?: string; faculty?: string; canSeeAllFaculty?: boolean };
+  if (!data.authenticated || !data.faculty) return null;
+  return { faculty: data.faculty, email: data.email ?? "", canSeeAll: Boolean(data.canSeeAllFaculty) };
+}
+
+/**
+ * Faculty sign-in by browser handoff. The site page does the normal Google sign-in, then sends the
+ * session to aayam://auth with the same `state` we passed, so a link from anywhere else is ignored.
+ */
+export async function signInFaculty(): Promise<{ token: string; faculty: FacultyPick } | null> {
+  const state = Crypto.randomUUID();
+  const url = `${API_BASE}/app-auth?state=${encodeURIComponent(state)}`;
+  const result = await WebBrowser.openAuthSessionAsync(url, AUTH_REDIRECT);
+  if (result.type !== "success") return null;
+  const fragment = result.url.split("#")[1] ?? "";
+  const params = new URLSearchParams(fragment);
+  if (params.get("state") !== state) throw new Error("Sign-in did not come back from Aayam. Try again.");
+  const error = params.get("error");
+  if (error) throw new Error(error);
+  const token = params.get("token");
+  if (!token) throw new Error("Sign-in did not return a session.");
+  const faculty = await facultyMe(token);
+  if (!faculty) throw new Error("Sign-in was refused. Use an authorized faculty account.");
+  return { token, faculty };
+}
+
+/** Calendar feed links, same as client/src/lib/calendar.ts but without window.location. */
+export function calendarLinks(scope: { division?: string; faculty?: string }, label: string) {
+  const params = new URLSearchParams();
+  if (scope.faculty) params.set("faculty", scope.faculty);
+  else if (scope.division) params.set("division", scope.division);
+  const feed = `${API_BASE}/api/calendar.ics?${params}`;
+  const webcal = feed.replace(/^https?:/, "webcal:");
+  return {
+    feed,
+    download: `${feed}&download=1`,
+    google: `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcal)}`,
+    apple: webcal,
+    outlook: `https://outlook.office.com/calendar/0/addfromweb?url=${encodeURIComponent(feed)}&name=${encodeURIComponent(label)}`,
+    proton: "https://calendar.proton.me/u/0",
+  };
+}
