@@ -189,6 +189,7 @@ export function resolveFacultyView({
     );
     label = batchName(active.course, active.batch);
     calendar = null;
+    sheet = group[0];
     facultyFilter = null;
     watchedDivisions = new Set(group.flatMap((choice) => [choice.division, ...choice.also]));
   } else if (active.kind === "faculty") {
