@@ -8,7 +8,7 @@ import { cohortLabel } from "@shared/cohort.ts";
 import { calendarLinks } from "./api";
 import { readSearchHistory, saveSearchHistory } from "./prefs";
 import { useLook } from "./theme";
-import { LookControls, MenuRow, Sheet, T } from "./ui";
+import { LookControls, MenuRow, Sheet, SwitchRow, T } from "./ui";
 import { dayMonth, dayShort, WeekRow, type CardLens } from "./cards";
 
 export function SettingsSheet({
@@ -16,6 +16,8 @@ export function SettingsSheet({
   onClose,
   who,
   sheetUrl,
+  notifyOn,
+  onNotify,
   onRefresh,
   onLogout,
 }: {
@@ -23,6 +25,8 @@ export function SettingsSheet({
   onClose: () => void;
   who: string;
   sheetUrl: string;
+  notifyOn: boolean;
+  onNotify: (on: boolean) => void;
   onRefresh: () => void;
   onLogout: () => void;
 }) {
@@ -30,7 +34,14 @@ export function SettingsSheet({
   const icon = (Icon: typeof RefreshCw) => <Icon size={18} color={theme.fg} strokeWidth={1.75} />;
   return (
     <Sheet open={open} onClose={onClose} title="Settings">
-      <T w="mono" style={{ color: theme.mutedFg, fontSize: 11, letterSpacing: 2 }}>
+      <SwitchRow
+        theme={theme}
+        title="Notifications"
+        note={notifyOn ? "Changes, notices and class reminders" : "Cancelled classes, room changes, reminders"}
+        value={notifyOn}
+        onChange={onNotify}
+      />
+      <T w="mono" style={{ color: theme.mutedFg, fontSize: 11, letterSpacing: 2, marginTop: 8 }}>
         APPEARANCE
       </T>
       <LookControls />

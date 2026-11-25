@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { CalendarPlus, ChevronDown, ChevronLeft, ChevronRight, Search, Settings } from "lucide-react-native";
+import { Bell, CalendarPlus, ChevronDown, ChevronLeft, ChevronRight, Search, Settings, X } from "lucide-react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { BootstrapResponse, ChangeEvent, PublicLecture } from "@shared/types.ts";
 import { cohortLabel, lectureInCohort } from "@shared/cohort.ts";
 import { changeMatchesFaculty, lectureMatchesFaculty } from "@shared/faculty.ts";
@@ -12,6 +13,8 @@ import { Logo } from "./Logo";
 import { T } from "./ui";
 import { DayCard, WeekRow, dayLong, dayMonth, dayShort, isOff, range, type CardLens } from "./cards";
 import { CalendarSheet, SearchPanel, SettingsSheet } from "./panels";
+import * as Notifications from "expo-notifications";
+import { disableNotifications, enableNotifications, readNotifyOn, registerPush, scheduleReminders } from "./notify";
 
 type Tab = "day" | "week" | "updates";
 
@@ -30,6 +33,44 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
   };
 
   const faculty = who.role === "faculty" ? who.faculty : null;
+
+  // Notifications: the switch, push registration once per signed-in person, and taps on alerts.
+  const [notifyOn, setNotifyOn] = useState(false);
+  const whoKey = who.role === "faculty" ? `f:${who.faculty.faculty}` : `s:${who.student.division}`;
+  useEffect(() => {
+    void readNotifyOn().then((on) => {
+      setNotifyOn(on);
+      if (on) void registerPush(who);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [whoKey]);
+  // The site's notify hint: shown until turned on or closed (`timetable-notify-hint`).
+  const [hintGone, setHintGone] = useState(true);
+  useEffect(() => {
+    void AsyncStorage.getItem("timetable-notify-hint").then((value) => setHintGone(value === "1")).catch(() => undefined);
+  }, []);
+  const closeHint = () => {
+    setHintGone(true);
+    void AsyncStorage.setItem("timetable-notify-hint", "1").catch(() => undefined);
+  };
+  const lastTap = Notifications.useLastNotificationResponse();
+  useEffect(() => {
+    const kind = lastTap?.notification.request.content.data?.kind;
+    if (kind === "change" || kind === "notice") setTab("updates");
+    else if (kind === "reminder") setTab("day");
+  }, [lastTap]);
+  const toggleNotify = async (on: boolean) => {
+    if (!on) {
+      await disableNotifications();
+      setNotifyOn(false);
+      showNotice("Notifications off");
+      return;
+    }
+    const result = await enableNotifications(who);
+    setNotifyOn(result.ok);
+    showNotice(result.message ?? "Notifications on");
+  };
+
   const lens: CardLens = faculty ? (wide ? "all" : "faculty") : "student";
 
   const mine = useMemo(() => {
@@ -52,6 +93,15 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
     const ids = new Set(mine.map((lecture) => lecture.id));
     return data.changes.filter((change) => changeMatchesFaculty(change, who.faculty.faculty, ids));
   }, [data.changes, who, wide, mine]);
+
+  // Reminders follow the person's own classes (not All classes), and re-plan after every refresh.
+  const ownLectures = useMemo(
+    () => (who.role === "faculty" ? data.lectures.filter((lecture) => lecture.kind !== "break" && lectureMatchesFaculty(lecture.faculty, who.faculty.faculty)) : wide ? [] : mine),
+    [data.lectures, who, mine, wide],
+  );
+  useEffect(() => {
+    if (notifyOn) void scheduleReminders(ownLectures, data.timezone, who.role === "faculty").catch(() => undefined);
+  }, [notifyOn, ownLectures, data.timezone, who.role]);
 
   const days = useMemo(() => [...new Set(mine.map((lecture) => lecture.date).filter((date): date is string => !!date))].sort(), [mine]);
   const [day, setDay] = useState(days.includes(data.today) ? data.today : (days[0] ?? data.today));
@@ -147,7 +197,7 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
       {panel === "search" ? (
         <SearchPanel lectures={mine} lens={lens} onClose={() => setPanel("none")} onNotice={showNotice} />
       ) : (
-        <ScrollView contentContainerStyle={{ paddingBottom: 96 + insets.bottom }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.mutedFg} />}>
+        <ScrollView contentContainerStyle={{ paddingBottom: (notifyOn || hintGone ? 96 : 150) + insets.bottom }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.mutedFg} />}>
           {tab === "day" ? (
             <DayList
               lectures={mine.filter((lecture) => lecture.date === day)}
@@ -168,6 +218,21 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
           {data.sync.lastError ? <T style={{ color: theme.danger, fontSize: 13, paddingHorizontal: 16, marginTop: 12 }}>Showing the last good copy. {data.sync.lastError}</T> : null}
         </ScrollView>
       )}
+
+      {!notifyOn && !hintGone && panel === "none" ? (
+        <View style={[styles.hint, { bottom: insets.bottom + 68, backgroundColor: theme.card, borderColor: theme.border }]}>
+          <Bell size={16} color={theme.mutedFg} strokeWidth={1.75} />
+          <T style={{ color: theme.mutedFg, fontSize: 14, flex: 1 }}>Get class change alerts</T>
+          <Pressable onPress={() => (closeHint(), void toggleNotify(true))} hitSlop={8}>
+            <T w="medium" style={{ color: theme.fg, fontSize: 14 }}>
+              Turn on
+            </T>
+          </Pressable>
+          <Pressable onPress={closeHint} hitSlop={8} accessibilityLabel="Close">
+            <X size={16} color={theme.mutedFg} />
+          </Pressable>
+        </View>
+      ) : null}
 
       {notice ? (
         <View style={[styles.toast, { bottom: insets.bottom + 72, backgroundColor: theme.fg }]}>
@@ -195,6 +260,8 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
         onClose={() => setPanel("none")}
         who={faculty ? faculty.email || faculty.faculty : `${cohortLabel(who.role === "student" ? who.student.division : "")} · ${subtitle}`}
         sheetUrl={data.spreadsheetUrl}
+        notifyOn={notifyOn}
+        onNotify={(on) => void toggleNotify(on)}
         onRefresh={onRefresh}
         onLogout={onLogout}
       />
@@ -355,6 +422,7 @@ const styles = StyleSheet.create({
   lunchPill: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 },
   weekHead: { flexDirection: "row", alignItems: "baseline", gap: 8, paddingBottom: 8 },
   change: { borderBottomWidth: StyleSheet.hairlineWidth, paddingVertical: 12 },
+  hint: { position: "absolute", left: 12, right: 12, flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12 },
   toast: { position: "absolute", alignSelf: "center", borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8 },
   bottom: { position: "absolute", left: 0, right: 0, bottom: 0, paddingHorizontal: 12, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth },
   rubber: { flexDirection: "row", borderRadius: 10, padding: 3 },

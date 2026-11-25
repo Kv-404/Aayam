@@ -11,6 +11,7 @@ import { runSync, type SyncOutcome, type WorkbookFile } from "../services/syncSc
 import { loadSnapshot } from "../services/timetableSnapshotService.ts";
 import { ensurePublishedTable, hydrateFromD1, publishToD1, readRemoteSync, type PublishResult } from "./archive.ts";
 import { sendPendingPushes, type PushResult } from "./pushes.ts";
+import { sendAppPushes, type AppPushResult, type ExpoSend } from "./appPushes.ts";
 import { renderSnapshots, writeSnapshots, type SnapshotWrite } from "./snapshots.ts";
 
 /**
@@ -30,6 +31,8 @@ export interface JobOptions {
   download?: (source: SheetSource) => Promise<Buffer>;
   now?: () => Date;
   log?: (line: string) => void;
+  /** Phone push transport. Tests pass a fake; default is Expo's push service. */
+  expoSend?: ExpoSend;
 }
 
 export interface JobResult {
@@ -39,6 +42,7 @@ export interface JobResult {
   archive: PublishResult | null;
   snapshots: SnapshotWrite | null;
   pushes: PushResult | null;
+  appPushes: AppPushResult | null;
   timings: Record<string, number>;
   error: string | null;
 }
@@ -101,7 +105,7 @@ export async function runJob(options: JobOptions): Promise<JobResult> {
     timings[name] = Math.round(at - mark);
     mark = at;
   };
-  const result: JobResult = { ok: false, hydrated: false, sync: null, archive: null, snapshots: null, pushes: null, timings, error: null };
+  const result: JobResult = { ok: false, hydrated: false, sync: null, archive: null, snapshots: null, pushes: null, appPushes: null, timings, error: null };
   const metaFile = options.dataDir ? path.join(options.dataDir, "job-meta.json") : null;
   const db = options.workingDb ?? openWorkingDb(options.dataDir);
   const sql = options.sql;
@@ -201,11 +205,17 @@ export async function runJob(options: JobOptions): Promise<JobResult> {
     result.snapshots = await writeSnapshots(sql, rendered, now());
     lap("snapshots");
 
-    // 5. Queued notices.
+    // 5. Queued notices (web push), then the phone app: new timetable changes and the same notices.
     try {
       result.pushes = await sendPendingPushes(sql, now());
+      if (result.pushes.error) log(`[job] web push failed: ${result.pushes.error}`);
     } catch (error) {
       log(`[job] push failed: ${error instanceof Error ? error.message : error}`);
+    }
+    try {
+      result.appPushes = await sendAppPushes(sql, now(), result.pushes?.claimed ?? [], options.expoSend);
+    } catch (error) {
+      log(`[job] app push failed: ${error instanceof Error ? error.message : error}`);
     }
     lap("pushes");
     result.ok = true;
@@ -229,7 +239,8 @@ export async function runJob(options: JobOptions): Promise<JobResult> {
       (result.sync ? ` sync=${result.sync.ok ? (result.sync.unchanged ? "unchanged" : `${result.sync.changeCount} changes`) : "error"}` : "") +
       (a ? ` archive=+${a.upserted}/-${a.deleted} rev ${a.revision}` : "") +
       (s ? ` snapshots=${s.written}/${s.total} written, ${s.deleted} deleted, ${(s.bytes / 1024).toFixed(0)} KB` : "") +
-      (result.pushes?.notices ? ` pushes=${result.pushes.delivered} to ${result.pushes.notices} notices` : ""),
+      (result.pushes?.notices ? ` pushes=${result.pushes.delivered} to ${result.pushes.notices} notices` : "") +
+      (result.appPushes?.delivered ? ` app=${result.appPushes.delivered}` : ""),
   );
   return result;
 }

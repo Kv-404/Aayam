@@ -1,3 +1,4 @@
+import { appPushRegister, appPushUnregister } from "./appPush.ts";
 import { adminLogin, adminLogout, adminNotices, adminPassword, adminSession, adminSettings, adminSheets, pushPublicKey, pushSubscribe } from "./admin.ts";
 import { authConfig, authGoogle, authLogout, authMe } from "./auth.ts";
 import { database, type Ctx, type Env, type ExecutionContextLike } from "./env.ts";
@@ -37,6 +38,8 @@ const routes: Record<string, Handler> = {
   "POST /api/admin/settings": adminSettings,
   "GET /api/push/public-key": pushPublicKey,
   "POST /api/push/subscribe": pushSubscribe,
+  "POST /api/push/app-register": appPushRegister,
+  "POST /api/push/app-unregister": appPushUnregister,
 };
 
 const cleanPath = (url: URL) => (url.pathname.length > 1 ? url.pathname.replace(/\/+$/, "") : url.pathname);

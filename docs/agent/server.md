@@ -22,6 +22,7 @@ Schema is `migrations/*.sql`, applied by `wrangler d1 migrations apply timetable
 | `job_state` (requested/dispatched/finished) | both | both |
 | `timetable_sheet_links` | Worker (admin) | job |
 | `student_notices`, `push_subscriptions`, `push_vapid` | Worker; job sets `pushed_at` and prunes dead subscriptions | both |
+| `app_push_devices`, `app_push_state` (`migrations/0005_app_push.sql`) | Worker upserts phone tokens; job sends, moves `changes_after`, prunes dead tokens | job |
 | `app_settings` (`exam_mode` = `"1"`/`"0"`) | Worker (admin toggle) | Worker, inside the bootstrap query |
 | `faculty_directory`, `admin_password`, `admin_sessions`, `rate_limits` | Worker | Worker |
 | `mcp_oauth_*` (`migrations/0002_mcp_oauth.sql`) | nothing: the MCP server was removed; the empty tables stay because migrations are additive | — |
@@ -56,6 +57,7 @@ The job renders with `server/src/views.ts` (`buildBootstrap` and calendar views;
 | `POST /api/admin/notices` | New: stores the notice (`pushed_at` NULL, `expires_at` = now + `expiresInDays`, 1–30, default 3), asks for a sync; the job sends the push. `id` edits it (and resets `expires_at`); with `push: true` it clears `pushed_at` and asks for a sync, without it no sync runs. `id` + `delete: true` removes it. Rows past expiry by 30 days are pruned. Response has `queued` |
 | `POST /api/admin/settings` | `{ examMode }` upserts `app_settings.exam_mode`. No sync: the bootstrap reads it live |
 | `GET /api/push/public-key`, `POST /api/push/subscribe` | VAPID public key; upsert subscription |
+| `POST /api/push/app-register`, `/app-unregister` | Phone app (`edge/appPush.ts`). Only `ExponentPushToken[…]`. A student sends course, batch, division; a faculty device must send its session (Bearer) and the name comes from the session, never the body. Plain upsert or delete |
 
 `scheduled` (cron `*/5`) only dispatches the job. Cron and stale reads never set `refreshing`; only `/api/sync` and admin actions do (`server/src/edge/sync.ts`).
 
@@ -72,7 +74,7 @@ The job renders with `server/src/views.ts` (`buildBootstrap` and calendar views;
    6. Otherwise `compareSnapshots`, save, `recordChanges`.
    7. Download or parse failure: keep the last snapshot, set `lastError`. The `sync` snapshot is still published, so the client shows the error and the old grid.
 4. `publishToD1` (`server/src/job/archive.ts`): only changed rows (tracked in `published_rows`), deletes then upserts then the sync row with `revision + 1`. Safe to repeat after a crash.
-5. Render and write snapshots, send queued pushes (`pushes.ts`: `pushed_at` set before sending, 404/410 subscriptions deleted, notices saved (`COALESCE(updated_at, created_at)`) over 24 h ago or past `expires_at` are marked without a push), set `job_state.finished_at` (always).
+5. Render and write snapshots, send queued pushes (`pushes.ts`: `pushed_at` set before sending, 404/410 subscriptions deleted, notices saved (`COALESCE(updated_at, created_at)`) over 24 h ago or past `expires_at` are marked without a push), then phone pushes (`appPushes.ts`, Expo push service): live changes with `detected_at > app_push_state.changes_after` of the site's alert types, matched by `deviceWantsChange` (students by cohort, faculty by `changeMatchesFaculty`), several per phone folded into one message; plus the notices `sendPendingPushes` claimed, to students only. The first run sets the cursor to now and sends nothing; a change found over 6 h late is skipped; `DeviceNotRegistered` tokens are deleted. Web-push failure does not stop phone pushes. Set `job_state.finished_at` (always).
 
 Run it: `npm run sync` (needs `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `D1_DATABASE_ID`), or `npm run sync -- --local-auto` against `wrangler dev`'s local D1, `--local <file>`, `--watch <s>`, `--data-dir <dir>`. A run takes 3–6 s, mostly downloading and parsing.
 
