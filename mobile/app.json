@@ -17,7 +17,8 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "dev.kv404.aayam"
+      "package": "dev.kv404.aayam",
+      "versionCode": 4
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -46,7 +47,11 @@
       [
         "react-native-android-widget",
         {
-          "fonts": ["./assets/fonts/Satoshi-Regular.ttf", "./assets/fonts/Satoshi-Medium.ttf", "./assets/fonts/Satoshi-Bold.ttf"],
+          "fonts": [
+            "./assets/fonts/Satoshi-Regular.ttf",
+            "./assets/fonts/Satoshi-Medium.ttf",
+            "./assets/fonts/Satoshi-Bold.ttf"
+          ],
           "widgets": [
             {
               "name": "NextClass",

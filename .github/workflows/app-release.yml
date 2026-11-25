@@ -1,0 +1,113 @@
+name: App release
+
+# Builds the Android APK on GitHub (no Expo build service) and publishes it as a GitHub release.
+# Run it by pushing a tag app-v<version> that matches expo.version in mobile/app.json.
+# Needs repo secrets ANDROID_KEYSTORE_BASE64 (PKCS12, alias "aayam") and ANDROID_KEYSTORE_PASSWORD.
+
+on:
+  push:
+    tags: ["app-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. app-v1.2.0"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: app-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Version matches tag
+        id: version
+        run: |
+          VERSION=$(node -p "require('./mobile/app.json').expo.version")
+          if [ "app-v$VERSION" != "$TAG" ]; then
+            echo "Tag $TAG does not match mobile/app.json version $VERSION" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install
+        run: |
+          npm ci
+          npm ci --prefix mobile
+
+      - name: Typecheck app
+        working-directory: mobile
+        run: npx tsc --noEmit
+
+      - name: Generate Android project
+        working-directory: mobile
+        run: npx expo prebuild --platform android --no-install --clean
+
+      - name: Build release APK
+        working-directory: mobile/android
+        env:
+          NODE_ENV: production
+        run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
+
+      - name: Sign APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "Missing ANDROID_KEYSTORE_BASE64 or ANDROID_KEYSTORE_PASSWORD secret" >&2
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.p12"
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks "$RUNNER_TEMP/release.p12" --ks-type PKCS12 --ks-key-alias aayam \
+            --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEYSTORE_PASSWORD \
+            --out "aayam-$VERSION.apk" mobile/android/app/build/outputs/apk/release/app-release.apk
+          "$BUILD_TOOLS/apksigner" verify --print-certs "aayam-$VERSION.apk"
+          rm -f "$RUNNER_TEMP/release.p12"
+          sha256sum "aayam-$VERSION.apk" | tee "aayam-$VERSION.apk.sha256"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          NOTES="mobile/release-notes/$VERSION.md"
+          {
+            if [ -f "$NOTES" ]; then cat "$NOTES"; else echo "Aayam app $VERSION for Android."; fi
+            echo
+            echo "SHA-256: \`$(cut -d' ' -f1 "aayam-$VERSION.apk.sha256")\`"
+          } > "$RUNNER_TEMP/notes.md"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "aayam-$VERSION.apk" --clobber
+            gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md" --prerelease=false --latest
+          else
+            gh release create "$TAG" "aayam-$VERSION.apk" --title "Aayam app $VERSION (Android)" \
+              --notes-file "$RUNNER_TEMP/notes.md" --verify-tag --latest
+          fi
