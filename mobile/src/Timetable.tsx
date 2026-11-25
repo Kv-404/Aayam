@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
+import { Platform, Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Bell, CalendarPlus, ChevronDown, ChevronLeft, ChevronRight, GraduationCap, Search, Settings, X } from "lucide-react-native";
 import * as WebBrowser from "expo-web-browser";
@@ -17,6 +17,9 @@ import { DayCard, WeekRow, dayLong, dayMonth, dayShort, isOff, range, type CardL
 import { CalendarSheet, SearchPanel, SettingsSheet } from "./panels";
 import * as Notifications from "expo-notifications";
 import { disableNotifications, enableNotifications, readNotifyOn, registerPush, scheduleReminders } from "./notify";
+
+// expo-notifications has no last-tap API on web; the hook throws there.
+const useLastTap = Platform.OS === "web" ? () => null : Notifications.useLastNotificationResponse;
 
 type Tab = "day" | "week" | "updates";
 type FacultyLens = "mine" | "cohorts" | "all";
@@ -70,7 +73,7 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
     setHintGone(true);
     void AsyncStorage.setItem("timetable-notify-hint", "1").catch(() => undefined);
   };
-  const lastTap = Notifications.useLastNotificationResponse();
+  const lastTap = useLastTap();
   useEffect(() => {
     if (!lastTap) return;
     const tapId = `${lastTap.notification.request.identifier}:${lastTap.notification.date}`;
