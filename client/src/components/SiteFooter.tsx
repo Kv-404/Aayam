@@ -1,5 +1,6 @@
 import type { MouseEvent } from "react";
 import { DatabaseStatus } from "@/components/DatabaseStatus";
+import { ANDROID_APP_URL } from "@/lib/appPrompt";
 
 function openPage(event: MouseEvent<HTMLAnchorElement>, path: string) {
   event.preventDefault();
@@ -28,7 +29,10 @@ export function SiteFooter({ status = true, credits = true, className = "" }: { 
           ) : null}
         </div>
       ) : null}
-      <nav aria-label="Legal" className="flex items-center gap-3">
+      <nav aria-label="Links" className="flex items-center gap-3">
+        <a href={ANDROID_APP_URL} target="_blank" rel="noopener noreferrer" className={`font-medium text-foreground ${link}`}>
+          Android app
+        </a>
         <a href="/terms" onClick={(event) => openPage(event, "/terms")} className={link}>
           Terms
         </a>

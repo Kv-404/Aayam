@@ -14,7 +14,7 @@ export function googleCalendarUrl(lecture: PublicLecture, timeZone: string) {
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
-export function calendarFile(lectures: PublicLecture[], timeZone: string, calendarName = "Timetable", options?: { includeCohort?: boolean }) {
+export function calendarFile(lectures: PublicLecture[], timeZone: string, calendarName = "Timetable", options?: { includeCohort?: boolean; stamp?: Date }) {
   const events = collapseFullOffDays(lectures).filter((lecture) => lecture.date && lecture.kind !== "break");
   const lines = [
     "BEGIN:VCALENDAR",
@@ -27,7 +27,9 @@ export function calendarFile(lectures: PublicLecture[], timeZone: string, calend
     "REFRESH-INTERVAL;VALUE=DURATION:PT1H",
     "X-PUBLISHED-TTL:PT1H",
   ];
-  const stamp = formatUtc(new Date());
+  // DTSTAMP must not follow the wall clock: the job re-renders this feed every run and only writes it when the text changes.
+  const firstDate = events.map((lecture) => lecture.date!).sort()[0];
+  const stamp = formatUtc(options?.stamp ?? new Date(firstDate ? `${firstDate}T00:00:00Z` : 0));
   for (const lecture of events) {
     lines.push(
       "BEGIN:VEVENT",
