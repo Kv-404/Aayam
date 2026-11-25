@@ -2,7 +2,7 @@
   "expo": {
     "name": "Aayam",
     "slug": "aayam",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -42,14 +42,45 @@
           "color": "#0a0b0e",
           "defaultChannel": "changes"
         }
+      ],
+      [
+        "react-native-android-widget",
+        {
+          "fonts": ["./assets/fonts/Satoshi-Regular.ttf", "./assets/fonts/Satoshi-Medium.ttf", "./assets/fonts/Satoshi-Bold.ttf"],
+          "widgets": [
+            {
+              "name": "NextClass",
+              "label": "Next class",
+              "description": "The class on now, or your next one today",
+              "minWidth": "110dp",
+              "minHeight": "110dp",
+              "targetCellWidth": 2,
+              "targetCellHeight": 2,
+              "resizeMode": "horizontal|vertical",
+              "updatePeriodMillis": 1800000
+            },
+            {
+              "name": "Today",
+              "label": "Today",
+              "description": "All your classes today",
+              "minWidth": "250dp",
+              "minHeight": "180dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 3,
+              "resizeMode": "horizontal|vertical",
+              "updatePeriodMillis": 1800000
+            }
+          ]
+        }
       ]
     ],
     "backgroundColor": "#0a0b0e",
     "scheme": "aayam",
     "extra": {
       "eas": {
-        "projectId": "d97a0b21-4449-48cb-8957-ec8e28865f58"
+        "projectId": "12427581-98d6-4760-8d57-30bcb382b7c1"
       }
-    }
+    },
+    "owner": "kv404"
   }
 }

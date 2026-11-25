@@ -46,7 +46,12 @@ export async function fetchBootstrap(who: Who | null): Promise<BootstrapResponse
     throw new Error("You are offline, and there is no saved timetable yet.");
   }
   if (res.status === 304 && cached) return cached.body;
-  if (!res.ok) throw new Error(`Timetable is not available (${res.status}).`);
+  if (!res.ok) {
+    // Server trouble (or a captive portal): show the saved copy like offline, rather than nothing.
+    const saved = res.status >= 500 ? (cached?.key === key ? cached.body : await readSaved(key)) : null;
+    if (saved) return { ...saved, sync: { ...saved.sync, refreshing: false, lastError: `Timetable is not available (${res.status}).` } };
+    throw new Error(`Timetable is not available (${res.status}).`);
+  }
   const body = (await res.json()) as BootstrapResponse;
   etag = res.headers.get("ETag");
   cached = { key, body };
@@ -62,6 +67,12 @@ async function readSaved(key: string) {
   } catch {
     return null;
   }
+}
+
+/** The last timetable saved on the phone for this person, or null. Home-screen widgets read it. */
+export function readSavedBootstrap(who: Who | null) {
+  const key = scopeParams(who);
+  return cached?.key === key ? Promise.resolve(cached.body) : readSaved(key);
 }
 
 /** POST /api/sync: asks the job to re-read the sheet. Returns the current timetable with refreshing on. */

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { ActivityIndicator, ScrollView, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import * as WebBrowser from "expo-web-browser";
 import { cohortLabel, cohortPrograms, cohortYears, cohortsInYear, type CohortChoice } from "@shared/cohort.ts";
 import { signInFaculty } from "./api";
 import type { FacultyPick, StudentPick, Who } from "./prefs";
@@ -10,11 +11,21 @@ import { BackLink, ChoiceRow, LookControls, PrimaryButton, T } from "./ui";
 // Copy and labels match client/src/components/HomePage.tsx.
 const programLabel = (course: string) => (course.trim().toLowerCase() === "btech" ? "B.Tech" : course);
 const batchLabel = (batch: string) => batch.replace("-", "–");
+const EXAM_URL = "https://exam.somyacodes.in/";
 
 type Step = "role" | "program" | "batch" | "cohort" | "faculty" | "theme";
 
 /** Who are you? → (student) course, batch, cohort | (faculty) Google sign-in → theme. */
-export function Setup({ choices, onDone }: { choices: CohortChoice[]; onDone: (who: Who, token?: string) => void }) {
+export function Setup({
+  choices,
+  onDone,
+  resume,
+}: {
+  choices: CohortChoice[];
+  onDone: (who: Who, token?: string) => void;
+  /** Opened from the logo with a saved timetable: "Continue to …" goes back to it (site's home page). */
+  resume?: { label: string; onPress: () => void };
+}) {
   const { theme } = useLook();
   const [step, setStep] = useState<Step>("role");
   const [program, setProgram] = useState("");
@@ -73,16 +84,26 @@ export function Setup({ choices, onDone }: { choices: CohortChoice[]; onDone: (w
   return (
     <View style={{ flex: 1 }}>
       <View style={styles.top}>
-        <Logo height={30} color={theme.fg} />
+        <Logo height={22} color={theme.fg} />
       </View>
-      <ScrollView contentContainerStyle={[styles.body, step === "theme" && { paddingTop: 32 }]}>
-        <T style={{ color: theme.fg, fontSize: 40, letterSpacing: -1 }}>{heading}</T>
+      <ScrollView contentContainerStyle={[styles.body, step === "theme" && { paddingTop: 24, justifyContent: "flex-start" }]}>
+        <T w="medium" style={{ color: theme.fg, fontSize: 36, letterSpacing: -0.9 }}>
+          {heading}
+        </T>
         {note ? <T style={{ color: theme.mutedFg, fontSize: 14, marginTop: 6, lineHeight: 20 }}>{note}</T> : null}
         <View style={styles.list}>
           {step === "role" ? (
             <>
               <ChoiceRow theme={theme} label="Student" onPress={() => setStep("program")} />
               <ChoiceRow theme={theme} label="Faculty" onPress={() => setStep("faculty")} />
+              {resume ? (
+                <Pressable onPress={resume.onPress} hitSlop={6} style={{ alignSelf: "flex-start", marginTop: 4 }}>
+                  <T style={{ color: theme.mutedFg, fontSize: 14 }}>Continue to {resume.label}</T>
+                </Pressable>
+              ) : null}
+              <Pressable onPress={() => void WebBrowser.openBrowserAsync(EXAM_URL)} hitSlop={6} style={{ alignSelf: "flex-start", marginTop: 20 }}>
+                <T style={{ color: theme.mutedFg, fontSize: 14 }}>Exam schedule</T>
+              </Pressable>
             </>
           ) : null}
           {step === "program"
@@ -132,9 +153,9 @@ export function Setup({ choices, onDone }: { choices: CohortChoice[]; onDone: (w
 }
 
 const styles = StyleSheet.create({
-  top: { paddingHorizontal: 24, paddingTop: 24 },
-  body: { paddingHorizontal: 24, paddingTop: 120, paddingBottom: 32 },
-  list: { marginTop: 28, gap: 12 },
+  top: { paddingHorizontal: 20, paddingTop: 14 },
+  body: { flexGrow: 1, justifyContent: "center", paddingHorizontal: 24, paddingTop: 48, paddingBottom: 32 },
+  list: { marginTop: 32, gap: 12 },
   foot: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 24, paddingBottom: 16, paddingTop: 8 },
   busy: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 18 },
   error: { borderWidth: 1, borderRadius: 10, padding: 12 },

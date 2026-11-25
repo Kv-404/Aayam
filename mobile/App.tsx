@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, AppState, BackHandler, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { useFonts } from "expo-font";
 import type { BootstrapResponse } from "@shared/types.ts";
+import { cohortLabel } from "@shared/cohort.ts";
 import { facultyMe, fetchBootstrap, requestSync } from "./src/api";
 import { clearWho, defaultLook, readLook, readSession, readWho, saveFaculty, saveLook, saveStudent, type Look, type Who } from "./src/prefs";
 import { Setup } from "./src/Setup";
 import { Timetable } from "./src/Timetable";
 import { buildTheme, fonts, LookContext } from "./src/theme";
 import { unregisterPush } from "./src/notify";
+import { checkForAppUpdate } from "./src/update";
 import * as Notifications from "expo-notifications";
 
 // Same cadence as the site: about every 5 min while open, nothing in the background.
@@ -42,16 +44,20 @@ export default function App() {
     try {
       setError(null);
       const body = sync ? await requestSync(scope) : await fetchBootstrap(scope);
+      // Signed out or picked another cohort while this was loading: drop the old scope's answer.
+      if (scope !== whoRef.current) return;
       setData(body);
       // The job is re-reading the sheet: ask again shortly, like the site's 4 s follow-up.
       if (followUp.current) clearTimeout(followUp.current);
       if (body.sync.refreshing) followUp.current = setTimeout(() => void load(whoRef.current), 4000);
     } catch (err) {
+      if (scope !== whoRef.current) return;
       setError(err instanceof Error ? err.message : "Could not load the timetable.");
     }
   }, []);
 
   useEffect(() => {
+    void checkForAppUpdate();
     void (async () => {
       setLookState(await readLook());
       let saved = await readWho();
@@ -83,12 +89,14 @@ export default function App() {
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "active") {
         void load(whoRef.current);
+        void checkForAppUpdate();
         start();
       } else stop();
     });
     return () => {
       stop();
       sub.remove();
+      if (followUp.current) clearTimeout(followUp.current);
     };
   }, [load]);
 
@@ -97,9 +105,23 @@ export default function App() {
     else if (token) await saveFaculty(next.faculty, token);
     whoRef.current = next;
     setWho(next);
+    setHome(false);
     setData(null);
     void load(next);
   };
+
+  // The logo opens the "I am" start screen, like the site's `onReset`: nothing saved is cleared,
+  // and "Continue to …" (or Android back) returns to the saved timetable.
+  const [home, setHome] = useState(false);
+  useEffect(() => {
+    if (!home) return;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (!whoRef.current) return false;
+      setHome(false);
+      return true;
+    });
+    return () => sub.remove();
+  }, [home]);
 
   const logout = async () => {
     // The phone stops getting this person's alerts. The on/off choice stays for the next sign-in.
@@ -108,6 +130,7 @@ export default function App() {
     await clearWho();
     whoRef.current = null;
     setWho(null);
+    setHome(false);
     setData(null);
     void load(null);
   };
@@ -136,15 +159,18 @@ export default function App() {
     );
   } else if (!who) {
     body = <Setup choices={data.choices ?? []} onDone={(next, token) => void finishSetup(next, token)} />;
+  } else if (home) {
+    const resume = who.role === "student" ? cohortLabel(who.student.division) : who.faculty.faculty;
+    body = <Setup choices={data.choices ?? []} resume={{ label: resume, onPress: () => setHome(false) }} onDone={(next, token) => void finishSetup(next, token)} />;
   } else {
-    body = <Timetable data={data} who={who} refreshing={refreshing} onRefresh={() => void refresh()} onLogout={() => void logout()} />;
+    body = <Timetable data={data} who={who} refreshing={refreshing} onRefresh={() => void refresh()} onLogout={() => void logout()} onHome={() => setHome(true)} />;
   }
 
   return (
     <SafeAreaProvider>
       <LookContext.Provider value={{ theme, setLook }}>
         <StatusBar style={theme.isDark ? "light" : "dark"} />
-        {data && who && fontsReady ? body : <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>{body}</SafeAreaView>}
+        {data && who && fontsReady && !home ? body : <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>{body}</SafeAreaView>}
       </LookContext.Provider>
     </SafeAreaProvider>
   );
