@@ -1,5 +1,6 @@
 import { Linking, Pressable, StyleSheet, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
+import { Video } from "lucide-react-native";
 import type { PublicLecture } from "@shared/types.ts";
 import { cohortLabel } from "@shared/cohort.ts";
 import { compactRoom, formatCompactRange, meetHref } from "@web/time.ts";
@@ -22,30 +23,35 @@ function personLine(lecture: PublicLecture, lens: CardLens) {
   return [cohort, lecture.faculty].filter(Boolean).join(" · ");
 }
 
-/** Room text, or a Meet button that opens or copies the call (the site's `timetable-meet` choice). */
+/** Room text, or a solid "Google Meet" pill that opens or copies the call (site's `.class-meet`, `timetable-meet`). */
 export function Room({ room, theme, color, bg, bold, onNotice }: { room: string; theme: Theme; color: string; bg?: string; bold?: boolean; onNotice: (text: string) => void }) {
   const meet = meetHref(room);
-  const text = compactRoom(room);
-  const body = (
+  if (meet) {
+    return (
+      <Pressable
+        hitSlop={6}
+        accessibilityLabel={theme.look.meet === "copy" ? "Copy Google Meet link" : "Open Google Meet"}
+        onPress={async () => {
+          if (theme.look.meet === "copy") {
+            await Clipboard.setStringAsync(meet);
+            onNotice("Meet link copied");
+          } else await Linking.openURL(meet);
+        }}
+        style={({ pressed }) => [styles.meet, { backgroundColor: theme.fg, opacity: pressed ? 0.85 : 1 }]}
+      >
+        <Video size={12} color={theme.bg} strokeWidth={2} />
+        <T w="bold" style={{ color: theme.bg, fontSize: 12, letterSpacing: -0.2 }}>
+          Google Meet
+        </T>
+      </Pressable>
+    );
+  }
+  return (
     <View style={bg ? [styles.roomBadge, { backgroundColor: bg }] : undefined}>
       <T w={bold ? "bold" : "regular"} style={{ color, fontSize: 13, letterSpacing: bold ? -0.3 : 0, opacity: bold ? 1 : 0.85 }} lines={1}>
-        {text}
+        {compactRoom(room)}
       </T>
     </View>
-  );
-  if (!meet) return body;
-  return (
-    <Pressable
-      hitSlop={6}
-      onPress={async () => {
-        if (theme.look.meet === "copy") {
-          await Clipboard.setStringAsync(meet);
-          onNotice("Meet link copied");
-        } else await Linking.openURL(meet);
-      }}
-    >
-      {body}
-    </Pressable>
   );
 }
 
@@ -153,5 +159,6 @@ const styles = StyleSheet.create({
   timeCol: { width: 48, paddingTop: 6 },
   weekCard: { flex: 1, minWidth: 0, borderRadius: 10, paddingVertical: 8, paddingRight: 10, paddingLeft: 12, overflow: "hidden", gap: 2 },
   weekFoot: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 4 },
+  meet: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
   roomBadge: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 1 },
 });

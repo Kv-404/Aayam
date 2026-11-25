@@ -2,7 +2,7 @@
   "expo": {
     "name": "Aayam",
     "slug": "aayam",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -33,6 +33,14 @@
           "imageWidth": 160,
           "resizeMode": "contain",
           "backgroundColor": "#0a0b0e"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#0a0b0e",
+          "defaultChannel": "changes"
         }
       ]
     ],

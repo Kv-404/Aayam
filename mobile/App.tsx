@@ -9,6 +9,8 @@ import { clearWho, defaultLook, readLook, readSession, readWho, saveFaculty, sav
 import { Setup } from "./src/Setup";
 import { Timetable } from "./src/Timetable";
 import { buildTheme, fonts, LookContext } from "./src/theme";
+import { unregisterPush } from "./src/notify";
+import * as Notifications from "expo-notifications";
 
 // Same cadence as the site: about every 5 min while open, nothing in the background.
 const POLL_MS = 5 * 60 * 1000;
@@ -100,6 +102,9 @@ export default function App() {
   };
 
   const logout = async () => {
+    // The phone stops getting this person's alerts. The on/off choice stays for the next sign-in.
+    await unregisterPush();
+    await Notifications.cancelAllScheduledNotificationsAsync().catch(() => undefined);
     await clearWho();
     whoRef.current = null;
     setWho(null);

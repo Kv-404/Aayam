@@ -28,6 +28,10 @@ export interface PushResult {
   notices: number;
   delivered: number;
   removed: number;
+  /** Notices claimed this run (pushed_at set), for the phone app sender. */
+  claimed: Array<{ id: string; title: string; body: string; course: string | null; batch: string | null }>;
+  /** Web push failed; the notices are still claimed and still go to phones. */
+  error?: string;
 }
 
 /** The VAPID pair in `push_vapid`. Generated and stored on first use; a race keeps the first stored pair. */
@@ -51,7 +55,7 @@ export async function sendPendingPushes(sql: SqlDb, now = new Date()): Promise<P
   const pending = await sql.all<PendingNotice>(
     "SELECT id, title, body, course, batch, created_at, updated_at, expires_at FROM student_notices WHERE pushed_at IS NULL ORDER BY created_at",
   );
-  if (pending.length === 0) return { notices: 0, delivered: 0, removed: 0 };
+  if (pending.length === 0) return { notices: 0, delivered: 0, removed: 0, claimed: [] };
   await sql.run([
     {
       sql: "UPDATE student_notices SET pushed_at = ? WHERE pushed_at IS NULL AND id IN (SELECT value FROM json_each(?))",
@@ -65,8 +69,17 @@ export async function sendPendingPushes(sql: SqlDb, now = new Date()): Promise<P
     const saved = Date.parse(notice.updated_at ?? notice.created_at);
     return !Number.isFinite(saved) || now.getTime() - saved <= PUSH_WINDOW_MS;
   });
-  if (fresh.length === 0) return { notices: 0, delivered: 0, removed: 0 };
+  if (fresh.length === 0) return { notices: 0, delivered: 0, removed: 0, claimed: [] };
+  const claimed = fresh.map(({ id, title, body, course, batch }) => ({ id, title, body, course, batch }));
+  try {
+    return { ...(await sendWebPushes(sql, fresh)), claimed };
+  } catch (error) {
+    // Web push broke (keys, network): the app sender still gets the claimed notices.
+    return { notices: fresh.length, delivered: 0, removed: 0, claimed, error: error instanceof Error ? error.message : String(error) };
+  }
+}
 
+async function sendWebPushes(sql: SqlDb, fresh: PendingNotice[]): Promise<Omit<PushResult, "claimed" | "error">> {
   const pair = await vapidPair(sql);
   const webpush = await import("web-push");
   webpush.setVapidDetails("https://aayam.kv404.dev", pair.publicKey, pair.privateKey);
