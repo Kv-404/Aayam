@@ -46,6 +46,7 @@ The header cohort menu for students lists cohorts restricted to their authentica
 | `timetable-notify` | `"1"` after opt-in. Removed when the settings switch turns alerts off |
 | `timetable-notify-hint` | `"1"` after the phone hint is closed or used |
 | `timetable-exam-notice` | `"1"` after the AT/KT exam banner is closed. Reset to `"0"` once `examMode` is off, so the banner returns next exam time. The banner shows only while `examMode` is on; the Exam button is red then and plain otherwise |
+| `timetable-app-prompt` | Time (ms) until which the phone "Get the Aayam app" hint (`app-prompt`) stays hidden. Download or Dismiss sets it 14 days ahead. The hint shows only in an Android phone browser (not standalone, not a webview), after setup, ahead of `notify-hint`. Link: `ANDROID_APP_URL` in `client/src/lib/appPrompt.ts` (GitHub Releases); no iOS link yet |
 | `timetable-notified-ids` | JSON array of change ids already alerted |
 | `timetable-search-history` | JSON array, newest first, at most 8 searches |
 

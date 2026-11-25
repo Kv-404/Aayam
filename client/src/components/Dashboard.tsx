@@ -3,7 +3,8 @@ import { SiteFooter } from "@/components/SiteFooter";
 import { cohortChoices, cohortLabel, lectureInCohort, type CohortChoice } from "@shared/cohort";
 import { findCoordinator } from "@shared/coordinators";
 import { changeMatchesFaculty, listFacultyNames } from "@shared/faculty";
-import { Bell, CalendarPlus, Check, ChevronDown, Download, FileSpreadsheet, GraduationCap, LogOut, RefreshCw, Settings, X } from "lucide-react";
+import { Bell, CalendarPlus, Check, ChevronDown, Download, FileSpreadsheet, GraduationCap, LogOut, RefreshCw, Settings, Smartphone, X } from "lucide-react";
+import { ANDROID_APP_URL, canOfferAndroidApp } from "@/lib/appPrompt";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { FacultyScopeMenu } from "@/components/FacultyScopeMenu";
@@ -22,7 +23,7 @@ import { useLectureReminders } from "@/hooks/useLectureReminders";
 import { appleWeekCalendarUrl, calendarFeedUrl, googleWeekCalendarUrl, outlookWeekCalendarUrl } from "@/lib/calendar";
 import { lensFromScopeId, resolveFacultyView, signInFacultyLens } from "@/lib/facultyView";
 import { useAnyMenuOpen, useMenuBackdrop } from "@/lib/menuBackdrop";
-import { clearFacultyBrowse, clearStudentAuth, closeExamNotice, closeNotifyHint, reopenExamNotice, hasChosenRole, readCanSeeAllFaculty, readDeviceFacultySession, readExamNoticeClosed, readFacultyEmail, readFacultySession, readFacultyLens, readFacultyPreview, readNotifyHintClosed, readRole, readSetup, readStoredCohort, readStoredFaculty, readStudentBatch, saveCanSeeAllFaculty, saveCohort, saveFaculty, saveFacultyEmail, saveFacultyLens, saveFacultyPreview, saveSetup, themes, type FacultyLens, type MeetAction, type ThemeId, type ViewerRole } from "@/lib/prefs";
+import { clearFacultyBrowse, clearStudentAuth, closeExamNotice, closeNotifyHint, reopenExamNotice, hasChosenRole, readAppPromptSnoozed, readCanSeeAllFaculty, readDeviceFacultySession, readExamNoticeClosed, readFacultyEmail, readFacultySession, readFacultyLens, readFacultyPreview, readNotifyHintClosed, readRole, readSetup, readStoredCohort, readStoredFaculty, readStudentBatch, saveCanSeeAllFaculty, saveCohort, saveFaculty, saveFacultyEmail, saveFacultyLens, saveFacultyPreview, saveSetup, snoozeAppPrompt, themes, type FacultyLens, type MeetAction, type ThemeId, type ViewerRole } from "@/lib/prefs";
 import { ColorEditor } from "@/components/ColorEditor";
 import { ColorSwitch } from "@/components/ColorSwitch";
 import { formatClockTime, formatCompactRange, zonedNow } from "@/lib/time";
@@ -113,6 +114,7 @@ export function Dashboard({
   });
   const [notifyHintClosed, setNotifyHintClosed] = useState(readNotifyHintClosed);
   const [examNoticeClosed, setExamNoticeClosed] = useState(readExamNoticeClosed);
+  const [appPromptOpen, setAppPromptOpen] = useState(() => canOfferAndroidApp() && !readAppPromptSnoozed());
   const [fadeIn, setFadeIn] = useState(false);
   const menuOpen = useAnyMenuOpen();
   // Admin toggle at /admin, read live with the bootstrap (no extra request).
@@ -645,7 +647,13 @@ export function Dashboard({
     closeNotifyHint();
     setNotifyHintClosed(true);
   };
-  const showNotifyHint = !notifications.optedIn && !notifyHintClosed && !notice;
+  const snoozeAppOffer = () => {
+    snoozeAppPrompt();
+    setAppPromptOpen(false);
+  };
+  // One floating hint at a time, above the bottom bar: the app offer first, then the alerts hint.
+  const showAppPrompt = appPromptOpen && !notice;
+  const showNotifyHint = !notifications.optedIn && !notifyHintClosed && !notice && !showAppPrompt;
   const searchPlaceholder = role === "faculty" ? "Subject, cohort, or room" : "Subject, faculty, or room";
   const statusLine = (
     <HeaderStatus
@@ -919,6 +927,29 @@ export function Dashboard({
           <p className="min-w-0 flex-1 leading-snug">{notice}</p>
           <button type="button" className="shrink-0 text-xs text-muted-foreground hover:text-foreground" onClick={dismissNotice}>
             Close
+          </button>
+        </div>
+      )}
+      {showAppPrompt && (
+        <div
+          role="region"
+          aria-label="Get the Aayam app"
+          data-testid="app-prompt"
+          className={`menu-pop-up fixed inset-x-3 ${floatBottom} z-50 flex items-center gap-2 rounded-lg border border-border bg-background py-1 pr-1 pl-3 text-xs shadow-lg short:hidden sm:hidden`}
+        >
+          <Smartphone className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <p className="min-w-0 flex-1 truncate text-muted-foreground">Get the Aayam app</p>
+          <a
+            href={ANDROID_APP_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 rounded-md px-2 py-1 font-semibold text-foreground hover:bg-muted"
+            onClick={snoozeAppOffer}
+          >
+            Download
+          </a>
+          <button type="button" aria-label="Dismiss" className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground" onClick={snoozeAppOffer}>
+            <X className="size-3.5" aria-hidden="true" />
           </button>
         </div>
       )}
