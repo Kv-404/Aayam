@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
-import { FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, useWindowDimensions, View, type ScrollViewInstance } from "react-native";
+import { FlatList, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, useWindowDimensions, View, type ScrollViewInstance } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Bell, CalendarPlus, ChevronDown, ChevronLeft, ChevronRight, GraduationCap, Search, Settings, X } from "lucide-react-native";
 import * as WebBrowser from "expo-web-browser";
@@ -18,6 +18,9 @@ import { CalendarSheet, SearchPanel, SettingsSheet } from "./panels";
 import * as Notifications from "expo-notifications";
 import { disableNotifications, enableNotifications, readNotifyOn, registerPush, scheduleReminders } from "./notify";
 import { refreshWidgets } from "./widgets/handler";
+
+// expo-notifications has no last-tap API on web; the hook throws there.
+const useLastTap = Platform.OS === "web" ? () => null : Notifications.useLastNotificationResponse;
 
 type Tab = "day" | "week" | "updates";
 type FacultyLens = "mine" | "cohorts" | "all";
@@ -83,7 +86,7 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
     setHintGone(true);
     void AsyncStorage.setItem("timetable-notify-hint", "1").catch(() => undefined);
   };
-  const lastTap = Notifications.useLastNotificationResponse();
+  const lastTap = useLastTap();
   useEffect(() => {
     if (!lastTap) return;
     const tapId = `${lastTap.notification.request.identifier}:${lastTap.notification.date}`;
@@ -496,6 +499,18 @@ function DayPager({ days, day, onDay, width, renderDay }: { days: string[]; day:
     shown.current = index;
     list.current?.scrollToIndex({ index, animated: true });
   }, [day, days]);
+  // Viewability fires on web and native alike (momentum end does not fire on web). The callback must stay stable, so it reads refs.
+  const latest = useRef({ days, day, onDay });
+  latest.current = { days, day, onDay };
+  const viewability = useRef({ itemVisiblePercentThreshold: 60 }).current;
+  const onViewable = useRef(({ viewableItems }: { viewableItems: { index?: number | null }[] }) => {
+    const index = viewableItems[0]?.index;
+    if (index == null) return;
+    const { days: all, day: current, onDay: pick } = latest.current;
+    const date = all[index];
+    shown.current = index;
+    if (date && date !== current) pick(date);
+  }).current;
   return (
     <FlatList
       ref={list}
@@ -508,12 +523,8 @@ function DayPager({ days, day, onDay, width, renderDay }: { days: string[]; day:
       getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
       windowSize={3}
       extraData={renderDay}
-      onMomentumScrollEnd={(event) => {
-        const index = Math.round(event.nativeEvent.contentOffset.x / width);
-        const date = days[index];
-        shown.current = index;
-        if (date && date !== day) onDay(date);
-      }}
+      viewabilityConfig={viewability}
+      onViewableItemsChanged={onViewable}
       renderItem={({ item }) => <View style={{ width }}>{renderDay(item)}</View>}
     />
   );
