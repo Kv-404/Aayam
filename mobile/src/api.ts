@@ -69,6 +69,12 @@ async function readSaved(key: string) {
   }
 }
 
+/** The last timetable saved on the phone for this person, or null. Home-screen widgets read it. */
+export function readSavedBootstrap(who: Who | null) {
+  const key = scopeParams(who);
+  return cached?.key === key ? Promise.resolve(cached.body) : readSaved(key);
+}
+
 /** POST /api/sync: asks the job to re-read the sheet. Returns the current timetable with refreshing on. */
 export async function requestSync(who: Who | null) {
   await fetch(`${API_BASE}/api/sync`, { method: "POST" }).catch(() => undefined);

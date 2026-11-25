@@ -17,6 +17,7 @@ import { DayCard, WeekRow, dayLong, dayMonth, dayShort, isOff, range, type CardL
 import { CalendarSheet, SearchPanel, SettingsSheet } from "./panels";
 import * as Notifications from "expo-notifications";
 import { disableNotifications, enableNotifications, readNotifyOn, registerPush, scheduleReminders } from "./notify";
+import { refreshWidgets } from "./widgets/handler";
 
 // expo-notifications has no last-tap API on web; the hook throws there.
 const useLastTap = Platform.OS === "web" ? () => null : Notifications.useLastNotificationResponse;
@@ -137,6 +138,8 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
   useEffect(() => {
     if (notifyOn) void scheduleReminders(ownLectures, data.timezone, who.role === "faculty").catch(() => undefined);
   }, [notifyOn, ownLectures, data.timezone, who.role]);
+  // Android home-screen widgets redraw from every new timetable and look.
+  useEffect(() => void refreshWidgets(data, who, theme.look), [data, who, theme.look]);
 
   // The phone's own clock, ticking, like the site. `data.now` is frozen while the server answers 304 or the app is offline.
   const [clock, setClock] = useState(() => Date.now());
