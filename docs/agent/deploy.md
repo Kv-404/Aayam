@@ -102,7 +102,10 @@ Without the admin page: `npx wrangler d1 execute timetable --remote --command "U
 
 ## Phone app releases
 
-- Expo project `@kv404/aayam` (`mobile/app.json`: `owner`, `extra.eas.projectId`). The signing key is EAS-managed. 1.2.0 is the first build on this project, so 1.1.0 and older must be uninstalled before installing it.
-- Bump `expo.version` in `mobile/app.json`, then `cd mobile && npx eas-cli@latest build -p android --profile preview` (APK; `autoIncrement` bumps the build number).
-- Publish a full (not pre-) GitHub release tagged `app-v<version>` with the APK named `aayam-<version>.apk` and its SHA-256. The site's "Get the app" bar links to `/releases/latest`; installed apps (`mobile/src/update.ts`) find the newest `app-v*` release on open (at most every 6 h) and offer the APK ("Later" snoozes that version 3 days).
+The APK is built on GitHub Actions (`.github/workflows/app-release.yml`), not the Expo build service.
 
+- Bump `expo.version` and `expo.android.versionCode` (+1 each release) in `mobile/app.json`, and add `mobile/release-notes/<version>.md`.
+- Push a tag `app-v<version>` on the commit to release. The workflow checks the tag matches `app.json`, typechecks, runs `expo prebuild`, builds `assembleRelease` (arm64-v8a, armeabi-v7a), signs with `apksigner`, and publishes a full GitHub release with `aayam-<version>.apk` and its SHA-256. Re-running it for an existing tag replaces the APK.
+- Signing key: PKCS12, alias `aayam`, in repo secrets `ANDROID_KEYSTORE_BASE64` and `ANDROID_KEYSTORE_PASSWORD`. The owner keeps the only backup off-repo. Every later release must use the same key, or phones cannot update. 1.2.0 is the first release with it, so 1.1.0 and older must be uninstalled first.
+- The site's "Get the app" bar links to `/releases/latest`; installed apps (`mobile/src/update.ts`) find the newest `app-v*` release on open (at most every 6 h) and offer the APK ("Later" snoozes that version 3 days).
+- Push notifications still go through Expo's free push service, which needs `extra.eas.projectId` in `app.json`; no Expo account is needed to build.
