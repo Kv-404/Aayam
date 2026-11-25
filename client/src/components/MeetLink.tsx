@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Video } from "lucide-react";
 import type { MeetAction } from "@/lib/prefs";
 import { compactRoom, meetHref } from "@/lib/time";
 
@@ -41,8 +42,14 @@ function MeetControl({ href, action, variant }: { href: string; action: MeetActi
     const timer = window.setTimeout(() => setCopied(false), 1500);
     return () => window.clearTimeout(timer);
   }, [copied]);
-  const className = `${chip} cursor-pointer no-underline ${variant === "chip" ? "" : "text-[11px]"}`;
-  const label = copied ? "Copied" : "Meet";
+  // A Meet class is online: an icon and "Google Meet" so it never reads as a room number.
+  const className = `class-meet inline-flex shrink-0 cursor-pointer items-center gap-1 rounded px-1.5 py-px font-bold tracking-tight no-underline ${variant === "chip" ? "" : "text-[11px]"}`;
+  const label = (
+    <>
+      <Video className="size-3 shrink-0" aria-hidden="true" />
+      {copied ? "Copied" : "Google Meet"}
+    </>
+  );
   if (action === "copy") {
     return (
       <button
@@ -74,7 +81,7 @@ function MeetControl({ href, action, variant }: { href: string; action: MeetActi
       onClick={(event) => event.stopPropagation()}
       className={className}
     >
-      Meet
+      {label}
     </a>
   );
 }

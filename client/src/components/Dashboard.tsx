@@ -45,7 +45,8 @@ function sheetUrlFor(
     sheet.batch.trim().toLowerCase() === batch &&
     (!course || sheet.course.trim().toLowerCase() === course),
   );
-  return match?.spreadsheetUrl ?? fallback;
+  // Never send one batch to another batch's workbook.
+  return match?.spreadsheetUrl ?? "";
 }
 
 export function Dashboard({
@@ -734,16 +735,18 @@ export function Dashboard({
                   <GraduationCap className="size-4 shrink-0" aria-hidden="true" />
                   <span className="hidden xl:inline text-xs font-medium">Exam</span>
                 </a>
-                <a
-                  href={sheetUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label="Open the sheet"
-                  title="Open the sheet"
-                  className="hidden sm:inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground sm:size-9"
-                >
-                  <FileSpreadsheet className="size-4" aria-hidden="true" />
-                </a>
+                {sheetUrl && (
+                  <a
+                    href={sheetUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label="Open the sheet"
+                    title="Open the sheet"
+                    className="hidden sm:inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground sm:size-9"
+                  >
+                    <FileSpreadsheet className="size-4" aria-hidden="true" />
+                  </a>
+                )}
                 <button
                   type="button"
                   aria-label={pending ? "Refreshing" : "Refresh"}

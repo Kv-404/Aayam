@@ -541,7 +541,17 @@ td.cal-today {
   font-size: 12px;
 }
 
-.wk-slot .class-room {
+/* Google Meet pill: stays a solid pill in bold colours and on the live card, unlike the room chip. */
+.class-meet {
+  background: var(--foreground);
+  color: var(--background);
+}
+.class-meet:hover {
+  opacity: 0.85;
+}
+
+.wk-slot .class-room,
+.wk-slot .class-meet {
   font-size: 11px;
 }
 
