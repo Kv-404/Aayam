@@ -26,7 +26,7 @@ export type WidgetState =
 const isOff = (lecture: PublicLecture) => lecture.kind === "off" || lecture.subject.trim().toUpperCase() === "OFF";
 
 /** The person's own classes: a student's cohort, a teacher's own lectures (never All classes). */
-function ownLectures(data: BootstrapResponse, who: Who) {
+export function ownLectures(data: BootstrapResponse, who: Who) {
   if (who.role === "student") {
     const choice = data.choices?.find((item) => item.division === who.student.division && item.course === who.student.course && item.batch === who.student.batch);
     return data.lectures.filter((lecture) => lectureInCohort(lecture, choice ?? who.student));

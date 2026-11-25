@@ -80,7 +80,7 @@ Staff with full access see every cohort at once: a tab for each day, one column 
 
 ### Android app
 
-A native app (Expo, React Native) in `mobile/` shows the same timetable with the same themes and rules. It adds push alerts for changes and notices, and class reminders that arrive with the app closed. It also keeps the last timetable for when you are offline, and has two home-screen widgets: Next class and Today. Download the APK from [Releases](https://github.com/Kv-404/Aayam/releases).
+An Android app (Expo) in `mobile/` shows the site itself, so it always matches the web. It adds push alerts for changes and notices, and class reminders that arrive with the app closed. It also keeps the last timetable for when you are offline, and has two home-screen widgets: Next class and Today. Download the APK from [Releases](https://github.com/Kv-404/Aayam/releases).
 
 <details>
 <summary><b>Rules the sheet follows</b> (click)</summary>
@@ -160,7 +160,7 @@ shared/            types, scope keys, faculty name matching, calendar file
 migrations/        D1 schema, add-only
 docs/agent/        design notes: client, server, sheet, deploy
 docs/screenshots/  images used in this README
-mobile/            Android app (Expo): same /api, shared/ code, push and reminders
+mobile/            Android app (Expo): the site in a webview, plus push, reminders and widgets
 ```
 
 ## Security

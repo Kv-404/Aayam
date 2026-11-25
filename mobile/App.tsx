@@ -1,155 +1,148 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useRef, useState, type ComponentType, type RefAttributes } from "react";
+import { ActivityIndicator, AppState, BackHandler, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import { useFonts } from "expo-font";
-import type { BootstrapResponse } from "@shared/types.ts";
-import { facultyMe, fetchBootstrap, requestSync } from "./src/api";
-import { clearWho, defaultLook, readLook, readSession, readWho, saveFaculty, saveLook, saveStudent, type Look, type Who } from "./src/prefs";
-import { Setup } from "./src/Setup";
-import { Timetable } from "./src/Timetable";
-import { buildTheme, fonts, LookContext } from "./src/theme";
-import { unregisterPush } from "./src/notify";
-import * as Notifications from "expo-notifications";
+import { WebView as RNWebView, type WebViewMessageEvent, type WebViewNavigation, type WebViewProps } from "react-native-webview";
+import { API_BASE } from "./src/api";
+import { applyState, handleRequest, injectedBridge, refreshNative, replyScript } from "./src/bridge";
+import { readLook } from "./src/prefs";
+import { buildTheme } from "./src/theme";
 
-// Same cadence as the site: about every 5 min while open, nothing in the background.
-const POLL_MS = 5 * 60 * 1000;
+// The app shows the site itself, so every web deploy reaches the phone with no new build.
+// The phone adds what a page cannot: Google sign-in outside the webview, push alerts, reminders and widgets.
+const SITE = API_BASE;
+const SITE_HOST = new URL(SITE).host;
+
+// react-native-webview's types lose the ref under React 19's types; the component forwards it.
+type WebHandle = { injectJavaScript: (script: string) => void; goBack: () => void; reload: () => void };
+const WebView = RNWebView as unknown as ComponentType<WebViewProps & RefAttributes<WebHandle>>;
 
 export default function App() {
-  const [fontsReady] = useFonts({
-    [fonts.regular]: require("./assets/fonts/Satoshi-Regular.ttf"),
-    [fonts.medium]: require("./assets/fonts/Satoshi-Medium.ttf"),
-    [fonts.bold]: require("./assets/fonts/Satoshi-Bold.ttf"),
-  });
-  const [look, setLookState] = useState<Look>(defaultLook);
-  const [who, setWho] = useState<Who | null | undefined>(undefined);
-  const [data, setData] = useState<BootstrapResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const whoRef = useRef<Who | null>(null);
-  const followUp = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const web = useRef<WebHandle>(null);
+  const [colors, setColors] = useState({ bg: "#0a0b0e", fg: "#f5f5f5", dark: true });
+  const [failed, setFailed] = useState(false);
+  // No network: load the last copy Android kept. The page then shows its own saved timetable.
+  const [offline, setOffline] = useState(false);
+  const canGoBack = useRef(false);
 
-  const theme = useMemo(() => buildTheme(look), [look]);
-  const setLook = useCallback((next: Partial<Look>) => {
-    setLookState((prev) => {
-      const merged = { ...prev, ...next };
-      void saveLook(merged);
-      return merged;
+  useEffect(() => {
+    void readLook().then((look) => {
+      const theme = buildTheme(look);
+      setColors({ bg: theme.bg, fg: theme.fg, dark: theme.isDark });
     });
   }, []);
 
-  const load = useCallback(async (scope: Who | null, sync = false) => {
+  // Back on the phone: the page goes back first, then the app closes.
+  useEffect(() => {
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (!canGoBack.current) return false;
+      web.current?.goBack();
+      return true;
+    });
+    return () => sub.remove();
+  }, []);
+
+  // Coming back to the app re-plans reminders and redraws widgets from a fresh timetable.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state !== "active") return;
+      void refreshNative();
+      setOffline(false);
+    });
+    return () => sub.remove();
+  }, []);
+
+  const onMessage = useCallback((event: WebViewMessageEvent) => {
+    let message: { type?: string; id?: string; state?: Record<string, string | null> };
     try {
-      setError(null);
-      const body = sync ? await requestSync(scope) : await fetchBootstrap(scope);
-      // Signed out or picked another cohort while this was loading: drop the old scope's answer.
-      if (scope !== whoRef.current) return;
-      setData(body);
-      // The job is re-reading the sheet: ask again shortly, like the site's 4 s follow-up.
-      if (followUp.current) clearTimeout(followUp.current);
-      if (body.sync.refreshing) followUp.current = setTimeout(() => void load(whoRef.current), 4000);
-    } catch (err) {
-      if (scope !== whoRef.current) return;
-      setError(err instanceof Error ? err.message : "Could not load the timetable.");
+      message = JSON.parse(event.nativeEvent.data);
+    } catch {
+      return;
+    }
+    if (message.type === "state" && message.state) {
+      void applyState(message.state).then(() =>
+        readLook().then((look) => {
+          const theme = buildTheme(look);
+          setColors({ bg: theme.bg, fg: theme.fg, dark: theme.isDark });
+        }),
+      );
+      return;
+    }
+    if (message.id && (message.type === "signin" || message.type === "notify" || message.type === "notify-state")) {
+      void handleRequest(message as Parameters<typeof handleRequest>[0]).then((reply) => web.current?.injectJavaScript(replyScript(reply)));
     }
   }, []);
 
-  useEffect(() => {
-    void (async () => {
-      setLookState(await readLook());
-      let saved = await readWho();
-      if (saved?.role === "faculty") {
-        // A revoked or expired session sends the teacher back to sign-in. No network keeps them signed in.
-        const token = await readSession();
-        const fresh = token ? await facultyMe(token).catch(() => saved?.role === "faculty" ? saved.faculty : null) : null;
-        if (!fresh) {
-          await clearWho();
-          saved = null;
-        } else saved = { role: "faculty", faculty: fresh };
-      }
-      whoRef.current = saved;
-      setWho(saved);
-      void load(saved);
-    })();
-  }, [load]);
-
-  useEffect(() => {
-    let timer: ReturnType<typeof setInterval> | null = null;
-    const start = () => {
-      timer ??= setInterval(() => void load(whoRef.current), POLL_MS);
-    };
-    const stop = () => {
-      if (timer) clearInterval(timer);
-      timer = null;
-    };
-    start();
-    const sub = AppState.addEventListener("change", (state) => {
-      if (state === "active") {
-        void load(whoRef.current);
-        start();
-      } else stop();
-    });
-    return () => {
-      stop();
-      sub.remove();
-      if (followUp.current) clearTimeout(followUp.current);
-    };
-  }, [load]);
-
-  const finishSetup = async (next: Who, token?: string) => {
-    if (next.role === "student") await saveStudent(next.student);
-    else if (token) await saveFaculty(next.faculty, token);
-    whoRef.current = next;
-    setWho(next);
-    setData(null);
-    void load(next);
-  };
-
-  const logout = async () => {
-    // The phone stops getting this person's alerts. The on/off choice stays for the next sign-in.
-    await unregisterPush();
-    await Notifications.cancelAllScheduledNotificationsAsync().catch(() => undefined);
-    await clearWho();
-    whoRef.current = null;
-    setWho(null);
-    setData(null);
-    void load(null);
-  };
-
-  const refresh = async () => {
-    setRefreshing(true);
-    await load(whoRef.current, true);
-    setRefreshing(false);
-  };
-
-  let body;
-  if (error && !data) {
-    body = (
-      <View style={styles.center}>
-        <Text style={{ color: theme.danger, textAlign: "center", fontFamily: fonts.regular }}>{error}</Text>
-        <Pressable onPress={() => void load(whoRef.current)} style={{ marginTop: 12 }}>
-          <Text style={{ color: theme.fg, fontFamily: fonts.medium }}>Try again</Text>
-        </Pressable>
-      </View>
-    );
-  } else if (!data || who === undefined || !fontsReady) {
-    body = (
-      <View style={styles.center}>
-        <ActivityIndicator color={theme.mutedFg} />
-      </View>
-    );
-  } else if (!who) {
-    body = <Setup choices={data.choices ?? []} onDone={(next, token) => void finishSetup(next, token)} />;
-  } else {
-    body = <Timetable data={data} who={who} refreshing={refreshing} onRefresh={() => void refresh()} onLogout={() => void logout()} />;
-  }
+  // Only the site opens inside the app. Meet, the exam site, calendars and mail go to their own apps.
+  const onNavigate = useCallback((request: WebViewNavigation) => {
+    const url = request.url;
+    if (url.startsWith("about:") || url.startsWith("data:") || url.startsWith("blob:")) return true;
+    try {
+      if (new URL(url).host === SITE_HOST) return true;
+    } catch {
+      return false;
+    }
+    void Linking.openURL(url).catch(() => undefined);
+    return false;
+  }, []);
 
   return (
     <SafeAreaProvider>
-      <LookContext.Provider value={{ theme, setLook }}>
-        <StatusBar style={theme.isDark ? "light" : "dark"} />
-        {data && who && fontsReady ? body : <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>{body}</SafeAreaView>}
-      </LookContext.Provider>
+      <StatusBar style={colors.dark ? "light" : "dark"} />
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }} edges={["top", "bottom"]}>
+        {failed ? (
+          <View style={styles.center}>
+            <Text style={{ color: colors.fg, textAlign: "center", marginBottom: 12 }}>Could not reach Aayam. Check your connection.</Text>
+            <Pressable
+              onPress={() => {
+                setFailed(false);
+                setOffline(false);
+                web.current?.reload();
+              }}
+            >
+              <Text style={{ color: colors.fg, fontWeight: "600" }}>Try again</Text>
+            </Pressable>
+          </View>
+        ) : null}
+        <WebView
+          ref={web}
+          source={{ uri: `${SITE}/` }}
+          style={{ flex: 1, backgroundColor: colors.bg, display: failed ? ("none" as const) : ("flex" as const) }}
+          injectedJavaScriptBeforeContentLoaded={injectedBridge}
+          onMessage={onMessage}
+          onShouldStartLoadWithRequest={onNavigate}
+          onNavigationStateChange={(state) => {
+            canGoBack.current = state.canGoBack;
+          }}
+          cacheMode={offline ? "LOAD_CACHE_ONLY" : "LOAD_DEFAULT"}
+          onError={() => {
+            if (offline) setFailed(true);
+            else {
+              setOffline(true);
+              setTimeout(() => web.current?.reload(), 0);
+            }
+          }}
+          onHttpError={(event) => {
+            if (event.nativeEvent.statusCode >= 500 && !event.nativeEvent.url.includes("/api/")) setFailed(true);
+          }}
+          applicationNameForUserAgent="AayamApp/1.1"
+          setSupportMultipleWindows={false}
+          domStorageEnabled
+          javaScriptEnabled
+          sharedCookiesEnabled
+          allowsBackForwardNavigationGestures
+          pullToRefreshEnabled
+          overScrollMode="never"
+          startInLoadingState
+          renderLoading={() => (
+            <View style={[styles.center, StyleSheet.absoluteFill, { backgroundColor: colors.bg }]}>
+              <ActivityIndicator color={colors.fg} />
+            </View>
+          )}
+          onContentProcessDidTerminate={() => web.current?.reload()}
+          onRenderProcessGone={() => web.current?.reload()}
+        />
+      </SafeAreaView>
     </SafeAreaProvider>
   );
 }

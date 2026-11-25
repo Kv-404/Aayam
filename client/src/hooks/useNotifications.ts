@@ -2,6 +2,7 @@ import type { ChangeEvent } from "@shared/types";
 import { useEffect, useState } from "react";
 import { alertCopy, takeAlerts } from "@/lib/notifyChanges";
 import { readPushSynced, readStoredCohort, readStudentBatch, savePushSynced } from "@/lib/prefs";
+import { inNativeApp, nativeNotify } from "@/lib/nativeApp";
 
 const seenKey = "timetable-notified-ids";
 const optInKey = "timetable-notify";
@@ -48,6 +49,8 @@ function clearOptIn() {
 }
 
 function permissionNow(): NotificationPermission {
+  // The phone app asks the system itself; the page only knows whether alerts were turned on.
+  if (inNativeApp()) return readOptIn() ? "granted" : "default";
   if (typeof Notification === "undefined") return "denied";
   return Notification.permission;
 }
@@ -159,6 +162,13 @@ export function useChangeNotifications(changes: ChangeEvent[]) {
   async function enable() {
     writeOptIn();
     setOptedIn(true);
+    // In the phone app, alerts and reminders are the phone's own notifications.
+    if (inNativeApp()) {
+      const reply = await nativeNotify(true);
+      setPermission(reply.ok ? "granted" : "denied");
+      setNotice(reply.ok ? "Notifications are on. You'll be told when a class changes." : reply.message ?? "Allow notifications for Aayam in your phone settings.");
+      return;
+    }
     if (typeof Notification === "undefined") {
       setNotice("This browser has no system alerts. Updates will show on this page.");
       return;
@@ -187,13 +197,14 @@ export function useChangeNotifications(changes: ChangeEvent[]) {
   }
 
   function disable() {
+    if (inNativeApp()) void nativeNotify(false);
     clearOptIn();
     setOptedIn(false);
     setNotice(null);
   }
 
   return {
-    supported: typeof Notification !== "undefined",
+    supported: inNativeApp() || typeof Notification !== "undefined",
     permission,
     optedIn,
     notice,

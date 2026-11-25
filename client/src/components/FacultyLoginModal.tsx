@@ -2,6 +2,8 @@ import { coordinatorPreviews } from "@shared/coordinators";
 import { useEffect, useRef, useState } from "react";
 import { AlertCircle, Lock, X } from "lucide-react";
 import { fetchGoogleClientId, loadGoogleScript, loginWithGoogleCredential } from "@/lib/auth";
+import { saveFacultySession } from "@/lib/prefs";
+import { inNativeApp, nativeSignIn } from "@/lib/nativeApp";
 
 declare global {
   interface Window {
@@ -51,6 +53,9 @@ export function FacultyLoginModal({
       setLoading(false);
       return;
     }
+
+    // Google refuses sign-in inside an app webview; the phone app signs in through the browser instead.
+    if (inNativeApp()) return;
 
     loadGoogleScript();
     let checkInterval: number | undefined;
@@ -107,6 +112,20 @@ export function FacultyLoginModal({
     };
   }, [open, onClose, onSuccess]);
 
+  async function signInThroughApp() {
+    setLoading(true);
+    setError(null);
+    const reply = await nativeSignIn();
+    setLoading(false);
+    if (!reply.ok || !reply.token || !reply.faculty) {
+      if (reply.message) setError(reply.message);
+      return;
+    }
+    saveFacultySession(reply.token);
+    onSuccess(reply.faculty, reply.email ?? "", reply.canSeeAll);
+    onClose();
+  }
+
   if (!open) return null;
 
   return (
@@ -144,6 +163,14 @@ export function FacultyLoginModal({
                 <span className="size-4 animate-spin rounded-full border-2 border-foreground border-t-transparent" />
                 Verifying faculty authorization...
               </div>
+            ) : inNativeApp() ? (
+              <button
+                type="button"
+                onClick={() => void signInThroughApp()}
+                className="inline-flex h-10 w-[280px] items-center justify-center rounded-md border border-border bg-background text-sm font-medium text-foreground hover:bg-muted"
+              >
+                Sign in with Google
+              </button>
             ) : (
               <div ref={buttonContainerRef} className="flex justify-center w-full" />
             )}
