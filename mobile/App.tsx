@@ -7,6 +7,7 @@ import { API_BASE } from "./src/api";
 import { applyState, handleRequest, injectedBridge, refreshNative, replyScript } from "./src/bridge";
 import { readLook } from "./src/prefs";
 import { buildTheme } from "./src/theme";
+import { checkForAppUpdate } from "./src/update";
 
 // The app shows the site itself, so every web deploy reaches the phone with no new build.
 // The phone adds what a page cannot: Google sign-in outside the webview, push alerts, reminders and widgets.
@@ -26,6 +27,7 @@ export default function App() {
   const canGoBack = useRef(false);
 
   useEffect(() => {
+    void checkForAppUpdate();
     void readLook().then((look) => {
       const theme = buildTheme(look);
       setColors({ bg: theme.bg, fg: theme.fg, dark: theme.isDark });
@@ -47,6 +49,7 @@ export default function App() {
     const sub = AppState.addEventListener("change", (state) => {
       if (state !== "active") return;
       void refreshNative();
+      void checkForAppUpdate();
       setOffline(false);
     });
     return () => sub.remove();

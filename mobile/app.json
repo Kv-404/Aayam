@@ -2,7 +2,7 @@
   "expo": {
     "name": "Aayam",
     "slug": "aayam",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -46,7 +46,11 @@
       [
         "react-native-android-widget",
         {
-          "fonts": ["./assets/fonts/Satoshi-Regular.ttf", "./assets/fonts/Satoshi-Medium.ttf", "./assets/fonts/Satoshi-Bold.ttf"],
+          "fonts": [
+            "./assets/fonts/Satoshi-Regular.ttf",
+            "./assets/fonts/Satoshi-Medium.ttf",
+            "./assets/fonts/Satoshi-Bold.ttf"
+          ],
           "widgets": [
             {
               "name": "NextClass",
