@@ -32,6 +32,7 @@ const studentBatchKey = "timetable-student-batch";
 const notifyHintKey = "timetable-notify-hint";
 const examNoticeKey = "timetable-exam-notice";
 const pushSyncedKey = "timetable-push-synced";
+const appPromptKey = "timetable-app-prompt";
 
 export type MeetAction = "open" | "copy";
 
@@ -89,6 +90,16 @@ export function readExamNoticeClosed() {
 
 export function closeExamNotice() {
   storageSet(examNoticeKey, "1");
+}
+
+/** "Get the Aayam app" stays hidden until this time (ms since epoch), set by Dismiss or Download. */
+export function readAppPromptSnoozed(now = Date.now()) {
+  const until = Number(storageGet(appPromptKey));
+  return Number.isFinite(until) && until > now;
+}
+
+export function snoozeAppPrompt(days = 14, now = Date.now()) {
+  storageSet(appPromptKey, String(now + days * 24 * 60 * 60 * 1000));
 }
 
 /** Exam time ended: the banner shows again next exam time. */
