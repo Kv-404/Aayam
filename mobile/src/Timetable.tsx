@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
+import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { FlatList, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, useWindowDimensions, View, type ScrollViewInstance } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Bell, CalendarPlus, ChevronDown, ChevronLeft, ChevronRight, GraduationCap, Search, Settings, X } from "lucide-react-native";
 import * as WebBrowser from "expo-web-browser";
@@ -9,11 +9,11 @@ import { cohortLabel, lectureInCohort } from "@shared/cohort.ts";
 import { changeMatchesFaculty, lectureMatchesFaculty } from "@shared/faculty.ts";
 import { coordinatorChoices, findCoordinator } from "@shared/coordinators.ts";
 import { formatDetected, zonedNow } from "@web/time.ts";
-import type { Who } from "./prefs";
+import { readView, saveView, type Who } from "./prefs";
 import { tint, useLook, type Theme } from "./theme";
 import { Logo } from "./Logo";
-import { T } from "./ui";
-import { DayCard, WeekRow, dayLong, dayMonth, dayShort, isOff, range, type CardLens } from "./cards";
+import { Segment, T } from "./ui";
+import { DayCard, WeekCell, dayLong, dayMonth, dayShort, isOff, range, type CardLens } from "./cards";
 import { CalendarSheet, SearchPanel, SettingsSheet } from "./panels";
 import * as Notifications from "expo-notifications";
 import { disableNotifications, enableNotifications, readNotifyOn, registerPush, scheduleReminders } from "./notify";
@@ -25,6 +25,8 @@ const useLastTap = Platform.OS === "web" ? () => null : Notifications.useLastNot
 type Tab = "day" | "week" | "updates";
 type FacultyLens = "mine" | "cohorts" | "all";
 const lensLabel: Record<FacultyLens, string> = { mine: "My classes", cohorts: "My cohorts", all: "All classes" };
+// The site's Now tag (emerald-500).
+const LIVE_GREEN = "#10b981";
 const EXAM_URL = "https://exam.somyacodes.in/";
 const EXAM_KEY = "timetable-exam-notice";
 const NOTICE_KEY = "timetable-notice-ids";
@@ -33,10 +35,37 @@ const writeKey = (key: string, value: string) => AsyncStorage.setItem(key, value
 /** The alert tap already acted on, so a remount (sign out, sign in) does not jump tabs again. */
 let handledTap: string | null = null;
 
-export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data: BootstrapResponse; who: Who; refreshing: boolean; onRefresh: () => void; onLogout: () => void }) {
+export function Timetable({
+  data,
+  who,
+  refreshing,
+  onRefresh,
+  onLogout,
+  onHome,
+}: {
+  data: BootstrapResponse;
+  who: Who;
+  refreshing: boolean;
+  onRefresh: () => void;
+  onLogout: () => void;
+  /** The logo: back to the "I am" start screen, keeping the saved choices (site's `onReset`). */
+  onHome: () => void;
+}) {
   const { theme } = useLook();
   const insets = useSafeAreaInsets();
-  const [tab, setTab] = useState<Tab>("day");
+  const { width } = useWindowDimensions();
+  // A phone opens on Day, a teacher on Week (same as the site); the last Day/Week pick wins (`timetable-app-view`).
+  const [tab, setTabState] = useState<Tab>(who.role === "faculty" ? "week" : "day");
+  const tabPicked = useRef(false);
+  const setTab = (next: Tab) => {
+    tabPicked.current = true;
+    setTabState(next);
+  };
+  useEffect(() => {
+    void readView().then((saved) => {
+      if (saved && !tabPicked.current) setTabState(saved);
+    });
+  }, []);
   const [panel, setPanel] = useState<"none" | "search" | "calendar" | "settings" | "scope">("none");
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -155,6 +184,8 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
   useEffect(() => {
     if (days.length && !days.includes(day)) setDay(days.includes(today) ? today : days[0]!);
   }, [days, day, today]);
+  // The pager needs at least one page, even on a week with no classes.
+  const pagerDays = days.length ? days : [day];
 
   const stamp = (date: string | null, minutes: number) => `${date ?? ""}${String(minutes).padStart(4, "0")}`;
   const nowStamp = stamp(now.iso, now.minutes);
@@ -166,9 +197,14 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
   const subtitle = who.role === "student" ? `${who.student.course === "BTech" ? "B.Tech" : who.student.course} · ${who.student.batch.replace("-", "–")}` : faculty?.email ?? "";
   const calendarScope = faculty ? { faculty: faculty.faculty } : { division: who.role === "student" ? who.student.division : undefined };
 
-  const icon = (Icon: typeof Search, onPress: () => void, label: string) => (
-    <Pressable onPress={onPress} hitSlop={8} style={styles.icon} accessibilityLabel={label}>
-      <Icon size={19} color={theme.fg} strokeWidth={1.75} />
+  const icon = (Icon: typeof Search, onPress: () => void, label: string, active = false) => (
+    <Pressable
+      onPress={onPress}
+      hitSlop={4}
+      style={({ pressed }) => [styles.icon, (pressed || active) && { backgroundColor: theme.muted }]}
+      accessibilityLabel={label}
+    >
+      <Icon size={17} color={active ? theme.fg : theme.mutedFg} strokeWidth={1.75} />
     </Pressable>
   );
 
@@ -215,13 +251,32 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
       ? (data.sheets.find((sheet) => sheet.batch.trim().toLowerCase() === who.student.batch.trim().toLowerCase() && sheet.course.trim().toLowerCase() === who.student.course.trim().toLowerCase())?.spreadsheetUrl ?? "")
       : "";
 
+  const bottomPad = (notifyOn || hintGone ? 80 : 134) + insets.bottom;
+  const refresh = () => <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.mutedFg} />;
+  const syncError = data.sync.lastError ? <T style={{ color: theme.danger, fontSize: 13, paddingHorizontal: 12, marginTop: 12 }}>Showing the last good copy. {data.sync.lastError}</T> : null;
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
-      <View style={[styles.header, { paddingTop: insets.top + 18, borderColor: theme.border, backgroundColor: theme.bg }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 8, borderColor: theme.border, backgroundColor: theme.bg }]}>
         <View style={styles.headerRow}>
-          <Logo height={22} color={theme.fg} />
-          <Pressable onPress={() => setPanel(panel === "scope" ? "none" : "scope")} style={styles.cohortBtn} hitSlop={6}>
-            <T w="medium" style={{ color: theme.fg, fontSize: 15, flexShrink: 1 }} lines={1}>
+          <Pressable
+            onPress={() => {
+              setPanel("none");
+              onHome();
+            }}
+            hitSlop={6}
+            accessibilityRole="link"
+            accessibilityLabel="Aayam Home"
+            style={({ pressed }) => [styles.logo, pressed && { backgroundColor: theme.muted }]}
+          >
+            <Logo height={16} color={theme.fg} />
+          </Pressable>
+          <Pressable
+            onPress={() => setPanel(panel === "scope" ? "none" : "scope")}
+            style={({ pressed }) => [styles.cohortBtn, (pressed || panel === "scope") && { backgroundColor: theme.muted }]}
+            hitSlop={4}
+          >
+            <T w="medium" style={{ color: theme.fg, fontSize: 14, letterSpacing: -0.2, flexShrink: 1 }} lines={1}>
               {title}
             </T>
             <ChevronDown size={14} color={theme.mutedFg} />
@@ -229,29 +284,33 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
           <View style={{ flex: 1 }} />
           <Pressable
             onPress={openExams}
-            hitSlop={8}
+            hitSlop={4}
             accessibilityLabel="University exams"
-            style={[styles.icon, examMode && { backgroundColor: tint(theme.danger, 0.16), borderRadius: 8 }]}
+            style={({ pressed }) => [
+              styles.icon,
+              examMode ? { backgroundColor: tint(theme.danger, 0.16), borderWidth: 1, borderColor: tint(theme.danger, 0.4) } : pressed && { backgroundColor: theme.muted },
+            ]}
           >
-            <GraduationCap size={19} color={examMode ? theme.danger : theme.fg} strokeWidth={1.75} />
+            <GraduationCap size={17} color={examMode ? theme.danger : theme.fg} strokeWidth={1.75} />
           </Pressable>
           {icon(CalendarPlus, () => setPanel("calendar"), "Add week to calendar")}
-          {icon(Search, () => setPanel(panel === "search" ? "none" : "search"), "Search")}
+          {icon(Search, () => setPanel(panel === "search" ? "none" : "search"), "Search", panel === "search")}
           {icon(Settings, () => setPanel("settings"), "Settings")}
         </View>
         {panel === "scope" ? (
           <View style={[styles.menu, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <T style={{ color: theme.mutedFg, fontSize: 12 }}>{subtitle}</T>
             {lensOptions.length > 1 ? (
-              <View style={[styles.split, { backgroundColor: theme.muted }]}>
-                {lensOptions.map((value) => (
-                  <Pressable key={value} onPress={() => (setView(value), setPanel("none"))} style={[styles.splitItem, view === value && { backgroundColor: theme.fg }]}>
-                    <T w="medium" style={{ color: view === value ? theme.bg : theme.fg, fontSize: 13 }}>
-                      {lensLabel[value]}
-                    </T>
-                  </Pressable>
-                ))}
-              </View>
+              <Segment
+                label="Teacher view"
+                size="md"
+                value={view}
+                onChange={(value) => {
+                  setView(value);
+                  setPanel("none");
+                }}
+                items={lensOptions.map((value) => ({ value, label: lensLabel[value] }))}
+              />
             ) : null}
             <Pressable onPress={onLogout} style={{ paddingVertical: 6 }}>
               <T style={{ color: theme.fg, fontSize: 15 }}>{faculty ? "Sign out" : "Change cohort"}</T>
@@ -259,31 +318,27 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
           </View>
         ) : null}
         {panel === "search" ? null : tab === "day" ? (
-          <View style={[styles.segment, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            {days.map((date) => {
-              const active = date === day;
-              return (
-                <Pressable key={date} onPress={() => setDay(date)} style={[styles.segItem, active && { backgroundColor: theme.fg }]}>
-                  <T w={date === today ? "bold" : "medium"} style={{ color: active ? theme.bg : theme.mutedFg, fontSize: 13 }}>
-                    {dayShort(date)}
-                  </T>
-                  {date === today ? <View style={[styles.todayDot, { backgroundColor: active ? theme.bg : theme.fg }]} /> : null}
-                </Pressable>
-              );
-            })}
-          </View>
+          <Segment
+            label="Days"
+            value={day}
+            onChange={setDay}
+            items={pagerDays.map((date) => ({ value: date, label: dayShort(date), strong: date === today, dot: date === today }))}
+          />
         ) : next ? (
           <View style={[styles.nextPill, { borderColor: theme.border, backgroundColor: theme.card }]}>
-            <View style={[styles.nextTag, { backgroundColor: theme.muted }]}>
-              <T w="mono" style={{ color: theme.mutedFg, fontSize: 10, letterSpacing: 1 }}>
+            <View style={[styles.nextTag, { backgroundColor: isLive(next) ? tint(LIVE_GREEN, 0.15) : theme.muted }]}>
+              {isLive(next) ? <View style={[styles.liveDot, { backgroundColor: LIVE_GREEN }]} /> : null}
+              <T w={isLive(next) ? "bold" : "mono"} style={{ color: isLive(next) ? LIVE_GREEN : theme.mutedFg, fontSize: 10, letterSpacing: 1 }}>
                 {isLive(next) ? "NOW" : "NEXT"}
               </T>
             </View>
-            <T w="medium" style={{ color: theme.fg, fontSize: 13, flex: 1 }} lines={1}>
+            <T w="medium" style={{ color: theme.fg, fontSize: 12, flex: 1 }} lines={1}>
               {next.subject}
-              {faculty ? ` · ${cohortLabel(next.division)}` : ""}
             </T>
-            <T w="mono" style={{ color: theme.mutedFg, fontSize: 12 }}>
+            <T style={{ color: theme.mutedFg, fontSize: 11 }} lines={1}>
+              {faculty ? `${cohortLabel(next.division)} · ` : ""}
+            </T>
+            <T w="mono" style={{ color: theme.mutedFg, fontSize: 11 }}>
               {next.date === now.iso ? "" : `${dayShort(next.date ?? "")} `}
               {range(next)}
             </T>
@@ -321,26 +376,35 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
 
       {panel === "search" ? (
         <SearchPanel lectures={mine} lens={lens} onClose={() => setPanel("none")} onNotice={showNotice} />
+      ) : tab === "day" ? (
+        <DayPager
+          key={`${pagerDays.join(",")}:${width}`}
+          days={pagerDays}
+          day={day}
+          onDay={setDay}
+          width={width}
+          renderDay={(date) => (
+            <ScrollView contentContainerStyle={{ paddingBottom: bottomPad }} refreshControl={refresh()}>
+              <DayList
+                lectures={mine.filter((lecture) => lecture.date === date)}
+                date={date}
+                today={today}
+                theme={theme}
+                days={pagerDays}
+                onDay={setDay}
+                lens={lens}
+                isLive={isLive}
+                onNotice={showNotice}
+              />
+              {syncError}
+            </ScrollView>
+          )}
+        />
       ) : (
-        <ScrollView contentContainerStyle={{ paddingBottom: (notifyOn || hintGone ? 96 : 150) + insets.bottom }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.mutedFg} />}>
-          {tab === "day" ? (
-            <DayList
-              lectures={mine.filter((lecture) => lecture.date === day)}
-              date={day}
-              today={today}
-              theme={theme}
-              days={days}
-              onDay={setDay}
-              lens={lens}
-              isLive={isLive}
-              onNotice={showNotice}
-            />
-          ) : null}
-          {tab === "week"
-            ? days.map((date) => <WeekDay key={date} date={date} today={today} lectures={mine.filter((lecture) => lecture.date === date)} theme={theme} lens={lens} onNotice={showNotice} />)
-            : null}
+        <ScrollView contentContainerStyle={{ paddingBottom: bottomPad }} refreshControl={refresh()}>
+          {tab === "week" ? <WeekBoard days={days} today={today} lectures={mine} theme={theme} lens={lens} width={width} isLive={isLive} onNotice={showNotice} /> : null}
           {tab === "updates" ? <Updates changes={changes} theme={theme} timezone={data.timezone} /> : null}
-          {data.sync.lastError ? <T style={{ color: theme.danger, fontSize: 13, paddingHorizontal: 16, marginTop: 12 }}>Showing the last good copy. {data.sync.lastError}</T> : null}
+          {syncError}
         </ScrollView>
       )}
 
@@ -366,18 +430,21 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
       ) : null}
 
       <View style={[styles.bottom, { paddingBottom: insets.bottom + 8, backgroundColor: theme.bg, borderColor: theme.border }]}>
-        <View style={[styles.rubber, { backgroundColor: theme.muted }]}>
-          {(["day", "week", "updates"] as const).map((id) => {
-            const active = tab === id;
-            return (
-              <Pressable key={id} onPress={() => (setTab(id), setPanel("none"))} style={[styles.rubberItem, active && { backgroundColor: theme.fg }]}>
-                <T w="medium" style={{ color: active ? theme.bg : theme.mutedFg, fontSize: 14 }}>
-                  {id === "day" ? "Day" : id === "week" ? "Week" : "Updates"}
-                </T>
-              </Pressable>
-            );
-          })}
-        </View>
+        <Segment
+          label="Timetable views"
+          size="md"
+          value={tab}
+          onChange={(id) => {
+            setTab(id);
+            setPanel("none");
+            if (id !== "updates") void saveView(id);
+          }}
+          items={[
+            { value: "day", label: "Day" },
+            { value: "week", label: "Week" },
+            { value: "updates", label: "Updates" },
+          ]}
+        />
       </View>
 
       <SettingsSheet
@@ -421,8 +488,8 @@ function DayList({
   return (
     <View style={styles.page}>
       <View style={styles.dateRow}>
-        <T w="medium" style={{ color: theme.fg, fontSize: 17 }}>
-          {dayShort(date)}, {dayMonth(date)}
+        <T w="bold" style={{ color: date === today ? theme.fg : theme.mutedFg, fontSize: 14 }}>
+          {dayLong(date)}, {dayMonth(date)}
         </T>
         {date === today ? <TodayChip theme={theme} /> : null}
         <View style={{ flex: 1 }} />
@@ -439,8 +506,8 @@ function DayList({
           lecture.kind === "break" ? (
             <View key={lecture.id} style={styles.lunchRow}>
               <View style={[styles.rule, { backgroundColor: theme.border }]} />
-              <View style={[styles.lunchPill, { borderColor: theme.border }]}>
-                <T w="mono" style={{ color: theme.mutedFg, fontSize: 12 }}>
+              <View style={[styles.lunchPill, { borderColor: tint(theme.border, 0.4), backgroundColor: tint(theme.muted, 0.5) }]}>
+                <T w="mono" style={{ color: theme.mutedFg, fontSize: 11 }}>
                   {lecture.subject || "Lunch"} · {range(lecture)}
                 </T>
               </View>
@@ -455,25 +522,124 @@ function DayList({
   );
 }
 
-function WeekDay({ date, today, lectures, theme, lens, onNotice }: { date: string; today: string; lectures: PublicLecture[]; theme: Theme; lens: CardLens; onNotice: (text: string) => void }) {
-  const allOff = lectures.length > 0 && lectures.every(isOff);
+/** Day view pager: one page per day of the current week, swipe to move, snaps, opens on the picked day. */
+function DayPager({ days, day, onDay, width, renderDay }: { days: string[]; day: string; onDay: (date: string) => void; width: number; renderDay: (date: string) => ReactElement }) {
+  const list = useRef<FlatList<string>>(null);
+  const start = Math.max(0, days.indexOf(day));
+  const shown = useRef(start);
+  // While a tab or arrow scrolls the pager, pages passed on the way do not move the tabs.
+  const target = useRef<number | null>(null);
+  useEffect(() => {
+    const index = days.indexOf(day);
+    if (index < 0 || index === shown.current) return;
+    shown.current = index;
+    target.current = index;
+    list.current?.scrollToIndex({ index, animated: true });
+  }, [day, days]);
+  // Viewability fires on web and native alike (momentum end does not fire on web). The callback must stay stable, so it reads refs.
+  const latest = useRef({ days, day, onDay });
+  latest.current = { days, day, onDay };
+  const viewability = useRef({ itemVisiblePercentThreshold: 60 }).current;
+  const onViewable = useRef(({ viewableItems }: { viewableItems: { index?: number | null }[] }) => {
+    const index = viewableItems[0]?.index;
+    if (index == null) return;
+    if (target.current !== null) {
+      if (index !== target.current) return;
+      target.current = null;
+    }
+    const { days: all, day: current, onDay: pick } = latest.current;
+    const date = all[index];
+    shown.current = index;
+    if (date && date !== current) pick(date);
+  }).current;
   return (
-    <View style={[styles.page, { paddingTop: 24 }]}>
-      <View style={styles.weekHead}>
-        <T w="bold" style={{ color: allOff ? theme.danger : theme.fg, fontSize: 18 }}>
-          {dayShort(date)}
-        </T>
-        <T style={{ color: allOff ? theme.danger : theme.mutedFg, fontSize: 16 }}>{dayMonth(date)}</T>
-        {date === today ? <TodayChip theme={theme} /> : null}
-      </View>
-      {allOff ? (
-        <T w="medium" style={{ color: theme.danger, fontSize: 15, paddingVertical: 10 }}>
-          {dayLong(date)} Off
-        </T>
-      ) : (
-        lectures.map((lecture) => <WeekRow key={lecture.id} lecture={lecture} theme={theme} lens={lens} onNotice={onNotice} />)
-      )}
-    </View>
+    <FlatList
+      ref={list}
+      data={days}
+      keyExtractor={(date) => date}
+      horizontal
+      pagingEnabled
+      showsHorizontalScrollIndicator={false}
+      initialScrollIndex={start}
+      getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
+      windowSize={3}
+      extraData={renderDay}
+      viewabilityConfig={viewability}
+      onViewableItemsChanged={onViewable}
+      onScrollBeginDrag={() => {
+        target.current = null;
+      }}
+      renderItem={({ item }) => <View style={{ width }}>{renderDay(item)}</View>}
+    />
+  );
+}
+
+/** Week view: one narrow column per day, swipe sideways through the week, opens on today. */
+function WeekBoard({
+  days,
+  today,
+  lectures,
+  theme,
+  lens,
+  width,
+  isLive,
+  onNotice,
+}: {
+  days: string[];
+  today: string;
+  lectures: PublicLecture[];
+  theme: Theme;
+  lens: CardLens;
+  width: number;
+  isLive: (lecture: PublicLecture) => boolean;
+  onNotice: (text: string) => void;
+}) {
+  const gap = 8;
+  const pad = 12;
+  // About two and a third days on screen, so the next column peeks in.
+  const column = Math.max(140, Math.floor((width - pad * 2 - gap * 2) / 2.3));
+  const scroller = useRef<ScrollViewInstance>(null);
+  const placed = useRef(false);
+  if (!days.length) return <T style={{ color: theme.mutedFg, fontSize: 14, padding: 16, marginTop: 8 }}>No classes this week.</T>;
+  return (
+    <ScrollView
+      ref={scroller}
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      snapToInterval={column + gap}
+      decelerationRate="fast"
+      contentContainerStyle={{ paddingHorizontal: pad, paddingTop: 14, gap }}
+      onContentSizeChange={() => {
+        if (placed.current) return;
+        placed.current = true;
+        const index = days.indexOf(today);
+        if (index > 0) scroller.current?.scrollTo({ x: index * (column + gap), animated: false });
+      }}
+    >
+      {days.map((date) => {
+        const list = lectures.filter((lecture) => lecture.date === date);
+        const allOff = list.length > 0 && list.every(isOff);
+        const isToday = date === today;
+        return (
+          <View key={date} style={{ width: column }}>
+            <View style={[styles.colHead, { borderColor: isToday ? theme.fg : theme.border }]}>
+              <T w="bold" style={{ color: allOff ? theme.danger : theme.fg, fontSize: 14 }}>
+                {dayShort(date)}
+              </T>
+              <T style={{ color: allOff ? theme.danger : theme.mutedFg, fontSize: 12 }}>{dayMonth(date)}</T>
+              {isToday ? <View style={[styles.todayDot, { backgroundColor: theme.fg }]} /> : null}
+            </View>
+            {allOff ? (
+              <T w="medium" style={{ color: theme.danger, fontSize: 13, paddingVertical: 6 }}>
+                {dayLong(date)} Off
+              </T>
+            ) : (
+              list.map((lecture) => <WeekCell key={lecture.id} lecture={lecture} theme={theme} lens={lens} live={isLive(lecture)} onNotice={onNotice} />)
+            )}
+          </View>
+        );
+      })}
+    </ScrollView>
   );
 }
 
@@ -574,33 +740,36 @@ function TodayChip({ theme }: { theme: Theme }) {
 function ArrowBtn({ theme, disabled, onPress, icon }: { theme: Theme; disabled: boolean; onPress: () => void; icon: "left" | "right" }) {
   const Icon = icon === "left" ? ChevronLeft : ChevronRight;
   return (
-    <Pressable disabled={disabled} onPress={onPress} style={[styles.arrow, { borderColor: theme.border, opacity: disabled ? 0.35 : 1 }]}>
-      <Icon size={16} color={theme.fg} strokeWidth={1.75} />
+    <Pressable
+      disabled={disabled}
+      onPress={onPress}
+      accessibilityLabel={icon === "left" ? "Previous day" : "Next day"}
+      style={({ pressed }) => [styles.arrow, { borderColor: tint(theme.border, 0.4), backgroundColor: pressed ? theme.muted : tint(theme.muted, 0.3), opacity: disabled ? 0.35 : 1, transform: [{ scale: pressed ? 0.95 : 1 }] }]}
+    >
+      <Icon size={14} color={theme.mutedFg} strokeWidth={1.75} />
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  header: { paddingHorizontal: 16, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth, gap: 10 },
-  headerRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  cohortBtn: { flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 1 },
-  icon: { padding: 4 },
+  header: { paddingHorizontal: 12, paddingBottom: 8, borderBottomWidth: StyleSheet.hairlineWidth, gap: 8 },
+  headerRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  logo: { borderRadius: 8, padding: 2 },
+  cohortBtn: { flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 1, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 5 },
+  icon: { width: 32, height: 32, borderRadius: 6, alignItems: "center", justifyContent: "center" },
   menu: { borderWidth: 1, borderRadius: 12, padding: 12, gap: 8 },
-  split: { flexDirection: "row", borderRadius: 8, padding: 3 },
-  splitItem: { flex: 1, alignItems: "center", paddingVertical: 8, borderRadius: 6 },
-  segment: { flexDirection: "row", borderWidth: 1, borderRadius: 10, padding: 3 },
-  segItem: { flex: 1, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 4, paddingVertical: 6, borderRadius: 7 },
-  todayDot: { width: 4, height: 4, borderRadius: 2 },
-  nextPill: { flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 6 },
-  nextTag: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
-  page: { paddingHorizontal: 16 },
-  dateRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingTop: 16, paddingBottom: 10 },
-  arrow: { width: 34, height: 34, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  todayDot: { width: 5, height: 5, borderRadius: 3 },
+  nextPill: { flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 },
+  nextTag: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
+  liveDot: { width: 6, height: 6, borderRadius: 3 },
+  page: { paddingHorizontal: 12 },
+  dateRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingTop: 14, paddingBottom: 8 },
+  arrow: { width: 36, height: 36, borderRadius: 6, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  colHead: { flexDirection: "row", alignItems: "center", gap: 6, paddingBottom: 6, marginBottom: 8, borderBottomWidth: 2 },
   todayChip: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
-  lunchRow: { flexDirection: "row", alignItems: "center", gap: 8, marginVertical: 10 },
+  lunchRow: { flexDirection: "row", alignItems: "center", gap: 8, marginVertical: 6 },
   rule: { flex: 1, height: StyleSheet.hairlineWidth },
   lunchPill: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 },
-  weekHead: { flexDirection: "row", alignItems: "baseline", gap: 8, paddingBottom: 8 },
   change: { borderBottomWidth: StyleSheet.hairlineWidth, paddingVertical: 12 },
   changeHead: { flexDirection: "row", alignItems: "center", gap: 8 },
   changeTag: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
@@ -609,6 +778,4 @@ const styles = StyleSheet.create({
   bannerBtn: { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
   toast: { position: "absolute", alignSelf: "center", borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8 },
   bottom: { position: "absolute", left: 0, right: 0, bottom: 0, paddingHorizontal: 12, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth },
-  rubber: { flexDirection: "row", borderRadius: 10, padding: 3 },
-  rubberItem: { flex: 1, alignItems: "center", paddingVertical: 9, borderRadius: 7 },
 });

@@ -31,10 +31,11 @@ export function tint(hex: string, alpha = 0.16) {
  * The site's `.cal-chip` in three modes (client/src/index.css):
  * colours on = 16% tint + 3px bar; bold = solid tone with ink text; colours off = plain with a border-coloured bar.
  */
-export function chipStyle(theme: Theme, subject: string, status: DisplayStatus) {
+export function chipStyle(theme: Theme, subject: string, status: DisplayStatus, live = false) {
   const tone = theme.tones[toneFor(subject, status)];
   if (!theme.look.colors) return { bg: "transparent", bar: theme.border, text: theme.fg, sub: theme.mutedFg, roomBg: tint(theme.bg, 0.8) };
-  if (theme.look.bold) return { bg: tone.fill, bar: "transparent", text: tone.ink, sub: tone.ink, roomBg: "transparent" };
+  // The live card is solid in the class colour (`.cal-chip.is-now`), like bold colours.
+  if (theme.look.bold || live) return { bg: tone.fill, bar: "transparent", text: tone.ink, sub: tone.ink, roomBg: "transparent" };
   return { bg: tint(tone.fill), bar: tone.fill, text: theme.fg, sub: theme.fg, roomBg: tint(theme.bg, 0.8) };
 }
 
