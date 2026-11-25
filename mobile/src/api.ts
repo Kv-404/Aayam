@@ -1,6 +1,8 @@
 import * as Crypto from "expo-crypto";
 import * as WebBrowser from "expo-web-browser";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { BootstrapResponse } from "@shared/types.ts";
+import { findCoordinator } from "@shared/coordinators.ts";
 import type { FacultyPick, Who } from "./prefs";
 
 // Same API as the website. Sheet links live in D1; the app never sees them.
@@ -18,24 +20,48 @@ function scopeParams(who: Who | null) {
     params.set("course", who.student.course);
     params.set("batch", who.student.batch);
   } else if (who?.role === "faculty") {
-    if (who.faculty.canSeeAll) params.set("all", "1");
+    // A coordinator or can_see_all teacher downloads everything; the app filters (site does the same).
+    if (who.faculty.canSeeAll || findCoordinator(who.faculty.email, who.faculty.faculty)) params.set("all", "1");
     else params.set("faculty", who.faculty.faculty);
   }
   return params.toString();
 }
 
-/** GET /api/bootstrap. Sends If-None-Match so an unchanged timetable costs a 304. */
+const OFFLINE_KEY = "timetable-app-last-bootstrap";
+
+/**
+ * GET /api/bootstrap. Sends If-None-Match so an unchanged timetable costs a 304.
+ * The last good copy is kept on the phone; with no network the app shows it, marked offline.
+ */
 export async function fetchBootstrap(who: Who | null): Promise<BootstrapResponse> {
   const key = scopeParams(who);
   const headers: Record<string, string> = {};
   if (etag && cached?.key === key) headers["If-None-Match"] = etag;
-  const res = await fetch(`${API_BASE}/api/bootstrap${key ? `?${key}` : ""}`, { headers });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/bootstrap${key ? `?${key}` : ""}`, { headers });
+  } catch {
+    const saved = cached?.key === key ? cached.body : await readSaved(key);
+    if (saved) return { ...saved, sync: { ...saved.sync, refreshing: false, lastError: "You are offline." } };
+    throw new Error("You are offline, and there is no saved timetable yet.");
+  }
   if (res.status === 304 && cached) return cached.body;
   if (!res.ok) throw new Error(`Timetable is not available (${res.status}).`);
   const body = (await res.json()) as BootstrapResponse;
   etag = res.headers.get("ETag");
   cached = { key, body };
+  void AsyncStorage.setItem(OFFLINE_KEY, JSON.stringify({ key, body })).catch(() => undefined);
   return body;
+}
+
+async function readSaved(key: string) {
+  try {
+    const raw = await AsyncStorage.getItem(OFFLINE_KEY);
+    const saved = raw ? (JSON.parse(raw) as { key: string; body: BootstrapResponse }) : null;
+    return saved?.key === key ? saved.body : null;
+  } catch {
+    return null;
+  }
 }
 
 /** POST /api/sync: asks the job to re-read the sheet. Returns the current timetable with refreshing on. */
