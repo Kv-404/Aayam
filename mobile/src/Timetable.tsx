@@ -17,6 +17,7 @@ import { DayCard, WeekRow, dayLong, dayMonth, dayShort, isOff, range, type CardL
 import { CalendarSheet, SearchPanel, SettingsSheet } from "./panels";
 import * as Notifications from "expo-notifications";
 import { disableNotifications, enableNotifications, readNotifyOn, registerPush, scheduleReminders } from "./notify";
+import { refreshWidgets } from "./widgets/handler";
 
 type Tab = "day" | "week" | "updates";
 type FacultyLens = "mine" | "cohorts" | "all";
@@ -123,6 +124,8 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
   useEffect(() => {
     if (notifyOn) void scheduleReminders(ownLectures, data.timezone, who.role === "faculty").catch(() => undefined);
   }, [notifyOn, ownLectures, data.timezone, who.role]);
+  // Android home-screen widgets redraw from every new timetable and look.
+  useEffect(() => void refreshWidgets(data, who, theme.look), [data, who, theme.look]);
 
   const days = useMemo(() => [...new Set(mine.map((lecture) => lecture.date).filter((date): date is string => !!date))].sort(), [mine]);
   const [day, setDay] = useState(days.includes(data.today) ? data.today : (days[0] ?? data.today));
