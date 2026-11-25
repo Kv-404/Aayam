@@ -12,7 +12,7 @@ browser ◀── static SPA (free) + /api/* ◀── Worker (≤10 ms CPU: D1 
                                              └─ cron */5 and admin actions dispatch the job
 ```
 
-Layout: `client/` (React app; week grid is `WeeklyView.tsx` + `TimeGrid.tsx`), `server/src/edge/` (Worker), `server/src/job/` (sync job), `server/src/services/` (download, parser, change detection), `shared/` (types, scope keys, faculty matching), `migrations/` (D1, add-only), `docs/agent/` (the only design docs). `README.md` is the public overview with screenshots in `docs/screenshots/`; keep both true when the UI or features change. Do not add planning or strategy docs to the repo.
+Layout: `client/` (React app; week grid is `WeeklyView.tsx` + `TimeGrid.tsx`), `server/src/edge/` (Worker), `server/src/job/` (sync job), `server/src/services/` (download, parser, change detection), `shared/` (types, scope keys, faculty matching), `mobile/` (native Android app, Expo: same /api, widgets, push, update check), `migrations/` (D1, add-only), `docs/agent/` (the only design docs). `README.md` is the public overview with screenshots in `docs/screenshots/`; keep both true when the UI or features change. Do not add planning or strategy docs to the repo.
 
 This file is the rulebook, injected every turn. Open **one** context file for the task, then only the source files it names. Do not list the repo, grep the whole tree, or open `node_modules/`, `.wrangler/`, `server/data/`, or `*.sqlite`.
 
@@ -23,7 +23,7 @@ This file is the rulebook, injected every turn. Open **one** context file for th
 | UI, setup flow, cohort/faculty mode, week/day view, colours, notifications, filters, polling | `docs/agent/client.md` |
 | Worker routes, sync job, snapshots, D1 schema, parser, cancellations, change log, week archive, auth, admin, push | `docs/agent/server.md` |
 | Sheet layout, what counts as OFF, week rollover | `docs/agent/sheet.md` |
-| Secrets, deploy, free-plan budget, the domain, changing the production sheet, operating | `docs/agent/deploy.md` |
+| Secrets, deploy, free-plan budget, the domain, changing the production sheet, operating, app releases | `docs/agent/deploy.md` |
 
 Shared types and faculty matching are in `docs/agent/server.md`. Read a second file only when the task crosses that boundary.
 

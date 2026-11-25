@@ -99,3 +99,10 @@ Without the admin page: `npx wrangler d1 execute timetable --remote --command "U
 - Watch it: `npx wrangler tail timetable` (Worker logs; observability is on at 20 % sampling); Actions run logs for the job (`[job] done in … ms …`).
 - Query D1: `npx wrangler d1 execute timetable --remote --command "SELECT key, length(body) FROM snapshots ORDER BY 2 DESC LIMIT 5"`.
 - A schema change is a new `migrations/000N_*.sql`. Deploy applies it before the new Worker goes live, so keep migrations additive.
+
+## Phone app releases
+
+- Expo project `@kv404/aayam` (`mobile/app.json`: `owner`, `extra.eas.projectId`). The signing key is EAS-managed. 1.2.0 is the first build on this project, so 1.1.0 and older must be uninstalled before installing it.
+- Bump `expo.version` in `mobile/app.json`, then `cd mobile && npx eas-cli@latest build -p android --profile preview` (APK; `autoIncrement` bumps the build number).
+- Publish a full (not pre-) GitHub release tagged `app-v<version>` with the APK named `aayam-<version>.apk` and its SHA-256. The site's "Get the app" bar links to `/releases/latest`; installed apps (`mobile/src/update.ts`) find the newest `app-v*` release on open (at most every 6 h) and offer the APK ("Later" snoozes that version 3 days).
+

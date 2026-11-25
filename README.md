@@ -80,7 +80,7 @@ Staff with full access see every cohort at once: a tab for each day, one column 
 
 ### Android app
 
-A native app (Expo, React Native) in `mobile/` shows the same timetable with the same themes and rules. It adds push alerts for changes and notices, and class reminders that arrive with the app closed. It also keeps the last timetable for when you are offline, and has two home-screen widgets: Next class and Today. Download the APK from [Releases](https://github.com/Kv-404/Aayam/releases).
+A native app (Expo, React Native) in `mobile/` shows the same timetable with the same themes and rules. It adds push alerts for changes and notices, and class reminders that arrive with the app closed. It also keeps the last timetable for when you are offline, and has two home-screen widgets: Next class and Today. When a new version is out, the app offers the download itself. Get the APK from [Releases](https://github.com/Kv-404/Aayam/releases/latest); 1.2.0 uses a new signing key, so uninstall 1.1.0 or older first.
 
 <details>
 <summary><b>Rules the sheet follows</b> (click)</summary>

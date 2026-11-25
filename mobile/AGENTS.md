@@ -23,7 +23,12 @@ npx expo install --fix      # fix incompatible package versions
 
 Run lint and typecheck before declaring any task done.
 
-## Navigation & Routing
+## This app
+
+- Native screens live in `src/` (`Setup.tsx`, `Timetable.tsx`, `cards.tsx`, `panels.tsx`); shared controls (`Switch`, `Segment`) in `src/ui.tsx` copy the site's `ColorSwitch` and `RubberSegment`. Keep the look in step with `client/`.
+- No Expo Router here: `App.tsx` switches between Setup and Timetable. Widgets: `src/widgets/`. Update check: `src/update.ts`. Design notes: `docs/agent/client.md` → "Phone app". Releases: `docs/agent/deploy.md`.
+
+## Navigation & Routing (general Expo guidance)
 
 - Use **Expo Router** for all navigation. Routes live in `src/app/` — every file there is a screen, `_layout.tsx` files define navigators. Keep non-route code (components, hooks, utils) outside `src/app/`.
 - Import `Link`, `router`, and `useLocalSearchParams` from `expo-router`.
