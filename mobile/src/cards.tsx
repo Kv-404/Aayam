@@ -57,7 +57,8 @@ export function Room({ room, theme, color, bg, bold, onNotice }: { room: string;
 
 /** Day view card: time on top, subject below, person and room on the right. */
 export function DayCard({ lecture, theme, lens, live, onNotice }: { lecture: PublicLecture; theme: Theme; lens: CardLens; live: boolean; onNotice: (text: string) => void }) {
-  const chip = chipStyle(theme, lecture.subject, lecture.displayStatus);
+  const chip = chipStyle(theme, lecture.subject, lecture.displayStatus, live);
+  const solid = theme.look.colors && (theme.look.bold || live);
   const cancelled = lecture.displayStatus === "cancelled" && !isOff(lecture);
   const person = personLine(lecture, lens);
   return (
@@ -65,22 +66,22 @@ export function DayCard({ lecture, theme, lens, live, onNotice }: { lecture: Pub
       <View style={[styles.bar, { backgroundColor: chip.bar }]} />
       <View style={{ flex: 1, minWidth: 0 }}>
         <View style={styles.timeRow}>
-          <T w="mono" style={{ color: chip.text, fontSize: 13, opacity: 0.85 }}>
+          <T w="mono" style={{ color: chip.text, fontSize: 11, opacity: 0.85 }}>
             {range(lecture)}
           </T>
           {live ? (
             <View style={[styles.nowMark, { backgroundColor: chip.text }]}>
-              <T w="mono" style={{ color: theme.look.colors && theme.look.bold ? chip.bg : theme.bg, fontSize: 10, letterSpacing: 0.8 }}>
+              <T w="mono" style={{ color: solid ? chip.bg : theme.bg, fontSize: 10, letterSpacing: 0.8 }}>
                 NOW
               </T>
             </View>
           ) : null}
         </View>
-        <T w="medium" style={{ color: chip.text, fontSize: 18, letterSpacing: -0.4, marginTop: 2, textDecorationLine: cancelled ? "line-through" : "none" }}>
+        <T w={live ? "bold" : "medium"} style={{ color: isOff(lecture) && !solid ? theme.danger : chip.text, fontSize: 16, letterSpacing: -0.4, marginTop: 1, textDecorationLine: cancelled ? "line-through" : "none" }}>
           {lecture.subject}
         </T>
         {cancelled ? (
-          <T w="bold" style={{ color: theme.look.bold && theme.look.colors ? chip.text : theme.danger, fontSize: 12, marginTop: 2 }}>
+          <T w="bold" style={{ color: solid ? chip.text : theme.danger, fontSize: 12, marginTop: 1 }}>
             Cancelled
           </T>
         ) : null}
@@ -88,7 +89,7 @@ export function DayCard({ lecture, theme, lens, live, onNotice }: { lecture: Pub
       {!isOff(lecture) ? (
         <View style={{ alignItems: "flex-end", maxWidth: "42%", gap: 1 }}>
           {person ? (
-            <T style={{ color: chip.sub, fontSize: 13, opacity: 0.85, textAlign: "right" }} lines={2}>
+            <T style={{ color: chip.sub, fontSize: 12, opacity: 0.85, textAlign: "right" }} lines={2}>
               {person}
             </T>
           ) : null}
@@ -150,8 +151,53 @@ export function WeekRow({ lecture, theme, lens, onNotice }: { lecture: PublicLec
   );
 }
 
+/** Compact week cell: time and room, subject (two lines at most), cohort or faculty. Fits a narrow day column. */
+export function WeekCell({ lecture, theme, lens, live, onNotice }: { lecture: PublicLecture; theme: Theme; lens: CardLens; live: boolean; onNotice: (text: string) => void }) {
+  if (lecture.kind === "break") {
+    return (
+      <View style={[styles.cellBreak, { borderColor: theme.border }]}>
+        <T w="mono" style={{ color: theme.mutedFg, fontSize: 11 }} lines={1}>
+          {lecture.subject || "Lunch"} · {range(lecture)}
+        </T>
+      </View>
+    );
+  }
+  const chip = chipStyle(theme, lecture.subject, lecture.displayStatus, live);
+  const solid = theme.look.colors && (theme.look.bold || live);
+  const off = isOff(lecture);
+  const cancelled = lecture.displayStatus === "cancelled" && !off;
+  const person = off ? "" : personLine(lecture, lens);
+  return (
+    <View style={[styles.cell, { backgroundColor: chip.bg }, live && !theme.look.colors && { borderWidth: 1, borderColor: theme.fg }]}>
+      <View style={[styles.bar, { backgroundColor: chip.bar }]} />
+      <View style={styles.cellTop}>
+        <T w="mono" style={{ color: chip.text, fontSize: 11, opacity: 0.85 }} lines={1}>
+          {range(lecture)}
+        </T>
+        {!off && lecture.room ? <Room room={lecture.room} theme={theme} color={chip.sub} bold onNotice={onNotice} /> : null}
+      </View>
+      <T w={live ? "bold" : "medium"} style={{ color: off && !solid ? theme.danger : chip.text, fontSize: 14, letterSpacing: -0.3, textDecorationLine: cancelled ? "line-through" : "none" }} lines={2}>
+        {lecture.subject}
+      </T>
+      {cancelled ? (
+        <T w="bold" style={{ color: solid ? chip.text : theme.danger, fontSize: 11 }}>
+          Cancelled
+        </T>
+      ) : null}
+      {person ? (
+        <T style={{ color: chip.sub, fontSize: 12, opacity: 0.85 }} lines={1}>
+          {person}
+        </T>
+      ) : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  dayCard: { flexDirection: "row", gap: 10, borderRadius: 10, paddingVertical: 10, paddingRight: 12, paddingLeft: 14, marginBottom: 8, overflow: "hidden" },
+  dayCard: { flexDirection: "row", gap: 8, borderRadius: 8, paddingVertical: 7, paddingRight: 10, paddingLeft: 11, marginBottom: 6, overflow: "hidden" },
+  cell: { borderRadius: 8, paddingVertical: 6, paddingRight: 8, paddingLeft: 10, marginBottom: 6, overflow: "hidden", gap: 1 },
+  cellTop: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", columnGap: 4, rowGap: 2 },
+  cellBreak: { borderWidth: 1, borderStyle: "dashed", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginBottom: 6, alignItems: "center" },
   bar: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3 },
   timeRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   nowMark: { borderRadius: 999, paddingHorizontal: 6, paddingVertical: 1 },

@@ -15,6 +15,8 @@ const COLORS = "timetable-colors";
 const BOLD = "timetable-bold";
 const MEET = "timetable-meet";
 const SEARCH = "timetable-search-history";
+// Phone app only: the last Day or Week view picked in the bottom bar.
+const VIEW = "timetable-app-view";
 // The session token stays in the keychain, not AsyncStorage.
 const SESSION = "timetable-faculty-session";
 
@@ -128,4 +130,19 @@ export async function readSearchHistory(): Promise<string[]> {
 
 export async function saveSearchHistory(list: string[]) {
   await AsyncStorage.setItem(SEARCH, JSON.stringify(list.slice(0, 8))).catch(() => undefined);
+}
+
+export type TimetableView = "day" | "week";
+
+export async function readView(): Promise<TimetableView | null> {
+  try {
+    const value = await AsyncStorage.getItem(VIEW);
+    return value === "day" || value === "week" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveView(view: TimetableView) {
+  await AsyncStorage.setItem(VIEW, view).catch(() => undefined);
 }
