@@ -150,6 +150,47 @@ export function WeekRow({ lecture, theme, lens, onNotice }: { lecture: PublicLec
   );
 }
 
+/** Compact week cell: time and room, subject (two lines at most), cohort or faculty. Fits a narrow day column. */
+export function WeekCell({ lecture, theme, lens, live, onNotice }: { lecture: PublicLecture; theme: Theme; lens: CardLens; live: boolean; onNotice: (text: string) => void }) {
+  if (lecture.kind === "break") {
+    return (
+      <View style={[styles.cellBreak, { borderColor: theme.border }]}>
+        <T w="mono" style={{ color: theme.mutedFg, fontSize: 11 }} lines={1}>
+          {lecture.subject || "Lunch"} · {range(lecture)}
+        </T>
+      </View>
+    );
+  }
+  const chip = chipStyle(theme, lecture.subject, lecture.displayStatus);
+  const off = isOff(lecture);
+  const cancelled = lecture.displayStatus === "cancelled" && !off;
+  const person = off ? "" : personLine(lecture, lens);
+  return (
+    <View style={[styles.cell, { backgroundColor: chip.bg }, live && { borderWidth: 1.5, borderColor: chip.text }]}>
+      <View style={[styles.bar, { backgroundColor: chip.bar }]} />
+      <View style={styles.cellTop}>
+        <T w="mono" style={{ color: chip.text, fontSize: 11, opacity: 0.85 }} lines={1}>
+          {range(lecture)}
+        </T>
+        {!off && lecture.room ? <Room room={lecture.room} theme={theme} color={chip.sub} bold onNotice={onNotice} /> : null}
+      </View>
+      <T w="medium" style={{ color: chip.text, fontSize: 14, letterSpacing: -0.3, textDecorationLine: cancelled ? "line-through" : "none" }} lines={2}>
+        {lecture.subject}
+      </T>
+      {cancelled ? (
+        <T w="bold" style={{ color: theme.look.bold && theme.look.colors ? chip.text : theme.danger, fontSize: 11 }}>
+          Cancelled
+        </T>
+      ) : null}
+      {person ? (
+        <T style={{ color: chip.sub, fontSize: 12, opacity: 0.85 }} lines={1}>
+          {person}
+        </T>
+      ) : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   dayCard: { flexDirection: "row", gap: 10, borderRadius: 10, paddingVertical: 10, paddingRight: 12, paddingLeft: 14, marginBottom: 8, overflow: "hidden" },
   bar: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3 },
@@ -160,5 +201,8 @@ const styles = StyleSheet.create({
   weekCard: { flex: 1, minWidth: 0, borderRadius: 10, paddingVertical: 8, paddingRight: 10, paddingLeft: 12, overflow: "hidden", gap: 2 },
   weekFoot: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 4 },
   meet: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
+  cell: { borderRadius: 8, paddingVertical: 6, paddingRight: 8, paddingLeft: 10, marginBottom: 6, overflow: "hidden", gap: 1 },
+  cellTop: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", columnGap: 4, rowGap: 2 },
+  cellBreak: { borderWidth: 1, borderStyle: "dashed", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, marginBottom: 6, alignItems: "center" },
   roomBadge: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 1 },
 });

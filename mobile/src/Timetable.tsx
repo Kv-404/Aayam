@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
+import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, useWindowDimensions, View, type ScrollViewInstance } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Bell, CalendarPlus, ChevronDown, ChevronLeft, ChevronRight, GraduationCap, Search, Settings, X } from "lucide-react-native";
 import * as WebBrowser from "expo-web-browser";
@@ -9,11 +9,11 @@ import { cohortLabel, lectureInCohort } from "@shared/cohort.ts";
 import { changeMatchesFaculty, lectureMatchesFaculty } from "@shared/faculty.ts";
 import { coordinatorChoices, findCoordinator } from "@shared/coordinators.ts";
 import { formatDetected, zonedNow } from "@web/time.ts";
-import type { Who } from "./prefs";
+import { readView, saveView, type Who } from "./prefs";
 import { tint, useLook, type Theme } from "./theme";
 import { Logo } from "./Logo";
 import { T } from "./ui";
-import { DayCard, WeekRow, dayLong, dayMonth, dayShort, isOff, range, type CardLens } from "./cards";
+import { DayCard, WeekCell, dayLong, dayMonth, dayShort, isOff, range, type CardLens } from "./cards";
 import { CalendarSheet, SearchPanel, SettingsSheet } from "./panels";
 import * as Notifications from "expo-notifications";
 import { disableNotifications, enableNotifications, readNotifyOn, registerPush, scheduleReminders } from "./notify";
@@ -30,7 +30,19 @@ const writeKey = (key: string, value: string) => AsyncStorage.setItem(key, value
 export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data: BootstrapResponse; who: Who; refreshing: boolean; onRefresh: () => void; onLogout: () => void }) {
   const { theme } = useLook();
   const insets = useSafeAreaInsets();
-  const [tab, setTab] = useState<Tab>("day");
+  const { width } = useWindowDimensions();
+  // A phone opens on Day, a teacher on Week (same as the site); the last Day/Week pick wins (`timetable-app-view`).
+  const [tab, setTabState] = useState<Tab>(who.role === "faculty" ? "week" : "day");
+  const tabPicked = useRef(false);
+  const setTab = (next: Tab) => {
+    tabPicked.current = true;
+    setTabState(next);
+  };
+  useEffect(() => {
+    void readView().then((saved) => {
+      if (saved && !tabPicked.current) setTabState(saved);
+    });
+  }, []);
   const [panel, setPanel] = useState<"none" | "search" | "calendar" | "settings" | "scope">("none");
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -130,6 +142,9 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
     if (days.length && !days.includes(day)) setDay(days.includes(data.today) ? data.today : days[0]!);
   }, [days, day, data.today]);
 
+  // The pager needs at least one page, even on a week with no classes.
+  const pagerDays = days.length ? days : [day];
+
   const now = zonedNow(new Date(data.now), data.timezone);
   const stamp = (date: string | null, minutes: number) => `${date ?? ""}${String(minutes).padStart(4, "0")}`;
   const nowStamp = stamp(now.iso, now.minutes);
@@ -181,6 +196,10 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
       ? (data.sheets.find((sheet) => sheet.batch.trim().toLowerCase() === who.student.batch.trim().toLowerCase() && sheet.course.trim().toLowerCase() === who.student.course.trim().toLowerCase())?.spreadsheetUrl ?? "")
       : "";
 
+  const bottomPad = (notifyOn || hintGone ? 96 : 150) + insets.bottom;
+  const refresh = () => <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.mutedFg} />;
+  const syncError = data.sync.lastError ? <T style={{ color: theme.danger, fontSize: 13, paddingHorizontal: 16, marginTop: 12 }}>Showing the last good copy. {data.sync.lastError}</T> : null;
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.bg }}>
       <View style={[styles.header, { paddingTop: insets.top + 18, borderColor: theme.border, backgroundColor: theme.bg }]}>
@@ -226,7 +245,7 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
         ) : null}
         {panel === "search" ? null : tab === "day" ? (
           <View style={[styles.segment, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            {days.map((date) => {
+            {pagerDays.map((date) => {
               const active = date === day;
               return (
                 <Pressable key={date} onPress={() => setDay(date)} style={[styles.segItem, active && { backgroundColor: theme.fg }]}>
@@ -287,27 +306,36 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
 
       {panel === "search" ? (
         <SearchPanel lectures={mine} lens={lens} onClose={() => setPanel("none")} onNotice={showNotice} />
-      ) : (
-        <ScrollView contentContainerStyle={{ paddingBottom: (notifyOn || hintGone ? 96 : 150) + insets.bottom }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.mutedFg} />}>
-          {tab === "day" ? (
-            <DayList
-              lectures={mine.filter((lecture) => lecture.date === day)}
-              date={day}
-              today={data.today}
-              theme={theme}
-              days={days}
-              onDay={setDay}
-              lens={lens}
-              isLive={isLive}
-              onNotice={showNotice}
-            />
-          ) : null}
-          {tab === "week"
-            ? days.map((date) => <WeekDay key={date} date={date} today={data.today} lectures={mine.filter((lecture) => lecture.date === date)} theme={theme} lens={lens} onNotice={showNotice} />)
-            : null}
-          {tab === "updates" ? <Updates changes={changes} theme={theme} timezone={data.timezone} /> : null}
-          {data.sync.lastError ? <T style={{ color: theme.danger, fontSize: 13, paddingHorizontal: 16, marginTop: 12 }}>Showing the last good copy. {data.sync.lastError}</T> : null}
-        </ScrollView>
+      ) : tab === "day" ? (
+          <DayPager
+            key={`${pagerDays.join(",")}:${width}`}
+            days={pagerDays}
+            day={day}
+            onDay={setDay}
+            width={width}
+            renderDay={(date) => (
+              <ScrollView contentContainerStyle={{ paddingBottom: bottomPad }} refreshControl={refresh()}>
+                <DayList
+                  lectures={mine.filter((lecture) => lecture.date === date)}
+                  date={date}
+                  today={data.today}
+                  theme={theme}
+                  days={pagerDays}
+                  onDay={setDay}
+                  lens={lens}
+                  isLive={isLive}
+                  onNotice={showNotice}
+                />
+                {syncError}
+              </ScrollView>
+            )}
+          />
+        ) : (
+          <ScrollView contentContainerStyle={{ paddingBottom: bottomPad }} refreshControl={refresh()}>
+            {tab === "week" ? <WeekBoard days={days} today={data.today} lectures={mine} theme={theme} lens={lens} width={width} isLive={isLive} onNotice={showNotice} /> : null}
+            {tab === "updates" ? <Updates changes={changes} theme={theme} timezone={data.timezone} /> : null}
+            {syncError}
+          </ScrollView>
       )}
 
       {!notifyOn && !hintGone && panel === "none" ? (
@@ -336,7 +364,11 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
           {(["day", "week", "updates"] as const).map((id) => {
             const active = tab === id;
             return (
-              <Pressable key={id} onPress={() => (setTab(id), setPanel("none"))} style={[styles.rubberItem, active && { backgroundColor: theme.fg }]}>
+              <Pressable key={id} onPress={() => {
+                  setTab(id);
+                  setPanel("none");
+                  if (id !== "updates") void saveView(id);
+                }} style={[styles.rubberItem, active && { backgroundColor: theme.fg }]}>
                 <T w="medium" style={{ color: active ? theme.bg : theme.mutedFg, fontSize: 14 }}>
                   {id === "day" ? "Day" : id === "week" ? "Week" : "Updates"}
                 </T>
@@ -421,25 +453,106 @@ function DayList({
   );
 }
 
-function WeekDay({ date, today, lectures, theme, lens, onNotice }: { date: string; today: string; lectures: PublicLecture[]; theme: Theme; lens: CardLens; onNotice: (text: string) => void }) {
-  const allOff = lectures.length > 0 && lectures.every(isOff);
+/** Day view pager: one page per day of the current week, swipe to move, snaps, opens on the picked day. */
+function DayPager({ days, day, onDay, width, renderDay }: { days: string[]; day: string; onDay: (date: string) => void; width: number; renderDay: (date: string) => ReactElement }) {
+  const list = useRef<FlatList<string>>(null);
+  const start = Math.max(0, days.indexOf(day));
+  const shown = useRef(start);
+  // A tab, arrow or reset moved the day: bring that page in.
+  useEffect(() => {
+    const index = days.indexOf(day);
+    if (index < 0 || index === shown.current) return;
+    shown.current = index;
+    list.current?.scrollToIndex({ index, animated: true });
+  }, [day, days]);
   return (
-    <View style={[styles.page, { paddingTop: 24 }]}>
-      <View style={styles.weekHead}>
-        <T w="bold" style={{ color: allOff ? theme.danger : theme.fg, fontSize: 18 }}>
-          {dayShort(date)}
-        </T>
-        <T style={{ color: allOff ? theme.danger : theme.mutedFg, fontSize: 16 }}>{dayMonth(date)}</T>
-        {date === today ? <TodayChip theme={theme} /> : null}
-      </View>
-      {allOff ? (
-        <T w="medium" style={{ color: theme.danger, fontSize: 15, paddingVertical: 10 }}>
-          {dayLong(date)} Off
-        </T>
-      ) : (
-        lectures.map((lecture) => <WeekRow key={lecture.id} lecture={lecture} theme={theme} lens={lens} onNotice={onNotice} />)
-      )}
-    </View>
+    <FlatList
+      ref={list}
+      data={days}
+      keyExtractor={(date) => date}
+      horizontal
+      pagingEnabled
+      showsHorizontalScrollIndicator={false}
+      initialScrollIndex={start}
+      getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
+      windowSize={3}
+      extraData={renderDay}
+      onMomentumScrollEnd={(event) => {
+        const index = Math.round(event.nativeEvent.contentOffset.x / width);
+        const date = days[index];
+        shown.current = index;
+        if (date && date !== day) onDay(date);
+      }}
+      renderItem={({ item }) => <View style={{ width }}>{renderDay(item)}</View>}
+    />
+  );
+}
+
+/** Week view: one narrow column per day, swipe sideways through the week, opens on today. */
+function WeekBoard({
+  days,
+  today,
+  lectures,
+  theme,
+  lens,
+  width,
+  isLive,
+  onNotice,
+}: {
+  days: string[];
+  today: string;
+  lectures: PublicLecture[];
+  theme: Theme;
+  lens: CardLens;
+  width: number;
+  isLive: (lecture: PublicLecture) => boolean;
+  onNotice: (text: string) => void;
+}) {
+  const gap = 8;
+  // About two and a third days on screen, so the next column peeks in.
+  const column = Math.max(140, Math.floor((width - 32 - gap * 2) / 2.3));
+  const scroller = useRef<ScrollViewInstance>(null);
+  const placed = useRef(false);
+  if (!days.length) return <T style={{ color: theme.mutedFg, fontSize: 14, padding: 16, marginTop: 8 }}>No classes this week.</T>;
+  return (
+    <ScrollView
+      ref={scroller}
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      snapToInterval={column + gap}
+      decelerationRate="fast"
+      contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 14, gap }}
+      onContentSizeChange={() => {
+        if (placed.current) return;
+        placed.current = true;
+        const index = days.indexOf(today);
+        if (index > 0) scroller.current?.scrollTo({ x: index * (column + gap), animated: false });
+      }}
+    >
+      {days.map((date) => {
+        const list = lectures.filter((lecture) => lecture.date === date);
+        const allOff = list.length > 0 && list.every(isOff);
+        const isToday = date === today;
+        return (
+          <View key={date} style={{ width: column }}>
+            <View style={[styles.colHead, { borderColor: isToday ? theme.fg : theme.border }]}>
+              <T w="bold" style={{ color: allOff ? theme.danger : theme.fg, fontSize: 15 }}>
+                {dayShort(date)}
+              </T>
+              <T style={{ color: allOff ? theme.danger : theme.mutedFg, fontSize: 13 }}>{dayMonth(date)}</T>
+              {isToday ? <View style={[styles.todayDot, { backgroundColor: theme.fg }]} /> : null}
+            </View>
+            {allOff ? (
+              <T w="medium" style={{ color: theme.danger, fontSize: 14, paddingVertical: 6 }}>
+                {dayLong(date)} Off
+              </T>
+            ) : (
+              list.map((lecture) => <WeekCell key={lecture.id} lecture={lecture} theme={theme} lens={lens} live={isLive(lecture)} onNotice={onNotice} />)
+            )}
+          </View>
+        );
+      })}
+    </ScrollView>
   );
 }
 
@@ -566,7 +679,7 @@ const styles = StyleSheet.create({
   lunchRow: { flexDirection: "row", alignItems: "center", gap: 8, marginVertical: 10 },
   rule: { flex: 1, height: StyleSheet.hairlineWidth },
   lunchPill: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 },
-  weekHead: { flexDirection: "row", alignItems: "baseline", gap: 8, paddingBottom: 8 },
+  colHead: { flexDirection: "row", alignItems: "center", gap: 6, paddingBottom: 6, marginBottom: 8, borderBottomWidth: 2 },
   change: { borderBottomWidth: StyleSheet.hairlineWidth, paddingVertical: 12 },
   changeHead: { flexDirection: "row", alignItems: "center", gap: 8 },
   changeTag: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
