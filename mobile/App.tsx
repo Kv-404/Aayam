@@ -42,11 +42,14 @@ export default function App() {
     try {
       setError(null);
       const body = sync ? await requestSync(scope) : await fetchBootstrap(scope);
+      // Signed out or picked another cohort while this was loading: drop the old scope's answer.
+      if (scope !== whoRef.current) return;
       setData(body);
       // The job is re-reading the sheet: ask again shortly, like the site's 4 s follow-up.
       if (followUp.current) clearTimeout(followUp.current);
       if (body.sync.refreshing) followUp.current = setTimeout(() => void load(whoRef.current), 4000);
     } catch (err) {
+      if (scope !== whoRef.current) return;
       setError(err instanceof Error ? err.message : "Could not load the timetable.");
     }
   }, []);
@@ -89,6 +92,7 @@ export default function App() {
     return () => {
       stop();
       sub.remove();
+      if (followUp.current) clearTimeout(followUp.current);
     };
   }, [load]);
 
