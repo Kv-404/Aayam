@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
+import { Platform, Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Bell, CalendarPlus, ChevronDown, ChevronLeft, ChevronRight, GraduationCap, Search, Settings, X } from "lucide-react-native";
 import * as WebBrowser from "expo-web-browser";
@@ -18,6 +18,9 @@ import { CalendarSheet, SearchPanel, SettingsSheet } from "./panels";
 import * as Notifications from "expo-notifications";
 import { disableNotifications, enableNotifications, readNotifyOn, registerPush, scheduleReminders } from "./notify";
 
+// expo-notifications has no last-tap API on web; the hook throws there.
+const useLastTap = Platform.OS === "web" ? () => null : Notifications.useLastNotificationResponse;
+
 type Tab = "day" | "week" | "updates";
 type FacultyLens = "mine" | "cohorts" | "all";
 const lensLabel: Record<FacultyLens, string> = { mine: "My classes", cohorts: "My cohorts", all: "All classes" };
@@ -26,6 +29,8 @@ const EXAM_KEY = "timetable-exam-notice";
 const NOTICE_KEY = "timetable-notice-ids";
 const readKey = (key: string) => AsyncStorage.getItem(key).catch(() => null);
 const writeKey = (key: string, value: string) => AsyncStorage.setItem(key, value).catch(() => undefined);
+/** The alert tap already acted on, so a remount (sign out, sign in) does not jump tabs again. */
+let handledTap: string | null = null;
 
 export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data: BootstrapResponse; who: Who; refreshing: boolean; onRefresh: () => void; onLogout: () => void }) {
   const { theme } = useLook();
@@ -68,9 +73,13 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
     setHintGone(true);
     void AsyncStorage.setItem("timetable-notify-hint", "1").catch(() => undefined);
   };
-  const lastTap = Notifications.useLastNotificationResponse();
+  const lastTap = useLastTap();
   useEffect(() => {
-    const kind = lastTap?.notification.request.content.data?.kind;
+    if (!lastTap) return;
+    const tapId = `${lastTap.notification.request.identifier}:${lastTap.notification.date}`;
+    if (handledTap === tapId) return;
+    handledTap = tapId;
+    const kind = lastTap.notification.request.content.data?.kind;
     if (kind === "change" || kind === "notice") setTab("updates");
     else if (kind === "reminder") setTab("day");
   }, [lastTap]);
@@ -105,15 +114,20 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
   }, [data.lectures, data.choices, who, view, myCohorts]);
 
   const changes = useMemo(() => {
-    if (who.role === "student") return data.changes.filter((change) => !change.division || change.division === who.student.division);
+    if (who.role === "student") {
+      // The cohort and its shared column, same as the site's watched divisions.
+      const choice = data.choices?.find((item) => item.division === who.student.division && item.course === who.student.course && item.batch === who.student.batch);
+      const divisions = new Set([who.student.division, ...(choice?.also ?? [])]);
+      return data.changes.filter((change) => !change.division || divisions.has(change.division));
+    }
     if (view === "all") return data.changes;
     if (view === "cohorts") {
       const divisions = new Set(myCohorts.flatMap((choice) => [choice.division, ...choice.also]));
-      return data.changes.filter((change) => change.division && divisions.has(change.division));
+      return data.changes.filter((change) => !change.division || divisions.has(change.division));
     }
     const ids = new Set(mine.map((lecture) => lecture.id));
     return data.changes.filter((change) => changeMatchesFaculty(change, who.faculty.faculty, ids));
-  }, [data.changes, who, view, myCohorts, mine]);
+  }, [data.changes, data.choices, who, view, myCohorts, mine]);
 
   // Reminders follow the person's own classes (not All classes), and re-plan after every refresh.
   const ownLectures = useMemo(
@@ -124,13 +138,21 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
     if (notifyOn) void scheduleReminders(ownLectures, data.timezone, who.role === "faculty").catch(() => undefined);
   }, [notifyOn, ownLectures, data.timezone, who.role]);
 
-  const days = useMemo(() => [...new Set(mine.map((lecture) => lecture.date).filter((date): date is string => !!date))].sort(), [mine]);
-  const [day, setDay] = useState(days.includes(data.today) ? data.today : (days[0] ?? data.today));
+  // The phone's own clock, ticking, like the site. `data.now` is frozen while the server answers 304 or the app is offline.
+  const [clock, setClock] = useState(() => Date.now());
   useEffect(() => {
-    if (days.length && !days.includes(day)) setDay(days.includes(data.today) ? data.today : days[0]!);
-  }, [days, day, data.today]);
+    const timer = setInterval(() => setClock(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+  const now = zonedNow(new Date(clock), data.timezone);
+  const today = now.iso;
 
-  const now = zonedNow(new Date(data.now), data.timezone);
+  const days = useMemo(() => [...new Set(mine.map((lecture) => lecture.date).filter((date): date is string => !!date))].sort(), [mine]);
+  const [day, setDay] = useState(days.includes(today) ? today : (days[0] ?? today));
+  useEffect(() => {
+    if (days.length && !days.includes(day)) setDay(days.includes(today) ? today : days[0]!);
+  }, [days, day, today]);
+
   const stamp = (date: string | null, minutes: number) => `${date ?? ""}${String(minutes).padStart(4, "0")}`;
   const nowStamp = stamp(now.iso, now.minutes);
   // Many classes run at once in All classes, so it has no Now mark (same rule as the site).
@@ -161,7 +183,16 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
   // Admin notices for a student: newest one not yet closed. An edited notice shows again.
   const [closedNotices, setClosedNotices] = useState<string[] | null>(null);
   useEffect(() => {
-    void readKey(NOTICE_KEY).then((raw) => setClosedNotices(raw ? (JSON.parse(raw) as string[]) : []));
+    void readKey(NOTICE_KEY).then((raw) => {
+      let list: string[] = [];
+      try {
+        const parsed: unknown = raw ? JSON.parse(raw) : [];
+        if (Array.isArray(parsed)) list = parsed.filter((item): item is string => typeof item === "string");
+      } catch {
+        // A damaged list shows the notices again rather than none.
+      }
+      setClosedNotices(list);
+    });
   }, []);
   const noticeKey = (item: { id: string; createdAt: string; updatedAt?: string }) => (item.updatedAt && item.updatedAt !== item.createdAt ? `${item.id}:${item.updatedAt}` : item.id);
   const liveNotice =
@@ -230,10 +261,10 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
               const active = date === day;
               return (
                 <Pressable key={date} onPress={() => setDay(date)} style={[styles.segItem, active && { backgroundColor: theme.fg }]}>
-                  <T w={date === data.today ? "bold" : "medium"} style={{ color: active ? theme.bg : theme.mutedFg, fontSize: 13 }}>
+                  <T w={date === today ? "bold" : "medium"} style={{ color: active ? theme.bg : theme.mutedFg, fontSize: 13 }}>
                     {dayShort(date)}
                   </T>
-                  {date === data.today ? <View style={[styles.todayDot, { backgroundColor: active ? theme.bg : theme.fg }]} /> : null}
+                  {date === today ? <View style={[styles.todayDot, { backgroundColor: active ? theme.bg : theme.fg }]} /> : null}
                 </Pressable>
               );
             })}
@@ -293,7 +324,7 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
             <DayList
               lectures={mine.filter((lecture) => lecture.date === day)}
               date={day}
-              today={data.today}
+              today={today}
               theme={theme}
               days={days}
               onDay={setDay}
@@ -303,7 +334,7 @@ export function Timetable({ data, who, refreshing, onRefresh, onLogout }: { data
             />
           ) : null}
           {tab === "week"
-            ? days.map((date) => <WeekDay key={date} date={date} today={data.today} lectures={mine.filter((lecture) => lecture.date === date)} theme={theme} lens={lens} onNotice={showNotice} />)
+            ? days.map((date) => <WeekDay key={date} date={date} today={today} lectures={mine.filter((lecture) => lecture.date === date)} theme={theme} lens={lens} onNotice={showNotice} />)
             : null}
           {tab === "updates" ? <Updates changes={changes} theme={theme} timezone={data.timezone} /> : null}
           {data.sync.lastError ? <T style={{ color: theme.danger, fontSize: 13, paddingHorizontal: 16, marginTop: 12 }}>Showing the last good copy. {data.sync.lastError}</T> : null}

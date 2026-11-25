@@ -46,7 +46,12 @@ export async function fetchBootstrap(who: Who | null): Promise<BootstrapResponse
     throw new Error("You are offline, and there is no saved timetable yet.");
   }
   if (res.status === 304 && cached) return cached.body;
-  if (!res.ok) throw new Error(`Timetable is not available (${res.status}).`);
+  if (!res.ok) {
+    // Server trouble (or a captive portal): show the saved copy like offline, rather than nothing.
+    const saved = res.status >= 500 ? (cached?.key === key ? cached.body : await readSaved(key)) : null;
+    if (saved) return { ...saved, sync: { ...saved.sync, refreshing: false, lastError: `Timetable is not available (${res.status}).` } };
+    throw new Error(`Timetable is not available (${res.status}).`);
+  }
   const body = (await res.json()) as BootstrapResponse;
   etag = res.headers.get("ETag");
   cached = { key, body };
