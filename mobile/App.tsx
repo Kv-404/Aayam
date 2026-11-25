@@ -10,6 +10,7 @@ import { Setup } from "./src/Setup";
 import { Timetable } from "./src/Timetable";
 import { buildTheme, fonts, LookContext } from "./src/theme";
 import { unregisterPush } from "./src/notify";
+import { checkForAppUpdate } from "./src/update";
 import * as Notifications from "expo-notifications";
 
 // Same cadence as the site: about every 5 min while open, nothing in the background.
@@ -52,6 +53,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    void checkForAppUpdate();
     void (async () => {
       setLookState(await readLook());
       let saved = await readWho();
@@ -83,6 +85,7 @@ export default function App() {
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "active") {
         void load(whoRef.current);
+        void checkForAppUpdate();
         start();
       } else stop();
     });
