@@ -35,7 +35,7 @@ export function Room({ room, theme, color, bg, bold, onNotice }: { room: string;
           if (theme.look.meet === "copy") {
             await Clipboard.setStringAsync(meet);
             onNotice("Meet link copied");
-          } else await Linking.openURL(meet);
+          } else await Linking.openURL(meet).catch(() => onNotice("Could not open Google Meet"));
         }}
         style={({ pressed }) => [styles.meet, { backgroundColor: theme.fg, opacity: pressed ? 0.85 : 1 }]}
       >
