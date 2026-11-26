@@ -48,6 +48,23 @@ function compare(previous: NormalizedLecture[], next: NormalizedLecture[], previ
 }
 
 describe("change detection", () => {
+  it("keeps lecture ids unique when a break fills the slot a moved lecture came from", () => {
+    // Venture moved 12:00 -> 9:00 earlier and kept its 12:00 id. Lunch now fills 12:00.
+    const moved = lecture({ startMinutes: 540, endMinutes: 600, subject: "Venture & Product Strategy" });
+    const oldSlot = lecture({ startMinutes: 720, endMinutes: 780 }).slotKey;
+    const previous = initialSnapshot([moved]).map((item) => ({ ...item, id: oldSlot }));
+    const lunch = lecture({ startMinutes: 720, endMinutes: 780, subject: "Lunch break", kind: "break", faculty: "", room: "" });
+    const diff = compareSnapshots(previous, [lecture({ startMinutes: 540, endMinutes: 600, subject: "Venture & Product Strategy" }), lunch], {
+      now,
+      previousTabs: ["Tuesday"],
+      nextTabs: ["Tuesday"],
+      bootstrapped: true,
+    });
+    const ids = diff.lectures.map((item) => item.id);
+    assert.equal(new Set(ids).size, ids.length);
+    assert.equal(diff.lectures.find((item) => item.subject.startsWith("Venture"))?.id, oldSlot);
+  });
+
   it("does not emit events when a refresh has the same timetable", () => {
     const original = [lecture()];
     const diff = compare(original, [lecture({ faculty: "Dr.  Aarti   P" })]);

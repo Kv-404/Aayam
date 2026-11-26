@@ -474,5 +474,26 @@ export function compareSnapshots(previous: StoredLecture[], next: NormalizedLect
     }
   }
 
-  return { lectures: output, events };
+  return { lectures: withUniqueIds(output), events };
+}
+
+/**
+ * A moved lecture keeps its old id, which is its old slot key. A new lecture or break that later fills
+ * that slot starts with the same id. Carried ids (id differs from slot key) win; a clashing fresh id
+ * gets a suffix. The next sync matches it by slot key and keeps the suffixed id.
+ */
+function withUniqueIds(lectures: StoredLecture[]): StoredLecture[] {
+  const taken = new Set(lectures.filter((lecture) => lecture.id !== lecture.slotKey).map((lecture) => lecture.id));
+  const seen = new Set<string>();
+  return lectures.map((lecture) => {
+    const carried = lecture.id !== lecture.slotKey;
+    let id = lecture.id;
+    if (seen.has(id) || (!carried && taken.has(id))) {
+      let n = 2;
+      while (seen.has(`${lecture.id}#${n}`) || taken.has(`${lecture.id}#${n}`)) n += 1;
+      id = `${lecture.id}#${n}`;
+    }
+    seen.add(id);
+    return id === lecture.id ? lecture : { ...lecture, id };
+  });
 }
